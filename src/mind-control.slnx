@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MindControl.Tests/MindControl.Tests.csproj" />
+  <Project Path="MindControl/MindControl.csproj" />
+</Solution>
