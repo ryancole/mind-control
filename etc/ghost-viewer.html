@@ -36,12 +36,15 @@
   <span id="status">pick the timeline and the ghost trace, or drop them here</span>
 </div>
 <canvas id="map" width="640" height="640"></canvas>
+<canvas id="ticks" width="640" height="14" title="glances — click to jump"></canvas>
 <div id="controls">
   <button id="play">play</button>
   <select id="speed">
     <option value="1">1x</option><option value="2">2x</option>
     <option value="4" selected>4x</option><option value="8">8x</option>
   </select>
+  <button id="prev" title="previous glance">◀</button>
+  <button id="next" title="next glance">▶</button>
   <input type="range" id="scrub" min="0" max="1000" value="0">
   <span id="clock">—</span>
 </div>
@@ -52,6 +55,8 @@ const canvas = $("map"), ctx = canvas.getContext("2d");
 
 let frames = [];       // [{vt, gameTime, rows}]
 let moves = [];        // [{vt, x, y}] in player-screen pixels
+let glances = [];      // [{vt, x, y, priority, reason}]
+const PRIORITY_COLOR = { 1: "#8fa1b3", 2: "#ffd65a", 3: "#ff5a5a" };
 let world = null;      // {min_x, min_y, max_x, max_y}
 let minimap = null;    // {x, y, width, height} on the player's screen
 let t0 = 0, t1 = 0, simT = 0;
@@ -78,6 +83,8 @@ function parseTrace(text) {
   const lines = text.split("\n").filter(l => l.trim()).map(JSON.parse);
   minimap = lines.find(l => l.t === "meta")?.minimap ?? null;
   moves = lines.filter(l => l.t === "move").map(l => ({ vt: l.video_time, x: l.x, y: l.y }));
+  glances = lines.filter(l => l.t === "glance")
+    .map(l => ({ vt: l.video_time, x: l.x, y: l.y, priority: l.priority, reason: l.reason }));
   ready();
 }
 
@@ -86,9 +93,21 @@ function ready() {
   t0 = Math.max(frames[0].vt, moves.length ? moves[0].vt - 2 : 0);
   t1 = frames[frames.length - 1].vt;
   simT = t0;
-  $("status").textContent =
-    `${frames.length} frames, ${moves.length} cursor moves, video ${fmt(t0)}–${fmt(t1)}`;
+  $("status").textContent = `${frames.length} frames, ${moves.length} cursor moves, ` +
+    `${glances.length} glances, video ${fmt(t0)}–${fmt(t1)}`;
+  drawTicks();
   draw();
+}
+
+function drawTicks() {
+  const tc = $("ticks"), tctx = tc.getContext("2d");
+  tctx.clearRect(0, 0, tc.width, tc.height);
+  tctx.fillStyle = "#1a2129";
+  tctx.fillRect(0, 0, tc.width, tc.height);
+  for (const g of glances) {
+    tctx.fillStyle = PRIORITY_COLOR[g.priority] ?? "#8fa1b3";
+    tctx.fillRect((g.vt - t0) / (t1 - t0) * tc.width - 1, 2, 2, 10);
+  }
 }
 
 // world units -> canvas (y flipped: world y grows northward)
@@ -166,6 +185,24 @@ function draw() {
     ctx.beginPath(); ctx.arc(gx, gy, 5, 0, Math.PI * 2); ctx.stroke();
   }
 
+  // Label the glance being held (or just released): what the ghost is saying.
+  const gi = latestIndex(glances, simT, "vt");
+  if (gi >= 0 && simT - glances[gi].vt < 2.5) {
+    const g = glances[gi];
+    const [px, py] = screenToCanvas(g.x, g.y);
+    const color = PRIORITY_COLOR[g.priority] ?? "#ffd65a";
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.font = "12px system-ui";
+    const w = ctx.measureText(g.reason).width;
+    const lx = Math.min(Math.max(px - w / 2, 4), canvas.width - w - 4);
+    const ly = py > 40 ? py - 22 : py + 32;
+    ctx.fillStyle = "rgba(16, 20, 24, 0.85)";
+    ctx.fillRect(lx - 4, ly - 12, w + 8, 17);
+    ctx.fillStyle = color;
+    ctx.fillText(g.reason, lx, ly);
+  }
+
   const gt = frame?.gameTime;
   $("clock").textContent = `video ${fmt(simT)}` +
     (gt != null ? ` · game ${String(Math.floor(gt / 60)).padStart(2, "0")}:${String(gt % 60).padStart(2, "0")}` : "");
@@ -188,6 +225,21 @@ function setPlaying(on) { playing = on; $("play").textContent = on ? "pause" : "
 
 $("play").onclick = () => { if (simT >= t1) simT = t0; setPlaying(!playing); };
 $("scrub").oninput = e => { simT = t0 + (t1 - t0) * e.target.value / 1000; draw(); };
+// Jump glance-to-glance, landing half a second early so the snap is visible.
+$("prev").onclick = () => {
+  const g = [...glances].reverse().find(g => g.vt < simT - 0.6);
+  if (g) { simT = Math.max(t0, g.vt - 0.5); setPlaying(false); draw(); }
+};
+$("next").onclick = () => {
+  const g = glances.find(g => g.vt > simT + 0.1);
+  if (g) { simT = g.vt - 0.5; setPlaying(false); draw(); }
+};
+$("ticks").onclick = e => {
+  const vt = t0 + (t1 - t0) * e.offsetX / $("ticks").width;
+  const g = glances.reduce((best, g) =>
+    !best || Math.abs(g.vt - vt) < Math.abs(best.vt - vt) ? g : best, null);
+  if (g) { simT = Math.max(t0, g.vt - 0.5); setPlaying(false); draw(); }
+};
 $("timelineFile").onchange = e => e.target.files[0]?.text().then(parseTimeline);
 $("traceFile").onchange = e => e.target.files[0]?.text().then(parseTrace);
 

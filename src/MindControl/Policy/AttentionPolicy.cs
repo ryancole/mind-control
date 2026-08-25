@@ -48,6 +48,16 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     private int? _alliesDead;
     private readonly Dictionary<string, int> _selfVotes = [];
     private string? _selfName;
+    private readonly List<GlanceNote> _notes = [];
+
+    public IReadOnlyList<GlanceNote> DrainNotes()
+    {
+        if (_notes.Count == 0)
+            return [];
+        var drained = _notes.ToArray();
+        _notes.Clear();
+        return drained;
+    }
 
     public void Configure(Meta meta) => _map = ScreenMap.FromMeta(meta, minimap);
 
@@ -55,8 +65,10 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     {
         _frame = latest;
         _glance = null;
+        _notes.Clear();
         _alliesDead = latest?.AlliesDead;
         // _cursor survives: the physical pointer is wherever we last put it.
+        // _selfVotes survive too: identity outlives a gap.
     }
 
     public IReadOnlyList<Intent> OnFrame(FrameEnvelope frame)
@@ -70,8 +82,9 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
 
         if (frame.AlliesDead is { } dead)
         {
-            if (dead > (_alliesDead ?? dead) && FallenAllyPosition() is { } fallen)
-                SnapTo(fallen, frame.VideoTime, priority: 3, intents);
+            if (dead > (_alliesDead ?? dead) && FallenAlly() is { } fallen)
+                SnapTo(_map.WorldToScreen(fallen.WorldX!.Value, fallen.WorldY!.Value),
+                    frame.VideoTime, priority: 3, $"ally down, likely {fallen.Champion ?? "?"}", intents);
             _alliesDead = dead;
         }
 
@@ -91,32 +104,40 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
 
         var intents = new List<Intent>();
         var enemy = evt.Team is { } team && team != self.Team;
+        var who = evt.Champion ?? $"track {evt.TrackId}";
         switch (evt.Kind)
         {
             case EventKind.Vanished when enemy:
                 if (evt is { WorldX: { } wx, WorldY: { } wy } && Near(self, wx, wy))
-                    SnapTo(_map.WorldToScreen(wx, wy), evt.VideoTime, priority: 1, intents);
+                    SnapTo(_map.WorldToScreen(wx, wy), evt.VideoTime, priority: 1,
+                        $"{who} vanished nearby", intents);
                 break;
 
             case EventKind.Reappeared when enemy:
                 if (Position(evt) is { } pos
                     && (evt.GoneFor >= options.LongAbsenceSeconds || Near(self, pos.X, pos.Y)))
-                    SnapTo(_map.WorldToScreen(pos.X, pos.Y), evt.VideoTime, priority: 2, intents);
+                    SnapTo(_map.WorldToScreen(pos.X, pos.Y), evt.VideoTime, priority: 2,
+                        evt.GoneFor >= options.LongAbsenceSeconds
+                            ? $"{who} reappeared after {evt.GoneFor:0}s"
+                            : $"{who} reappeared nearby", intents);
                 break;
 
             case EventKind.Cast when enemy:
                 if (Position(evt) is { } at && Near(self, at.X, at.Y))
-                    SnapTo(_map.WorldToScreen(at.X, at.Y), evt.VideoTime, priority: 2, intents);
+                    SnapTo(_map.WorldToScreen(at.X, at.Y), evt.VideoTime, priority: 2,
+                        $"{who} cast nearby", intents);
                 break;
         }
         return intents;
     }
 
-    private void SnapTo((ushort X, ushort Y) point, double videoTime, int priority, List<Intent> intents)
+    private void SnapTo(
+        (ushort X, ushort Y) point, double videoTime, int priority, string reason, List<Intent> intents)
     {
         if (_glance is { } held && videoTime < held.UntilVideoTime && priority < held.Priority)
             return;
         _glance = new Glance(point.X, point.Y, videoTime + options.DwellSeconds, priority);
+        _notes.Add(new GlanceNote(videoTime, point.X, point.Y, priority, reason));
         Emit(point.X, point.Y, intents);
     }
 
@@ -177,14 +198,15 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     /// often cannot); the ally most recently lost from the minimap is the best
     /// guess for where to look.
     /// </summary>
-    private (ushort X, ushort Y)? FallenAllyPosition()
+    private ChampionRow? FallenAlly()
     {
-        if (Self() is not { } self || _map is null)
+        if (Self() is not { } self)
             return null;
-        var fallen = _frame!.Champions
-            .Where(c => !c.IsSelf && c.Team == self.Team && c.Alive != true && !c.Visible)
+        return _frame!.Champions
+            .Where(c => c.Champion != self.Champion && c.Team == self.Team
+                && c.Alive != true && !c.Visible
+                && c is { WorldX: not null, WorldY: not null })
             .OrderBy(c => c.SecondsSinceSeen)
             .FirstOrDefault();
-        return fallen is { WorldX: { } x, WorldY: { } y } ? _map.WorldToScreen(x, y) : null;
     }
 }

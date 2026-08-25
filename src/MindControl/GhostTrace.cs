@@ -32,6 +32,16 @@ public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWi
         Y = move.Y,
     });
 
+    public void WriteGlance(GlanceNote note) => Write(new
+    {
+        T = "glance",
+        VideoTime = note.VideoTime,
+        X = note.X,
+        Y = note.Y,
+        Priority = note.Priority,
+        Reason = note.Reason,
+    });
+
     private void Write<TLine>(TLine line) =>
         _writer.WriteLine(JsonSerializer.Serialize(line, FeedJson.Options));
 

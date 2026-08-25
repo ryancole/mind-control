@@ -213,6 +213,11 @@ public sealed class Reactor(
             if (intent is MouseMove move)
                 trace?.WriteMove(videoTime, move);
         }
+        foreach (var note in policy.DrainNotes())
+        {
+            Log($"glance[p{note.Priority}]: {note.Reason}");
+            trace?.WriteGlance(note);
+        }
     }
 
     private volatile TaskCompletionSource<Pong>? _pongSignal;

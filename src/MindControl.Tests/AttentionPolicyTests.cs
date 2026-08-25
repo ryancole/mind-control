@@ -199,6 +199,43 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
+    public void Glances_are_explained_and_drained_once()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500)));
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", Champion = "Zaahen", TrackId = 2,
+            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+        });
+
+        var note = policy.DrainNotes().Single();
+        Assert.AreEqual(new GlanceNote(10.1, 1180, 650, 1, "Zaahen vanished nearby"), note);
+        Assert.IsEmpty(policy.DrainNotes(), "notes drain once");
+    }
+
+    [TestMethod]
+    public void Suppressed_snaps_leave_no_note()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500), fallen));
+
+        // Ally death takes the glance...
+        policy.OnFrame(Frame(10.1, 1, self, Champ(2, "red", 9000, 7500), fallen));
+        var note = policy.DrainNotes().Single();
+        StringAssert.StartsWith(note.Reason, "ally down");
+
+        // ...and a lower-priority vanish during the dwell is suppressed, note included.
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", Champion = "Zaahen", TrackId = 2,
+            VideoTime = 10.2, WorldX = 9000, WorldY = 7500,
+        });
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
     public void Self_latches_to_the_majority_when_the_camera_flag_flaps()
     {
         // Annie carries is_self for a stretch, then the camera (death cam,
