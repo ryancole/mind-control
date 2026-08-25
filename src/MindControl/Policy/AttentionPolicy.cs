@@ -19,6 +19,14 @@ public sealed record AttentionOptions
 
     /// <summary>Cursor moves smaller than this are not worth a wire frame.</summary>
     public double MinMovePx { get; init; } = 2;
+
+    /// <summary>
+    /// The coached player's champion, when known. Without it the policy latches
+    /// onto the cumulative majority of is_self rows — the per-frame flag is
+    /// resolved geometrically from the camera and flaps onto allies whenever
+    /// the viewport roams (death cam, spectating fights).
+    /// </summary>
+    public string? SelfChampion { get; init; }
 }
 
 /// <summary>
@@ -38,6 +46,8 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     private Glance? _glance;
     private (double X, double Y)? _cursor;
     private int? _alliesDead;
+    private readonly Dictionary<string, int> _selfVotes = [];
+    private string? _selfName;
 
     public void Configure(Meta meta) => _map = ScreenMap.FromMeta(meta, minimap);
 
@@ -52,6 +62,7 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     public IReadOnlyList<Intent> OnFrame(FrameEnvelope frame)
     {
         _frame = frame;
+        VoteSelf(frame);
         if (_map is null)
             return [];
 
@@ -134,8 +145,21 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
         intents.Add(new MouseMove((ushort)Math.Round(x), (ushort)Math.Round(y)));
     }
 
-    private ChampionRow? Self() =>
-        _frame?.Champions.FirstOrDefault(c => c.IsSelf);
+    /// <summary>A new majority must strictly overtake the incumbent, so ties never flap.</summary>
+    private void VoteSelf(FrameEnvelope frame)
+    {
+        if (options.SelfChampion is not null)
+            return;
+        if (frame.Champions.FirstOrDefault(c => c.IsSelf)?.Champion is not { } flagged)
+            return;
+        _selfVotes[flagged] = _selfVotes.GetValueOrDefault(flagged) + 1;
+        if (_selfName is null || _selfVotes[flagged] > _selfVotes.GetValueOrDefault(_selfName))
+            _selfName = flagged;
+    }
+
+    private ChampionRow? Self() => (options.SelfChampion ?? _selfName) is { } name
+        ? _frame?.Champions.FirstOrDefault(c => c.Champion == name)
+        : _frame?.Champions.FirstOrDefault(c => c.IsSelf);
 
     private bool Near(ChampionRow self, double worldX, double worldY) =>
         self is { WorldX: { } sx, WorldY: { } sy }

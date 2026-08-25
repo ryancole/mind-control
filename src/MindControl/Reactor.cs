@@ -25,12 +25,17 @@ public sealed record ReactorOptions
 /// disconnect, gap, climbing lag, collapsing fps, silence — sends PANIC before
 /// anything else, because a held key while blind is the failure mode.
 /// </summary>
-public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, ReactorOptions options)
+public sealed class Reactor(
+    FeedClient feed, IDeviceLink link, IPolicy policy, ReactorOptions options, GhostTrace? trace = null)
 {
+    private static readonly TimeSpan HealthLogInterval = TimeSpan.FromSeconds(5);
+
     private long _lastSeq = -1;
     private bool _blind = true;   // until the first healthy frame arrives
     private bool _panicReported;
     private DateTime _lastDisarmedLog = DateTime.MinValue;
+    private readonly List<double> _latencySamples = [];
+    private DateTime _lastHealthLog = DateTime.UtcNow;
 
     public async Task RunAsync(CancellationToken ct)
     {
@@ -45,6 +50,7 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
             $"liveness={meta.HasLiveness} nameplates={meta.HasNameplates} " +
             $"world={(meta.WorldBounds is not null ? "calibrated" : "none")}");
         policy.Configure(meta);
+        trace?.WriteMeta(meta);
 
         var feedTask = feed.RunAsync(ct);
 
@@ -119,6 +125,8 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
             return;
         }
 
+        SampleHealth(frame);
+
         if (_blind)
         {
             // Frames are self-contained, so the first healthy one after any
@@ -130,7 +138,32 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
             return;
         }
 
-        Send(policy.OnFrame(frame));
+        Send(policy.OnFrame(frame), frame.VideoTime);
+    }
+
+    /// <summary>
+    /// End-to-end staleness: capture at the vision layer → this decision,
+    /// measured from captured_at against our own clock (same machine). The
+    /// serial hop it cannot see adds under a millisecond at 115200 baud.
+    /// </summary>
+    private void SampleHealth(FrameEnvelope frame)
+    {
+        if (frame.CapturedAt is { } capturedAt)
+            _latencySamples.Add(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - capturedAt);
+
+        var now = DateTime.UtcNow;
+        if (now - _lastHealthLog < HealthLogInterval)
+            return;
+        _lastHealthLog = now;
+        if (_latencySamples.Count > 0)
+        {
+            _latencySamples.Sort();
+            var p50 = _latencySamples[_latencySamples.Count / 2];
+            var max = _latencySamples[^1];
+            Log($"health: e2e latency p50={p50 * 1000:0}ms max={max * 1000:0}ms " +
+                $"over {_latencySamples.Count} frames, fps={frame.Fps?.ToString("0.0") ?? "?"} dropped={frame.Dropped}");
+            _latencySamples.Clear();
+        }
     }
 
     private void HandleNotice(FeedNotice notice)
@@ -143,7 +176,7 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
                 // Events that arrive while blind predate the resync baseline;
                 // acting on them would mean acting on a past we cannot see.
                 if (!_blind)
-                    Send(policy.OnEvent(evt));
+                    Send(policy.OnEvent(evt), evt.VideoTime);
                 break;
             case GapNotice(var from, var to):
                 PanicBecause($"feed gap, lost ids {from}..{to}");
@@ -172,10 +205,14 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
         }
     }
 
-    private void Send(IReadOnlyList<Intent> intents)
+    private void Send(IReadOnlyList<Intent> intents, double videoTime)
     {
         foreach (var intent in intents)
+        {
             link.Send(intent);
+            if (intent is MouseMove move)
+                trace?.WriteMove(videoTime, move);
+        }
     }
 
     private volatile TaskCompletionSource<Pong>? _pongSignal;

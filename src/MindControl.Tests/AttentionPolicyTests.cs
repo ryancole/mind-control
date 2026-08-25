@@ -199,6 +199,46 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
+    public void Self_latches_to_the_majority_when_the_camera_flag_flaps()
+    {
+        // Annie carries is_self for a stretch, then the camera (death cam,
+        // spectating) flags Nami for a few frames. Home must stay Annie's.
+        var policy = NewPolicy(Frame(0, 0,
+            Champ(1, "blue", 7500, 7500, isSelf: true), Champ(3, "blue", 3000, 3000)));
+        for (var i = 0; i < 10; i++)
+            policy.OnFrame(Frame(i * 0.1, 0,
+                Champ(1, "blue", 7500, 7500, isSelf: true), Champ(3, "blue", 3000, 3000)));
+
+        // Flag flaps to the ally; Annie (champ1) still on the map, not flagged.
+        var flapped = Frame(2.0, 0,
+            Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true));
+        var intents = new List<Intent>();
+        for (var i = 0; i < 5; i++)
+            intents.AddRange(policy.OnFrame(flapped with { VideoTime = 2.0 + i * 0.1 }));
+
+        // Any moves emitted glide toward champ1's home (1150, 650), not champ3's (1060, 740).
+        foreach (var move in intents.OfType<MouseMove>())
+            Assert.IsTrue(Math.Abs(move.X - 1150) <= 30 && Math.Abs(move.Y - 650) <= 30,
+                $"cursor should stay anchored to the majority self, got {move}");
+    }
+
+    [TestMethod]
+    public void Explicit_self_champion_overrides_the_flag_entirely()
+    {
+        var policy = new AttentionPolicy(Rect, new AttentionOptions { SelfChampion = "champ1" });
+        policy.Configure(CalibratedMeta);
+        // The flag points at champ3, but champ1 is the configured self.
+        var frame = Frame(10.0, 0,
+            Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true));
+        policy.Resync(frame);
+
+        var move = Move(policy.OnFrame(Frame(10.1, 0,
+            Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true))));
+
+        Assert.AreEqual(new MouseMove(1150, 650), move);
+    }
+
+    [TestMethod]
     public void Uncalibrated_feed_leaves_the_policy_inert()
     {
         var policy = new AttentionPolicy(Rect, new AttentionOptions());

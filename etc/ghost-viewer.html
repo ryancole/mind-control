@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<!--
+  Ghost viewer: replays a recorded ghost-cursor trace over the timeline that
+  produced it, so a policy change can be *watched* instead of read from logs.
+
+  Usage:
+    1. Record a run:  dotnet run - - --trace data/ghost-trace.jsonl  (against a replay)
+    2. Open this file in a browser and pick the timeline + trace files,
+       or serve the repo (python -m http.server) and pass
+       ?timeline=data/live-session.jsonl&trace=data/ghost-trace.jsonl
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ghost viewer</title>
+<style>
+  body { margin: 0; background: #101418; color: #cfd8e3; font: 14px/1.4 system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; color: #e8eef5; }
+  #files { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  #files label { display: flex; gap: 6px; align-items: center; }
+  canvas { background: #1a2129; border: 1px solid #2c3844; border-radius: 6px; }
+  #controls { display: flex; gap: 10px; align-items: center; width: 640px; }
+  #scrub { flex: 1; }
+  button, select { background: #232d38; color: #cfd8e3; border: 1px solid #3a4856;
+                   border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  #clock { font-variant-numeric: tabular-nums; min-width: 150px; text-align: right; }
+  #status { color: #8fa1b3; }
+</style>
+</head>
+<body>
+<h1>mind-control ghost viewer</h1>
+<div id="files">
+  <label>timeline <input type="file" id="timelineFile" accept=".jsonl"></label>
+  <label>trace <input type="file" id="traceFile" accept=".jsonl"></label>
+  <span id="status">pick the timeline and the ghost trace, or drop them here</span>
+</div>
+<canvas id="map" width="640" height="640"></canvas>
+<div id="controls">
+  <button id="play">play</button>
+  <select id="speed">
+    <option value="1">1x</option><option value="2">2x</option>
+    <option value="4" selected>4x</option><option value="8">8x</option>
+  </select>
+  <input type="range" id="scrub" min="0" max="1000" value="0">
+  <span id="clock">—</span>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const canvas = $("map"), ctx = canvas.getContext("2d");
+
+let frames = [];       // [{vt, gameTime, rows}]
+let moves = [];        // [{vt, x, y}] in player-screen pixels
+let world = null;      // {min_x, min_y, max_x, max_y}
+let minimap = null;    // {x, y, width, height} on the player's screen
+let t0 = 0, t1 = 0, simT = 0;
+let playing = false, lastTick = 0;
+
+function parseTimeline(text) {
+  const lines = text.split("\n").filter(l => l.trim());
+  const meta = JSON.parse(lines[0]);
+  world = meta.world_bounds;
+  frames = [];
+  let current = null;
+  for (let i = 1; i < lines.length; i++) {
+    const row = JSON.parse(lines[i]);
+    if (!current || row.video_time !== current.vt) {
+      current = { vt: row.video_time, gameTime: row.game_time, rows: [] };
+      frames.push(current);
+    }
+    current.rows.push(row);
+  }
+  ready();
+}
+
+function parseTrace(text) {
+  const lines = text.split("\n").filter(l => l.trim()).map(JSON.parse);
+  minimap = lines.find(l => l.t === "meta")?.minimap ?? null;
+  moves = lines.filter(l => l.t === "move").map(l => ({ vt: l.video_time, x: l.x, y: l.y }));
+  ready();
+}
+
+function ready() {
+  if (!frames.length || !minimap) return;
+  t0 = Math.max(frames[0].vt, moves.length ? moves[0].vt - 2 : 0);
+  t1 = frames[frames.length - 1].vt;
+  simT = t0;
+  $("status").textContent =
+    `${frames.length} frames, ${moves.length} cursor moves, video ${fmt(t0)}–${fmt(t1)}`;
+  draw();
+}
+
+// world units -> canvas (y flipped: world y grows northward)
+function worldToCanvas(wx, wy) {
+  return [ (wx - world.min_x) / (world.max_x - world.min_x) * canvas.width,
+           (1 - (wy - world.min_y) / (world.max_y - world.min_y)) * canvas.height ];
+}
+
+// player-screen pixels -> canvas (both y-down; invert the run's minimap rect)
+function screenToCanvas(sx, sy) {
+  return [ (sx - minimap.x) / minimap.width * canvas.width,
+           (sy - minimap.y) / minimap.height * canvas.height ];
+}
+
+function latestIndex(arr, vt, key) {   // binary search: last element with key <= vt
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid][key] <= vt) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!world) return;
+
+  ctx.strokeStyle = "#242e39";                       // sparse grid
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const p = i * canvas.width / 4;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(canvas.width, p); ctx.stroke();
+  }
+
+  const fi = latestIndex(frames, simT, "vt");
+  const frame = fi >= 0 ? frames[fi] : null;
+  if (frame) {
+    for (const row of frame.rows) {
+      if (row.world_x === undefined) continue;
+      const [cx, cy] = worldToCanvas(row.world_x, row.world_y);
+      const color = row.team === "blue" ? "#4aa3ff" : "#ff5a5a";
+      ctx.beginPath();
+      ctx.arc(cx, cy, row.is_self ? 8 : 6, 0, Math.PI * 2);
+      if (row.visible) { ctx.fillStyle = color; ctx.fill(); }
+      else { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); }   // hollow = fog
+      if (row.is_self) {
+        ctx.strokeStyle = "#e8eef5"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.fillStyle = "#8fa1b3"; ctx.font = "10px system-ui";
+      ctx.fillText(row.champion ?? "?", cx + 9, cy - 6);
+      if (!row.visible && row.seconds_since_seen > 1)
+        ctx.fillText(row.seconds_since_seen.toFixed(0) + "s", cx + 9, cy + 6);
+    }
+  }
+
+  const mi = latestIndex(moves, simT, "vt");
+  if (mi >= 0) {
+    ctx.strokeStyle = "rgba(255, 214, 90, 0.5)";     // trail: the last 1.5s of path
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    for (let i = Math.max(0, mi - 40); i <= mi; i++) {
+      if (moves[i].vt < simT - 1.5) continue;
+      const [gx, gy] = screenToCanvas(moves[i].x, moves[i].y);
+      started ? ctx.lineTo(gx, gy) : ctx.moveTo(gx, gy);
+      started = true;
+    }
+    ctx.stroke();
+    const [gx, gy] = screenToCanvas(moves[mi].x, moves[mi].y);
+    ctx.strokeStyle = "#ffd65a"; ctx.lineWidth = 2;  // the ghost's cursor
+    ctx.beginPath(); ctx.moveTo(gx - 10, gy); ctx.lineTo(gx + 10, gy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, gy - 10); ctx.lineTo(gx, gy + 10); ctx.stroke();
+    ctx.beginPath(); ctx.arc(gx, gy, 5, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  const gt = frame?.gameTime;
+  $("clock").textContent = `video ${fmt(simT)}` +
+    (gt != null ? ` · game ${String(Math.floor(gt / 60)).padStart(2, "0")}:${String(gt % 60).padStart(2, "0")}` : "");
+  $("scrub").value = t1 > t0 ? (simT - t0) / (t1 - t0) * 1000 : 0;
+}
+
+const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+
+function tick(now) {
+  if (playing) {
+    simT = Math.min(t1, simT + (now - lastTick) / 1000 * Number($("speed").value));
+    if (simT >= t1) setPlaying(false);
+    draw();
+  }
+  lastTick = now;
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(on) { playing = on; $("play").textContent = on ? "pause" : "play"; }
+
+$("play").onclick = () => { if (simT >= t1) simT = t0; setPlaying(!playing); };
+$("scrub").oninput = e => { simT = t0 + (t1 - t0) * e.target.value / 1000; draw(); };
+$("timelineFile").onchange = e => e.target.files[0]?.text().then(parseTimeline);
+$("traceFile").onchange = e => e.target.files[0]?.text().then(parseTrace);
+
+document.body.addEventListener("dragover", e => e.preventDefault());
+document.body.addEventListener("drop", async e => {
+  e.preventDefault();
+  for (const file of e.dataTransfer.files) {
+    const text = await file.text();
+    text.includes('"track_id"') ? parseTimeline(text) : parseTrace(text);
+  }
+});
+
+const params = new URLSearchParams(location.search);
+if (params.get("timeline"))
+  fetch(params.get("timeline")).then(r => r.text()).then(parseTimeline)
+    .catch(() => $("status").textContent = "failed to fetch timeline");
+if (params.get("trace"))
+  fetch(params.get("trace")).then(r => r.text()).then(parseTrace)
+    .catch(() => $("status").textContent = "failed to fetch trace");
+
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

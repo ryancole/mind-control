@@ -9,6 +9,8 @@ ushort screenWidth = 1920, screenHeight = 1080;
 // A placeholder guess at the player's minimap rect until real calibration
 // exists (default League HUD, bottom-right, 1920x1080).
 var minimap = new MinimapRect(1620, 780, 300, 300);
+string? tracePath = null;
+string? selfChampion = null;
 HashSet<string>? kinds =
 [
     EventKind.Death, EventKind.Respawn, EventKind.Cast, EventKind.Vanished,
@@ -36,6 +38,12 @@ for (var i = 0; i < args.Length; i++)
                 double.Parse(rect[0]), double.Parse(rect[1]),
                 double.Parse(rect[2]), double.Parse(rect[3]));
             break;
+        case "--trace":
+            tracePath = args[++i];
+            break;
+        case "--self":
+            selfChampion = args[++i];
+            break;
         case "--kinds":
             // Which event kinds reach the policy; "all" disables the filter.
             var list = args[++i];
@@ -50,6 +58,8 @@ for (var i = 0; i < args.Length; i++)
                   --port <name>      serial port, e.g. COM5 (default: dry run, intents logged)
                   --screen <WxH>     target screen size     (default 1920x1080)
                   --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
+                  --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
+                  --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
                 """);
             return 0;
@@ -72,8 +82,9 @@ using IDeviceLink link = portName is null
 
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
-var policy = new AttentionPolicy(minimap, new AttentionOptions());
-var reactor = new Reactor(feed, link, policy, options);
+using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
+var policy = new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion });
+var reactor = new Reactor(feed, link, policy, options, trace);
 
 try
 {
