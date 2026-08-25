@@ -47,6 +47,11 @@ Add `--trace data/ghost-trace.jsonl --self <champion>` to a dry run and open
 watch the ghost's cursor over the map, with every glance labeled with its
 reason and jumpable from the tick strip.
 
+While the reactor runs, a letter or digit typed into its console is tapped
+through the device (KEY_DOWN, ~40ms hold, KEY_UP) — logged in a dry run, a
+physical keypress on hardware. The tap idiom exists ahead of any keyboard
+policy so hardware day can demo a keypress end to end.
+
 Before a hardware run, `etc/minimap-calibrator.html` turns a screenshot of the
 player's screen into the exact `--screen`/`--minimap` arguments: paste the
 screenshot (Ctrl+V), click the minimap's two corners, copy the line.

@@ -86,11 +86,33 @@ using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, 
 var policy = new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion });
 var reactor = new Reactor(feed, link, policy, options, trace);
 
+// Tap demo: no keyboard policy exists yet, but the tap idiom does. A key typed
+// into this console taps the same key through the device — logged in a dry
+// run, a physical keypress on hardware. Runs on a background thread so a
+// blocked ReadKey never holds up shutdown.
+if (!Console.IsInputRedirected)
+{
+    _ = Task.Run(() =>
+    {
+        while (!cts.IsCancellationRequested)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (HidUsage.TryFromChar(key.KeyChar, out var usage))
+            {
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff} tap: '{key.KeyChar}' (usage 0x{usage:X2})");
+                link.Tap(usage);
+            }
+        }
+    });
+}
+
 try
 {
     Console.WriteLine(portName is null
         ? $"dry run against {feedUri} (no serial port; intents are logged)"
         : $"driving {portName} from {feedUri}");
+    if (!Console.IsInputRedirected)
+        Console.WriteLine("type a letter/digit here to tap it through the device");
     await reactor.RunAsync(cts.Token);
 }
 catch (OperationCanceledException)

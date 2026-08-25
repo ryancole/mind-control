@@ -20,6 +20,15 @@ public sealed record AttentionOptions
     /// <summary>Cursor moves smaller than this are not worth a wire frame.</summary>
     public double MinMovePx { get; init; } = 2;
 
+    /// <summary>Levels whose power spike is worth a look wherever it happens; others only near self.</summary>
+    public IReadOnlyCollection<int> SpikeLevels { get; init; } = [6, 11, 16];
+
+    /// <summary>An enemy unseen this long makes the map tense: idle attention re-checks last-known spots.</summary>
+    public double TensionAfterSeconds { get; init; } = 4;
+
+    /// <summary>Minimum spacing between tension re-checks, so idling never thrashes.</summary>
+    public double TensionEverySeconds { get; init; } = 2.5;
+
     /// <summary>
     /// The coached player's champion, when known. Without it the policy latches
     /// onto the cumulative majority of is_self rows — the per-frame flag is
@@ -46,6 +55,8 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     private Glance? _glance;
     private (double X, double Y)? _cursor;
     private int? _alliesDead;
+    private double? _lastTension;
+    private readonly Dictionary<int, double> _tensionChecked = [];
     private readonly Dictionary<string, int> _selfVotes = [];
     private string? _selfName;
     private readonly List<GlanceNote> _notes = [];
@@ -67,6 +78,8 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
         _glance = null;
         _notes.Clear();
         _alliesDead = latest?.AlliesDead;
+        _lastTension = latest?.VideoTime;
+        _tensionChecked.Clear();
         // _cursor survives: the physical pointer is wherever we last put it.
         // _selfVotes survive too: identity outlives a gap.
     }
@@ -91,6 +104,12 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
         if (_glance is { } glance && frame.VideoTime < glance.UntilVideoTime)
             return intents;   // holding the look
         _glance = null;
+
+        if (TensionCheck(frame) is { } tension)
+        {
+            SnapTo(tension.Point, frame.VideoTime, priority: 0, tension.Reason, intents);
+            return intents;
+        }
 
         if (Self() is { WorldX: { } wx, WorldY: { } wy })
             GlideToward(_map.WorldToScreen(wx, wy), intents);
@@ -127,8 +146,44 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
                     SnapTo(_map.WorldToScreen(at.X, at.Y), evt.VideoTime, priority: 2,
                         $"{who} cast nearby", intents);
                 break;
+
+            case EventKind.LevelUp when enemy && evt.Level is { } level:
+                var spike = options.SpikeLevels.Contains(level);
+                if (Position(evt) is { } spot && (spike || Near(self, spot.X, spot.Y)))
+                    SnapTo(_map.WorldToScreen(spot.X, spot.Y), evt.VideoTime,
+                        priority: spike ? 2 : 1,
+                        spike ? $"{who} hit {level}" : $"{who} reached {level} nearby", intents);
+                break;
         }
         return intents;
+    }
+
+    /// <summary>
+    /// Idle attention under fog pressure: with an enemy unseen long enough,
+    /// re-check its last-known spot instead of resting at home. Rotates through
+    /// the missing (least-recently-checked first) at priority 0, so any real
+    /// event steals the look.
+    /// </summary>
+    private ((ushort X, ushort Y) Point, string Reason)? TensionCheck(FrameEnvelope frame)
+    {
+        if (Self() is not { } self)
+            return null;
+        if (_lastTension is { } last && frame.VideoTime - last < options.TensionEverySeconds)
+            return null;
+        var missing = frame.Champions
+            .Where(c => c.Team != self.Team && !c.Visible && c.Alive != false
+                && c.SecondsSinceSeen >= options.TensionAfterSeconds
+                && c is { WorldX: not null, WorldY: not null })
+            .OrderBy(c => _tensionChecked.GetValueOrDefault(c.TrackId, double.MinValue))
+            .ThenBy(c => c.TrackId)
+            .FirstOrDefault();
+        if (missing is null)
+            return null;
+        _lastTension = frame.VideoTime;
+        _tensionChecked[missing.TrackId] = frame.VideoTime;
+        var who = missing.Champion ?? $"track {missing.TrackId}";
+        return (_map!.WorldToScreen(missing.WorldX!.Value, missing.WorldY!.Value),
+            $"{who} missing {missing.SecondsSinceSeen:0}s, checking last spot");
     }
 
     private void SnapTo(

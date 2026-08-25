@@ -122,6 +122,49 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
+    public void Enemy_spike_level_gets_a_look_anywhere_on_the_map()
+    {
+        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
+
+        var intents = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 6, VideoTime = 10.1,
+        });
+
+        Assert.AreEqual(new MouseMove(1280, 520), Move(intents));
+        StringAssert.Contains(policy.DrainNotes().Single().Reason, "hit 6");
+    }
+
+    [TestMethod]
+    public void Minor_level_up_far_away_is_ignored()
+    {
+        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
+
+        var intents = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 7, VideoTime = 10.1,
+        });
+
+        Assert.IsEmpty(intents);
+    }
+
+    [TestMethod]
+    public void Minor_level_up_nearby_still_gets_a_look()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500)));
+
+        var intents = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 4, VideoTime = 10.1,
+        });
+
+        Assert.AreEqual(new MouseMove(1180, 650), Move(intents));
+    }
+
+    [TestMethod]
     public void Own_team_events_never_trigger_a_glance()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
@@ -233,6 +276,71 @@ public sealed class AttentionPolicyTests
             VideoTime = 10.2, WorldX = 9000, WorldY = 7500,
         });
         Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void Long_missing_enemy_draws_an_idle_recheck_of_its_last_spot()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var missing = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
+        var policy = NewPolicy(Frame(10.0, 0, self, missing));
+
+        // Inside the tension interval (2.5s from the resync baseline): rest at home.
+        Assert.AreEqual(new MouseMove(1150, 650), Move(policy.OnFrame(Frame(10.1, 0, self, missing))));
+        Assert.IsEmpty(policy.DrainNotes());
+
+        // Past it: attention drifts to the last-known spot, explained.
+        var intents = policy.OnFrame(Frame(13.0, 0, self, missing));
+
+        Assert.AreEqual(new MouseMove(1220, 580), Move(intents));
+        var note = policy.DrainNotes().Single();
+        Assert.AreEqual(0, note.Priority);
+        StringAssert.Contains(note.Reason, "champ2 missing 9s");
+    }
+
+    [TestMethod]
+    public void Tension_rechecks_rotate_among_the_missing()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var gone2 = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
+        var gone3 = Champ(3, "red", 3000, 3000, visible: false, alive: null, sinceSeen: 12);
+        var policy = NewPolicy(Frame(10.0, 0, self, gone2, gone3));
+
+        Assert.AreEqual(new MouseMove(1220, 580), Move(policy.OnFrame(Frame(13.0, 0, self, gone2, gone3))),
+            "first check goes to the lowest unchecked track");
+        Assert.AreEqual(new MouseMove(1060, 740), Move(policy.OnFrame(Frame(15.6, 0, self, gone2, gone3))),
+            "next check rotates to the other missing enemy");
+    }
+
+    [TestMethod]
+    public void Visible_or_dead_enemies_never_draw_tension()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var seen = Champ(2, "red", 11000, 11000, visible: true, sinceSeen: 0);
+        var dead = Champ(3, "red", 3000, 3000, visible: false, alive: false, sinceSeen: 20);
+        var policy = NewPolicy(Frame(10.0, 0, self, seen, dead));
+
+        Assert.AreEqual(new MouseMove(1150, 650), Move(policy.OnFrame(Frame(13.0, 0, self, seen, dead))),
+            "nothing tense: the cursor just rests at home");
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void Real_events_preempt_a_tension_glance()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var missing = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
+        var nearby = Champ(3, "red", 9000, 7500);
+        var policy = NewPolicy(Frame(10.0, 0, self, missing, nearby));
+        policy.OnFrame(Frame(13.0, 0, self, missing, nearby));   // tension glance held
+
+        var intents = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 3,
+            VideoTime = 13.5, WorldX = 9000, WorldY = 7500,
+        });
+
+        Assert.AreEqual(new MouseMove(1180, 650), Move(intents));
     }
 
     [TestMethod]

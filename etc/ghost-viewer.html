@@ -56,7 +56,7 @@ const canvas = $("map"), ctx = canvas.getContext("2d");
 let frames = [];       // [{vt, gameTime, rows}]
 let moves = [];        // [{vt, x, y}] in player-screen pixels
 let glances = [];      // [{vt, x, y, priority, reason}]
-const PRIORITY_COLOR = { 1: "#8fa1b3", 2: "#ffd65a", 3: "#ff5a5a" };
+const PRIORITY_COLOR = { 0: "#5a6b7d", 1: "#8fa1b3", 2: "#ffd65a", 3: "#ff5a5a" };
 let world = null;      // {min_x, min_y, max_x, max_y}
 let minimap = null;    // {x, y, width, height} on the player's screen
 let t0 = 0, t1 = 0, simT = 0;
