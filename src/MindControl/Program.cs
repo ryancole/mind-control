@@ -6,10 +6,13 @@ using MindControl.Policy;
 var feedUri = new Uri("http://127.0.0.1:8723");
 string? portName = null;
 ushort screenWidth = 1920, screenHeight = 1080;
+// A placeholder guess at the player's minimap rect until real calibration
+// exists (default League HUD, bottom-right, 1920x1080).
+var minimap = new MinimapRect(1620, 780, 300, 300);
 HashSet<string>? kinds =
 [
-    EventKind.Death, EventKind.Respawn, EventKind.Cast, EventKind.Reappeared,
-    EventKind.Identified, EventKind.LevelUp, EventKind.Roster,
+    EventKind.Death, EventKind.Respawn, EventKind.Cast, EventKind.Vanished,
+    EventKind.Reappeared, EventKind.Identified, EventKind.LevelUp, EventKind.Roster,
 ];
 
 for (var i = 0; i < args.Length; i++)
@@ -27,10 +30,14 @@ for (var i = 0; i < args.Length; i++)
             screenWidth = ushort.Parse(parts[0]);
             screenHeight = ushort.Parse(parts[1]);
             break;
+        case "--minimap":
+            var rect = args[++i].Split(',');
+            minimap = new MinimapRect(
+                double.Parse(rect[0]), double.Parse(rect[1]),
+                double.Parse(rect[2]), double.Parse(rect[3]));
+            break;
         case "--kinds":
             // Which event kinds reach the policy; "all" disables the filter.
-            // The default set excludes "vanished" — fog-out traffic dominates
-            // the raw feed and would churn the bounded notice queue.
             var list = args[++i];
             kinds = list == "all" ? null : [.. list.Split(',', StringSplitOptions.TrimEntries)];
             break;
@@ -39,11 +46,11 @@ for (var i = 0; i < args.Length; i++)
                 mind-control: reacts to the spectral-sight feed by driving the misdirection device.
 
                 options:
-                  --feed <url>     feed base URL          (default http://127.0.0.1:8723)
-                  --port <name>    serial port, e.g. COM5 (default: dry run, intents logged)
-                  --screen <WxH>   target screen size     (default 1920x1080)
-                  --kinds <a,b|all> event kinds passed to the policy
-                                   (default death,respawn,cast,reappeared,identified,level_up,roster)
+                  --feed <url>       feed base URL          (default http://127.0.0.1:8723)
+                  --port <name>      serial port, e.g. COM5 (default: dry run, intents logged)
+                  --screen <WxH>     target screen size     (default 1920x1080)
+                  --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
+                  --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
                 """);
             return 0;
         default:
@@ -65,7 +72,8 @@ using IDeviceLink link = portName is null
 
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
-var reactor = new Reactor(feed, link, new NoOpPolicy(), options);
+var policy = new AttentionPolicy(minimap, new AttentionOptions());
+var reactor = new Reactor(feed, link, policy, options);
 
 try
 {

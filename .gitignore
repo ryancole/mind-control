@@ -3,6 +3,9 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# Recorded timelines and other local fixtures (spectral-sight owns the source of truth)
+/data/
+
 # dotenv files
 .env
 

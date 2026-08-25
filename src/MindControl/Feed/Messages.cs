@@ -31,8 +31,16 @@ public sealed record Meta
     public bool HasGameTime { get; init; }
     public bool HasLiveness { get; init; }
     public bool HasNameplates { get; init; }
-    public JsonElement? WorldBounds { get; init; }
+    public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
+}
+
+public sealed record WorldBounds
+{
+    public double MinX { get; init; }
+    public double MinY { get; init; }
+    public double MaxX { get; init; }
+    public double MaxY { get; init; }
 }
 
 public sealed record ChampionRow

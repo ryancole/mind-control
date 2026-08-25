@@ -42,7 +42,9 @@ public sealed class Reactor(FeedClient feed, IDeviceLink link, IPolicy policy, R
             throw new InvalidOperationException(
                 $"Feed schema {meta.Schema} is newer than this reactor understands ({FeedJson.MaxSchema})");
         Log($"feed: {meta.Source} {meta.Width}x{meta.Height}, game_time={meta.HasGameTime} " +
-            $"liveness={meta.HasLiveness} nameplates={meta.HasNameplates}");
+            $"liveness={meta.HasLiveness} nameplates={meta.HasNameplates} " +
+            $"world={(meta.WorldBounds is not null ? "calibrated" : "none")}");
+        policy.Configure(meta);
 
         var feedTask = feed.RunAsync(ct);
 

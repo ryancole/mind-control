@@ -12,6 +12,9 @@ namespace MindControl.Policy;
 /// </summary>
 public interface IPolicy
 {
+    /// <summary>Called once with the run's capability header before any frame or event.</summary>
+    void Configure(Meta meta);
+
     /// <summary>A fresh baseline after a gap, reconnect, or panic. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);
 
@@ -23,6 +26,8 @@ public interface IPolicy
 /// <summary>Placeholder while the plumbing is proven out. Watches, never acts.</summary>
 public sealed class NoOpPolicy : IPolicy
 {
+    public void Configure(Meta meta) { }
+
     public void Resync(FrameEnvelope? latest) { }
 
     public IReadOnlyList<Intent> OnFrame(FrameEnvelope frame) => [];
