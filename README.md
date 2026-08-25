@@ -41,3 +41,12 @@ etc/dev.ps1 -Port COM5      # drive the real board
 ```
 
 `dotnet test` needs nothing running.
+
+Add `--trace data/ghost-trace.jsonl --self <champion>` to a dry run and open
+`etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
+watch the ghost's cursor over the map, with every glance labeled with its
+reason and jumpable from the tick strip.
+
+Before a hardware run, `etc/minimap-calibrator.html` turns a screenshot of the
+player's screen into the exact `--screen`/`--minimap` arguments: paste the
+screenshot (Ctrl+V), click the minimap's two corners, copy the line.
