@@ -55,18 +55,3 @@ reason and jumpable from the tick strip.
 `etc/minimap-calibrator.html` turns a screenshot of the player's screen into
 the exact `--screen`/`--minimap` arguments: paste the screenshot (Ctrl+V),
 click the minimap's two corners, copy the line.
-
-## License & Disclaimer
-
-**INTERNAL USE ONLY – Product Development**
-
-This repository is proprietary and restricted to authorized internal product-development use by RIOT GAMES only.
-
-- Full terms: [LICENSE](LICENSE.md)
-- Reinforcing notice: [DISCLAIMER](DISCLAIMER.md)
-
-**Prohibited uses include** (but are not limited to) creating, distributing, or using any game cheats, hacks, bots, trainers, or any activity that facilitates cheating or violates the terms of service of any video game.
-
-Unauthorized use is strictly forbidden and automatically terminates all rights under the license.
-
-For questions: support@riotgames.com
