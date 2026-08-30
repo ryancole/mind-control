@@ -1,4 +1,3 @@
-using MindControl.Device;
 using MindControl.Feed;
 using MindControl.Policy;
 
@@ -9,10 +8,10 @@ public sealed record ReactorOptions
     public ushort ScreenWidth { get; init; } = 1920;
     public ushort ScreenHeight { get; init; } = 1080;
 
-    /// <summary>No frame for this long means we are blind: PANIC.</summary>
+    /// <summary>No frame for this long means we are blind: pause coaching.</summary>
     public TimeSpan FrameTimeout { get; init; } = TimeSpan.FromSeconds(1);
 
-    /// <summary>The feed's own staleness bound; beyond it we are acting on the past.</summary>
+    /// <summary>The feed's own staleness bound; beyond it advice would be about the past.</summary>
     public double MaxLagSeconds { get; init; } = 0.5;
 
     /// <summary>The pipeline runs ~10 Hz; below this it is wedged, not quiet.</summary>
@@ -21,27 +20,25 @@ public sealed record ReactorOptions
 
 /// <summary>
 /// The decision loop. Everything here is plumbing and safety; game sense lives
-/// in the policy. The one non-negotiable rule: any doubt about the feed —
-/// disconnect, gap, climbing lag, collapsing fps, silence — sends PANIC before
-/// anything else, because a held key while blind is the failure mode.
+/// in the policy. The tool observes and advises only — it consumes the feed and
+/// prints coaching feedback (and optionally records the ghost cursor for the
+/// viewer). It drives no device and sends nothing to the game. The one rule:
+/// any doubt about the feed — disconnect, gap, climbing lag, collapsing fps,
+/// silence — pauses coaching rather than advising off stale state.
 /// </summary>
 public sealed class Reactor(
-    FeedClient feed, IDeviceLink link, IPolicy policy, ReactorOptions options, GhostTrace? trace = null)
+    FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null)
 {
     private static readonly TimeSpan HealthLogInterval = TimeSpan.FromSeconds(5);
 
     private long _lastSeq = -1;
     private bool _blind = true;   // until the first healthy frame arrives
-    private bool _panicReported;
-    private DateTime _lastDisarmedLog = DateTime.MinValue;
+    private bool _paused;
     private readonly List<double> _latencySamples = [];
     private DateTime _lastHealthLog = DateTime.UtcNow;
 
     public async Task RunAsync(CancellationToken ct)
     {
-        link.MessageReceived += OnDeviceMessage;
-        await HandshakeAsync(ct);
-
         var meta = await feed.GetMetaAsync(ct);
         if (meta.Schema > FeedJson.MaxSchema)
             throw new InvalidOperationException(
@@ -75,33 +72,10 @@ public sealed class Reactor(
             var noticeWait = feed.Notices.WaitToReadAsync(ct).AsTask();
             var completed = await Task.WhenAny(frameWait, noticeWait, Task.Delay(options.FrameTimeout, ct));
             if (completed != frameWait && completed != noticeWait)
-                PanicBecause($"no frame for {options.FrameTimeout.TotalMilliseconds:0}ms");
+                PauseBecause($"no frame for {options.FrameTimeout.TotalMilliseconds:0}ms");
         }
 
         await feedTask;
-    }
-
-    /// <summary>
-    /// PING until the board answers PONG (it answers even while disarmed),
-    /// then SCREEN_SIZE before any MOUSE_MOVE can go out.
-    /// </summary>
-    private async Task HandshakeAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            var pong = _pongSignal = new TaskCompletionSource<Pong>(TaskCreationOptions.RunContinuationsAsynchronously);
-            link.Send(Intent.Ping);
-            var completed = await Task.WhenAny(pong.Task, Task.Delay(TimeSpan.FromSeconds(2), ct));
-            if (completed == pong.Task)
-            {
-                Log($"device: PONG v{pong.Task.Result.Version}");
-                break;
-            }
-            Log("device: no PONG yet, retrying");
-        }
-        _pongSignal = null;
-        ct.ThrowIfCancellationRequested();
-        link.Send(new ScreenSize(options.ScreenWidth, options.ScreenHeight));
     }
 
     private void HandleFrame(FrameEnvelope frame)
@@ -116,12 +90,12 @@ public sealed class Reactor(
 
         if (frame.Lag is > 0 && frame.Lag > options.MaxLagSeconds)
         {
-            PanicBecause($"lag {frame.Lag:0.000}s");
+            PauseBecause($"lag {frame.Lag:0.000}s");
             return;
         }
         if (frame.Fps is > 0 && frame.Fps < options.MinFps)
         {
-            PanicBecause($"fps collapsed to {frame.Fps:0.0}");
+            PauseBecause($"fps collapsed to {frame.Fps:0.0}");
             return;
         }
 
@@ -133,18 +107,17 @@ public sealed class Reactor(
             // doubt is a complete resync baseline.
             policy.Resync(frame);
             _blind = false;
-            _panicReported = false;
+            _paused = false;
             Log($"resynced at video_time={frame.VideoTime:0.000} seq={frame.Seq}");
             return;
         }
 
-        Send(policy.OnFrame(frame), frame.VideoTime);
+        Apply(policy.OnFrame(frame), frame.VideoTime);
     }
 
     /// <summary>
     /// End-to-end staleness: capture at the vision layer → this decision,
-    /// measured from captured_at against our own clock (same machine). The
-    /// serial hop it cannot see adds under a millisecond at 115200 baud.
+    /// measured from captured_at against our own clock (same machine).
     /// </summary>
     private void SampleHealth(FrameEnvelope frame)
     {
@@ -174,15 +147,15 @@ public sealed class Reactor(
                 Log($"event: {evt.Kind} {evt.Team}/{evt.Champion ?? $"track {evt.TrackId}"} " +
                     $"at video_time={evt.VideoTime:0.000}");
                 // Events that arrive while blind predate the resync baseline;
-                // acting on them would mean acting on a past we cannot see.
+                // advising on them would mean advising on a past we cannot see.
                 if (!_blind)
-                    Send(policy.OnEvent(evt), evt.VideoTime);
+                    Apply(policy.OnEvent(evt), evt.VideoTime);
                 break;
             case GapNotice(var from, var to):
-                PanicBecause($"feed gap, lost ids {from}..{to}");
+                PauseBecause($"feed gap, lost ids {from}..{to}");
                 break;
             case FeedLost(var reason):
-                PanicBecause($"feed lost: {reason}");
+                PauseBecause($"feed lost: {reason}");
                 break;
             case FeedConnected(var resumed):
                 Log(resumed ? "feed reconnected (resuming)" : "feed connected");
@@ -190,67 +163,34 @@ public sealed class Reactor(
         }
     }
 
-    private void PanicBecause(string reason)
+    private void PauseBecause(string reason)
     {
-        // Re-sent every timeout while blind — 4 bytes of cheap insurance in
-        // case an earlier PANIC was lost — but logged once per blind episode.
-        link.Send(Intent.Panic);
         if (!_blind)
             policy.Resync(null);
         _blind = true;
-        if (!_panicReported)
+        if (!_paused)
         {
-            _panicReported = true;
-            Log($"PANIC: {reason}");
+            _paused = true;
+            Log($"coaching paused: {reason}");
         }
     }
 
-    private void Send(IReadOnlyList<Intent> intents, double videoTime)
+    private void Apply(GhostCursor? cue, double videoTime)
     {
-        foreach (var intent in intents)
-        {
-            link.Send(intent);
-            if (intent is MouseMove move)
-                trace?.WriteMove(videoTime, move);
-        }
+        if (cue is { } c)
+            trace?.WriteMove(videoTime, c);
         foreach (var note in policy.DrainNotes())
         {
-            Log($"glance[p{note.Priority}]: {note.Reason}");
+            Coach($"glance[p{note.Priority}]: {note.Reason}");
             trace?.WriteGlance(note);
         }
     }
 
-    private volatile TaskCompletionSource<Pong>? _pongSignal;
-
-    private void OnDeviceMessage(DeviceMessage message)
+    /// <summary>A line of coaching feedback: to the console, and to the --log file if one is open.</summary>
+    private void Coach(string message)
     {
-        switch (message)
-        {
-            case Pong pong when _pongSignal is { } signal:
-                signal.TrySetResult(pong);
-                break;
-            case Pong pong:
-                // Unsolicited PONG means the board just reset: its screen
-                // scaling and key state are gone.
-                Log($"device: rebooted (PONG v{pong.Version}), re-sending SCREEN_SIZE");
-                link.Send(new ScreenSize(options.ScreenWidth, options.ScreenHeight));
-                break;
-            case Nack { Reason: Nack.Disarmed }:
-                // The arm gate (pin 2) is the physical safety; disarmed is a
-                // normal state, worth a periodic note and nothing more.
-                if (DateTime.UtcNow - _lastDisarmedLog > TimeSpan.FromSeconds(10))
-                {
-                    _lastDisarmedLog = DateTime.UtcNow;
-                    Log("device: disarmed (NACK 4), input is being dropped");
-                }
-                break;
-            case Nack nack:
-                Log($"device: NACK reason {nack.Reason}");
-                break;
-            case UnknownDeviceMessage unknown:
-                Log($"device: unknown message type 0x{unknown.Type:X2}");
-                break;
-        }
+        Log(message);
+        log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {message}");
     }
 
     private static void Log(string message) =>

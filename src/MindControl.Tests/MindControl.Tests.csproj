@@ -19,9 +19,4 @@
     <ProjectReference Include="..\MindControl\MindControl.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Owned by the misdirection repo; refresh with etc/sync-vectors.ps1. -->
-    <None Include="protocol-vectors.json" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
 </Project>

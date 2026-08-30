@@ -1,15 +1,14 @@
 using MindControl;
-using MindControl.Device;
 using MindControl.Feed;
 using MindControl.Policy;
 
 var feedUri = new Uri("http://127.0.0.1:8723");
-string? portName = null;
 ushort screenWidth = 1920, screenHeight = 1080;
 // A placeholder guess at the player's minimap rect until real calibration
 // exists (default League HUD, bottom-right, 1920x1080).
 var minimap = new MinimapRect(1620, 780, 300, 300);
 string? tracePath = null;
+string? logPath = null;
 string? selfChampion = null;
 HashSet<string>? kinds =
 [
@@ -23,9 +22,6 @@ for (var i = 0; i < args.Length; i++)
     {
         case "--feed":
             feedUri = new Uri(args[++i]);
-            break;
-        case "--port":
-            portName = args[++i];
             break;
         case "--screen":
             var parts = args[++i].Split('x');
@@ -41,6 +37,9 @@ for (var i = 0; i < args.Length; i++)
         case "--trace":
             tracePath = args[++i];
             break;
+        case "--log":
+            logPath = args[++i];
+            break;
         case "--self":
             selfChampion = args[++i];
             break;
@@ -51,14 +50,15 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--help" or "-h":
             Console.WriteLine("""
-                mind-control: reacts to the spectral-sight feed by driving the misdirection device.
+                mind-control: watches the spectral-sight feed and prints fair-play coaching feedback.
+                It observes and advises only — no input is ever sent to the game or any device.
 
                 options:
                   --feed <url>       feed base URL          (default http://127.0.0.1:8723)
-                  --port <name>      serial port, e.g. COM5 (default: dry run, intents logged)
                   --screen <WxH>     target screen size     (default 1920x1080)
                   --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
                   --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
+                  --log <file>       also append coaching feedback to this file
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
                 """);
@@ -76,52 +76,21 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
-using IDeviceLink link = portName is null
-    ? new ConsoleDeviceLink()
-    : new SerialDeviceLink(portName);
-
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
+using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 var policy = new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion });
-var reactor = new Reactor(feed, link, policy, options, trace);
-
-// Tap demo: no keyboard policy exists yet, but the tap idiom does. A key typed
-// into this console taps the same key through the device — logged in a dry
-// run, a physical keypress on hardware. Runs on a background thread so a
-// blocked ReadKey never holds up shutdown.
-if (!Console.IsInputRedirected)
-{
-    _ = Task.Run(() =>
-    {
-        while (!cts.IsCancellationRequested)
-        {
-            var key = Console.ReadKey(intercept: true);
-            if (HidUsage.TryFromChar(key.KeyChar, out var usage))
-            {
-                Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff} tap: '{key.KeyChar}' (usage 0x{usage:X2})");
-                link.Tap(usage);
-            }
-        }
-    });
-}
+var reactor = new Reactor(feed, policy, options, log, trace);
 
 try
 {
-    Console.WriteLine(portName is null
-        ? $"dry run against {feedUri} (no serial port; intents are logged)"
-        : $"driving {portName} from {feedUri}");
-    if (!Console.IsInputRedirected)
-        Console.WriteLine("type a letter/digit here to tap it through the device");
+    Console.WriteLine($"coaching against {feedUri} — feedback to the console" +
+        (logPath is null ? "" : $" and {logPath}") + "; no input is sent anywhere");
     await reactor.RunAsync(cts.Token);
 }
 catch (OperationCanceledException)
 {
-    // Ctrl-C: fall through to the parting PANIC.
-}
-finally
-{
-    // Never leave the device with a key held, whatever ended the run.
-    link.Send(Intent.Panic);
+    // Ctrl-C: clean shutdown.
 }
 return 0;
