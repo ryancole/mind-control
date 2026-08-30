@@ -1,5 +1,4 @@
 using System.Text.Json;
-using MindControl.Device;
 using MindControl.Feed;
 using MindControl.Policy;
 
@@ -24,12 +23,12 @@ public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWi
         Source = meta.Source,
     });
 
-    public void WriteMove(double videoTime, MouseMove move) => Write(new
+    public void WriteMove(double videoTime, GhostCursor cursor) => Write(new
     {
         T = "move",
         VideoTime = videoTime,
-        X = move.X,
-        Y = move.Y,
+        X = cursor.X,
+        Y = cursor.Y,
     });
 
     public void WriteGlance(GlanceNote note) => Write(new

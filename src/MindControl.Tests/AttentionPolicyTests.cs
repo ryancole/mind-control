@@ -1,4 +1,3 @@
-using MindControl.Device;
 using MindControl.Feed;
 using MindControl.Policy;
 
@@ -48,9 +47,6 @@ public sealed class AttentionPolicyTests
         Champions = champions,
     };
 
-    private static MouseMove Move(IReadOnlyList<Intent> intents) =>
-        (MouseMove)intents.Single();
-
     [TestMethod]
     public void World_maps_onto_the_minimap_rect_with_y_flipped()
     {
@@ -60,108 +56,140 @@ public sealed class AttentionPolicyTests
         Assert.AreEqual(((ushort)1150, (ushort)650), map.WorldToScreen(7500, 7500));
     }
 
+    // --- Fair play: only visible enemies near self are ever acted on ---
+
     [TestMethod]
-    public void Nearby_enemy_vanish_snaps_the_cursor_to_its_position()
+    public void Visible_enemy_cast_nearby_snaps_the_cursor_to_it()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500)));
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
+        });
+
+        Assert.AreEqual(new GhostCursor(1180, 650), cue);
+        StringAssert.Contains(policy.DrainNotes().Single().Reason, "cast nearby");
+    }
+
+    [TestMethod]
+    public void A_cast_by_an_enemy_in_fog_is_never_acted_on()
+    {
+        // Same nearby enemy, but not currently visible to the player: whatever
+        // the feed sensed through the fog, the policy must not use it.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var fogged = Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 3);
+        var policy = NewPolicy(Frame(10.0, 0, self, fogged));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
+        });
+
+        Assert.IsNull(cue);
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void A_distant_visible_enemy_is_ignored()
+    {
+        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
+        var enemy = Champ(2, "red", 14000, 14000, visible: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
+        });
+
+        Assert.IsNull(cue);
+    }
+
+    [TestMethod]
+    public void A_vanish_is_never_followed_into_the_fog()
+    {
+        // Vanishing is the transition to not-visible; the policy does not chase
+        // the fade point, which is exactly the fog-tracking it must not do.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
+
+        var cue = policy.OnEvent(new GameEvent
         {
             Kind = EventKind.Vanished, Team = "red", TrackId = 2,
             VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
         });
 
-        Assert.AreEqual(new MouseMove(1180, 650), Move(intents));
+        Assert.IsNull(cue);
+        Assert.IsEmpty(policy.DrainNotes());
     }
 
     [TestMethod]
-    public void Distant_enemy_vanish_is_ignored()
+    public void A_visible_enemy_reappearing_nearby_gets_a_look()
     {
-        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
-
-        var intents = policy.OnEvent(new GameEvent
-        {
-            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
-            VideoTime = 10.1, WorldX = 14000, WorldY = 14000,
-        });
-
-        Assert.IsEmpty(intents);
-    }
-
-    [TestMethod]
-    public void Long_missing_enemy_reappearing_far_away_still_gets_a_look()
-    {
-        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
-        var enemy = Champ(2, "red", 14000, 14000, visible: true, alive: null);
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
         var policy = NewPolicy(Frame(10.0, 0, self, enemy));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Reappeared, Team = "red", TrackId = 2,
-            VideoTime = 10.1, GoneFor = 12.0,
+            Kind = EventKind.Reappeared, Team = "red", TrackId = 2, VideoTime = 10.1, GoneFor = 12.0,
         });
 
-        Assert.AreEqual(new MouseMove(1280, 520), Move(intents));
+        Assert.AreEqual(new GhostCursor(1180, 650), cue);
     }
 
     [TestMethod]
-    public void Briefly_missing_far_enemy_reappearing_is_ignored()
+    public void A_reappearance_that_is_not_visible_on_screen_is_ignored()
     {
+        // The feed says the enemy re-entered vision somewhere, but its current
+        // row is not visible to this player: no cross-map reveal.
         var self = Champ(1, "blue", 1000, 1000, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
+        var enemy = Champ(2, "red", 14000, 14000, visible: false, sinceSeen: 12);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Reappeared, Team = "red", TrackId = 2,
-            VideoTime = 10.1, GoneFor = 1.5,
+            Kind = EventKind.Reappeared, Team = "red", TrackId = 2, VideoTime = 10.1, GoneFor = 12.0,
         });
 
-        Assert.IsEmpty(intents);
+        Assert.IsNull(cue);
     }
 
     [TestMethod]
-    public void Enemy_spike_level_gets_a_look_anywhere_on_the_map()
+    public void A_visible_enemy_level_up_nearby_gets_a_look()
     {
-        var self = Champ(1, "blue", 1000, 1000, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
         {
             Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 6, VideoTime = 10.1,
         });
 
-        Assert.AreEqual(new MouseMove(1280, 520), Move(intents));
-        StringAssert.Contains(policy.DrainNotes().Single().Reason, "hit 6");
+        Assert.AreEqual(new GhostCursor(1180, 650), cue);
+        StringAssert.Contains(policy.DrainNotes().Single().Reason, "reached 6");
     }
 
     [TestMethod]
-    public void Minor_level_up_far_away_is_ignored()
+    public void An_enemy_spike_in_fog_is_not_revealed()
     {
+        // Level 6 across the map, sensed through the fog — the classic map-hack
+        // tell. A fair coach cannot know a fogged enemy just spiked.
         var self = Champ(1, "blue", 1000, 1000, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 14000, 14000)));
+        var fogged = Champ(2, "red", 14000, 14000, visible: false, sinceSeen: 20);
+        var policy = NewPolicy(Frame(10.0, 0, self, fogged));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 7, VideoTime = 10.1,
+            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 6, VideoTime = 10.1,
         });
 
-        Assert.IsEmpty(intents);
-    }
-
-    [TestMethod]
-    public void Minor_level_up_nearby_still_gets_a_look()
-    {
-        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500)));
-
-        var intents = policy.OnEvent(new GameEvent
-        {
-            Kind = EventKind.LevelUp, Team = "red", TrackId = 2, Level = 4, VideoTime = 10.1,
-        });
-
-        Assert.AreEqual(new MouseMove(1180, 650), Move(intents));
+        Assert.IsNull(cue);
+        Assert.IsEmpty(policy.DrainNotes());
     }
 
     [TestMethod]
@@ -170,14 +198,33 @@ public sealed class AttentionPolicyTests
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
         var policy = NewPolicy(Frame(10.0, 0, self, Champ(3, "blue", 8000, 7500)));
 
-        var intents = policy.OnEvent(new GameEvent
+        var cue = policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "blue", TrackId = 3,
-            VideoTime = 10.1, WorldX = 8000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "blue", TrackId = 3, VideoTime = 10.1,
         });
 
-        Assert.IsEmpty(intents);
+        Assert.IsNull(cue);
     }
+
+    [TestMethod]
+    public void No_idle_recheck_of_a_missing_enemys_last_spot()
+    {
+        // A long-missing enemy in fog: a fair coach never drifts attention to
+        // where it was last seen. The cursor just rests at home.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var missing = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
+        var policy = NewPolicy(Frame(10.0, 0, self, missing));
+
+        // First frame parks the cursor at home; from then on, well past any old
+        // tension interval, it never drifts to the missing enemy's last spot.
+        Assert.AreEqual(new GhostCursor(1150, 650), policy.OnFrame(Frame(10.1, 0, self, missing)));
+        for (var t = 10.2; t < 20.0; t += 0.1)
+            Assert.AreEqual((ushort)1150, (policy.OnFrame(Frame(t, 0, self, missing)) ?? new GhostCursor(1150, 650)).X,
+                "cursor rests at home, never rechecks the fogged enemy");
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    // --- Allied deaths (announced to the player) and the home anchor ---
 
     [TestMethod]
     public void Allies_dead_rising_glances_at_the_most_recently_lost_ally()
@@ -187,73 +234,70 @@ public sealed class AttentionPolicyTests
         var justLost = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
         var policy = NewPolicy(Frame(10.0, 1, self, lostLongAgo, justLost));
 
-        var intents = policy.OnFrame(Frame(10.1, 2, self, lostLongAgo, justLost));
+        var cue = policy.OnFrame(Frame(10.1, 2, self, lostLongAgo, justLost));
 
-        Assert.AreEqual(new MouseMove(1240, 560), Move(intents));
+        Assert.AreEqual(new GhostCursor(1240, 560), cue);
     }
 
     [TestMethod]
     public void After_the_dwell_expires_the_cursor_glides_home()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var enemy = Champ(2, "red", 9000, 7500);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
         var policy = NewPolicy(Frame(10.0, 0, self, enemy));
         policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
-            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
         });
 
         // Inside the dwell window: attention holds, no movement.
-        Assert.IsEmpty(policy.OnFrame(Frame(10.5, 0, self, enemy)));
+        Assert.IsNull(policy.OnFrame(Frame(10.5, 0, self, enemy)));
 
         // Past it: one eased step from the glance point (1180) toward home (1150).
-        var step = Move(policy.OnFrame(Frame(11.5, 0, self, enemy)));
+        var step = policy.OnFrame(Frame(11.5, 0, self, enemy))!;
         Assert.IsTrue(step.X < 1180 && step.X > 1150, $"expected an eased step, got {step}");
         Assert.AreEqual(650, step.Y);
 
         // And it converges: after enough frames the cursor rests at home.
-        MouseMove? last = null;
+        GhostCursor? last = null;
         for (var t = 11.6; t < 13.0; t += 0.1)
         {
-            var intents = policy.OnFrame(Frame(t, 0, self, enemy));
-            if (intents.Count > 0)
-                last = Move(intents);
+            var cue = policy.OnFrame(Frame(t, 0, self, enemy));
+            if (cue is not null)
+                last = cue;
         }
-        Assert.AreEqual(new MouseMove(1150, 650), last);
+        Assert.AreEqual(new GhostCursor(1150, 650), last);
     }
 
     [TestMethod]
     public void Higher_priority_glance_preempts_a_held_one()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var enemy = Champ(2, "red", 9000, 7500);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
         var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
         var policy = NewPolicy(Frame(10.0, 0, self, enemy, fallen));
 
         policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
-            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
         });
-        var intents = policy.OnFrame(Frame(10.2, 1, self, enemy, fallen));
+        var cue = policy.OnFrame(Frame(10.2, 1, self, enemy, fallen));
 
-        Assert.AreEqual(new MouseMove(1240, 560), Move(intents), "ally death outranks a fog glance");
+        Assert.AreEqual(new GhostCursor(1240, 560), cue, "ally death outranks a cast glance");
     }
 
     [TestMethod]
     public void Glances_are_explained_and_drained_once()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500)));
+        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500, visible: true)));
         policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "red", Champion = "Zaahen", TrackId = 2,
-            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "red", Champion = "Zaahen", TrackId = 2, VideoTime = 10.1,
         });
 
         var note = policy.DrainNotes().Single();
-        Assert.AreEqual(new GlanceNote(10.1, 1180, 650, 1, "Zaahen vanished nearby"), note);
+        Assert.AreEqual(new GlanceNote(10.1, 1180, 650, 2, "Zaahen cast nearby"), note);
         Assert.IsEmpty(policy.DrainNotes(), "notes drain once");
     }
 
@@ -261,86 +305,21 @@ public sealed class AttentionPolicyTests
     public void Suppressed_snaps_leave_no_note()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
         var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
-        var policy = NewPolicy(Frame(10.0, 0, self, Champ(2, "red", 9000, 7500), fallen));
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy, fallen));
 
         // Ally death takes the glance...
-        policy.OnFrame(Frame(10.1, 1, self, Champ(2, "red", 9000, 7500), fallen));
+        policy.OnFrame(Frame(10.1, 1, self, enemy, fallen));
         var note = policy.DrainNotes().Single();
         StringAssert.StartsWith(note.Reason, "ally down");
 
-        // ...and a lower-priority vanish during the dwell is suppressed, note included.
+        // ...and a lower-priority cast during the dwell is suppressed, note included.
         policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "red", Champion = "Zaahen", TrackId = 2,
-            VideoTime = 10.2, WorldX = 9000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "red", Champion = "Zaahen", TrackId = 2, VideoTime = 10.2,
         });
         Assert.IsEmpty(policy.DrainNotes());
-    }
-
-    [TestMethod]
-    public void Long_missing_enemy_draws_an_idle_recheck_of_its_last_spot()
-    {
-        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var missing = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
-        var policy = NewPolicy(Frame(10.0, 0, self, missing));
-
-        // Inside the tension interval (2.5s from the resync baseline): rest at home.
-        Assert.AreEqual(new MouseMove(1150, 650), Move(policy.OnFrame(Frame(10.1, 0, self, missing))));
-        Assert.IsEmpty(policy.DrainNotes());
-
-        // Past it: attention drifts to the last-known spot, explained.
-        var intents = policy.OnFrame(Frame(13.0, 0, self, missing));
-
-        Assert.AreEqual(new MouseMove(1220, 580), Move(intents));
-        var note = policy.DrainNotes().Single();
-        Assert.AreEqual(0, note.Priority);
-        StringAssert.Contains(note.Reason, "champ2 missing 9s");
-    }
-
-    [TestMethod]
-    public void Tension_rechecks_rotate_among_the_missing()
-    {
-        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var gone2 = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
-        var gone3 = Champ(3, "red", 3000, 3000, visible: false, alive: null, sinceSeen: 12);
-        var policy = NewPolicy(Frame(10.0, 0, self, gone2, gone3));
-
-        Assert.AreEqual(new MouseMove(1220, 580), Move(policy.OnFrame(Frame(13.0, 0, self, gone2, gone3))),
-            "first check goes to the lowest unchecked track");
-        Assert.AreEqual(new MouseMove(1060, 740), Move(policy.OnFrame(Frame(15.6, 0, self, gone2, gone3))),
-            "next check rotates to the other missing enemy");
-    }
-
-    [TestMethod]
-    public void Visible_or_dead_enemies_never_draw_tension()
-    {
-        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var seen = Champ(2, "red", 11000, 11000, visible: true, sinceSeen: 0);
-        var dead = Champ(3, "red", 3000, 3000, visible: false, alive: false, sinceSeen: 20);
-        var policy = NewPolicy(Frame(10.0, 0, self, seen, dead));
-
-        Assert.AreEqual(new MouseMove(1150, 650), Move(policy.OnFrame(Frame(13.0, 0, self, seen, dead))),
-            "nothing tense: the cursor just rests at home");
-        Assert.IsEmpty(policy.DrainNotes());
-    }
-
-    [TestMethod]
-    public void Real_events_preempt_a_tension_glance()
-    {
-        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var missing = Champ(2, "red", 11000, 11000, visible: false, alive: null, sinceSeen: 9);
-        var nearby = Champ(3, "red", 9000, 7500);
-        var policy = NewPolicy(Frame(10.0, 0, self, missing, nearby));
-        policy.OnFrame(Frame(13.0, 0, self, missing, nearby));   // tension glance held
-
-        var intents = policy.OnEvent(new GameEvent
-        {
-            Kind = EventKind.Vanished, Team = "red", TrackId = 3,
-            VideoTime = 13.5, WorldX = 9000, WorldY = 7500,
-        });
-
-        Assert.AreEqual(new MouseMove(1180, 650), Move(intents));
     }
 
     [TestMethod]
@@ -357,12 +336,13 @@ public sealed class AttentionPolicyTests
         // Flag flaps to the ally; Annie (champ1) still on the map, not flagged.
         var flapped = Frame(2.0, 0,
             Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true));
-        var intents = new List<Intent>();
+        var cues = new List<GhostCursor>();
         for (var i = 0; i < 5; i++)
-            intents.AddRange(policy.OnFrame(flapped with { VideoTime = 2.0 + i * 0.1 }));
+            if (policy.OnFrame(flapped with { VideoTime = 2.0 + i * 0.1 }) is { } cue)
+                cues.Add(cue);
 
         // Any moves emitted glide toward champ1's home (1150, 650), not champ3's (1060, 740).
-        foreach (var move in intents.OfType<MouseMove>())
+        foreach (var move in cues)
             Assert.IsTrue(Math.Abs(move.X - 1150) <= 30 && Math.Abs(move.Y - 650) <= 30,
                 $"cursor should stay anchored to the majority self, got {move}");
     }
@@ -377,10 +357,10 @@ public sealed class AttentionPolicyTests
             Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true));
         policy.Resync(frame);
 
-        var move = Move(policy.OnFrame(Frame(10.1, 0,
-            Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true))));
+        var cue = policy.OnFrame(Frame(10.1, 0,
+            Champ(1, "blue", 7500, 7500), Champ(3, "blue", 3000, 3000, isSelf: true)));
 
-        Assert.AreEqual(new MouseMove(1150, 650), move);
+        Assert.AreEqual(new GhostCursor(1150, 650), cue);
     }
 
     [TestMethod]
@@ -391,11 +371,10 @@ public sealed class AttentionPolicyTests
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
         policy.Resync(Frame(10.0, 0, self));
 
-        Assert.IsEmpty(policy.OnFrame(Frame(10.1, 0, self)));
-        Assert.IsEmpty(policy.OnEvent(new GameEvent
+        Assert.IsNull(policy.OnFrame(Frame(10.1, 0, self)));
+        Assert.IsNull(policy.OnEvent(new GameEvent
         {
-            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
-            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 10.1,
         }));
     }
 }
