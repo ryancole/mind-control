@@ -10,7 +10,7 @@ param(
     [string]$Feed = "http://127.0.0.1:8723"
 )
 
-$args = @("--feed", $Feed)
-if ($Log) { $args += @("--log", $Log) }
+$appArgs = @("--feed", $Feed)
+if ($Log) { $appArgs += @("--log", $Log) }
 
-dotnet watch --project "$PSScriptRoot\..\src\MindControl" -- run -- @args
+dotnet watch run --project "$PSScriptRoot\..\src\MindControl" -- @appArgs

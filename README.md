@@ -47,6 +47,13 @@ etc/dev.ps1 -Log data/coaching.log  # also append it to a file
 
 `dotnet test` needs nothing running.
 
+While it runs it also serves the coaching feedback as SSE at
+`http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
+turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
+open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
+the ghost's attention drawn as a gold crosshair on the map. The stream is
+output-only, like the console.
+
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the ghost's cursor over the map, with every glance labeled with its

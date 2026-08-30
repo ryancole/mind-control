@@ -27,7 +27,8 @@ public sealed record ReactorOptions
 /// silence — pauses coaching rather than advising off stale state.
 /// </summary>
 public sealed class Reactor(
-    FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null)
+    FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null,
+    CoachServer? coach = null)
 {
     private static readonly TimeSpan HealthLogInterval = TimeSpan.FromSeconds(5);
 
@@ -109,10 +110,11 @@ public sealed class Reactor(
             _blind = false;
             _paused = false;
             Log($"resynced at video_time={frame.VideoTime:0.000} seq={frame.Seq}");
+            coach?.PublishStatus("coaching");
             return;
         }
 
-        Apply(policy.OnFrame(frame), frame.VideoTime);
+        Apply(policy.OnFrame(frame), frame.VideoTime, frame.GameTime);
     }
 
     /// <summary>
@@ -149,7 +151,7 @@ public sealed class Reactor(
                 // Events that arrive while blind predate the resync baseline;
                 // advising on them would mean advising on a past we cannot see.
                 if (!_blind)
-                    Apply(policy.OnEvent(evt), evt.VideoTime);
+                    Apply(policy.OnEvent(evt), evt.VideoTime, evt.GameTime);
                 break;
             case GapNotice(var from, var to):
                 PauseBecause($"feed gap, lost ids {from}..{to}");
@@ -172,17 +174,22 @@ public sealed class Reactor(
         {
             _paused = true;
             Log($"coaching paused: {reason}");
+            coach?.PublishStatus("paused", reason);
         }
     }
 
-    private void Apply(GhostCursor? cue, double videoTime)
+    private void Apply(GhostCursor? cue, double videoTime, int? gameTime)
     {
         if (cue is { } c)
+        {
             trace?.WriteMove(videoTime, c);
+            coach?.PublishMove(videoTime, c, gameTime);
+        }
         foreach (var note in policy.DrainNotes())
         {
             Coach($"glance[p{note.Priority}]: {note.Reason}");
             trace?.WriteGlance(note);
+            coach?.PublishGlance(note, gameTime);
         }
     }
 
