@@ -452,6 +452,45 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
+    public void A_mutual_identity_exchange_swaps_the_self_votes()
+    {
+        // A repaired crossing swap arrives as two corrections at the same
+        // instant: "X correcting Y" and "Y correcting X". Handled naively the
+        // second migration hands the first one's merged pile straight back,
+        // leaving self on the name it was just corrected away from.
+        var mislabeledSelf = Champ(1, "blue", 7500, 7500, isSelf: true) with { Champion = "Leona" };
+        var mislabeledAlly = Champ(3, "blue", 3000, 3000) with { Champion = "Ezreal" };
+        var policy = NewPolicy(Frame(0, 0, mislabeledSelf, mislabeledAlly));
+        for (var i = 0; i < 5; i++)
+            policy.OnFrame(Frame(i * 0.1, 0, mislabeledSelf, mislabeledAlly));
+
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Identified, Team = "blue", TrackId = 1,
+            Champion = "Ezreal", Replaces = "Leona", VideoTime = 1.0,
+        });
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Identified, Team = "blue", TrackId = 3,
+            Champion = "Leona", Replaces = "Ezreal", VideoTime = 1.0,
+        });
+
+        // Labels now honest: the player is Ezreal. Their own death must be
+        // suppressed — a glance here means self is still on the old name.
+        var self = mislabeledSelf with { Champion = "Ezreal" };
+        var ally = mislabeledAlly with { Champion = "Leona" };
+        policy.OnFrame(Frame(1.1, 0, self, ally));
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Death, Team = "blue", TrackId = 1, Champion = "Ezreal",
+            AlliesDead = 1, VideoTime = 1.2,
+        });
+
+        Assert.IsNull(cue, "own death coached: self did not survive the exchange");
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
     public void After_the_dwell_expires_the_cursor_glides_home()
     {
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);

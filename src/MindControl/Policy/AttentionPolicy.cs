@@ -75,6 +75,7 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     private readonly Dictionary<string, double> _lastMissingCall = [];
     private readonly Dictionary<string, int> _selfVotes = [];
     private string? _selfName;
+    private (double VideoTime, string Champion, string Replaces, int Moved, bool RenamedSelf)? _lastCorrection;
     private readonly List<GlanceNote> _notes = [];
 
     public IReadOnlyList<GlanceNote> DrainNotes()
@@ -163,15 +164,48 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     /// it announces the correction with <c>replaces</c>; votes earned under the
     /// old name belong to the new one, or a corrected self would go
     /// unrecognized until the majority re-accumulated from scratch.
+    /// A repaired crossing swap arrives as a mutual pair at one instant —
+    /// "X correcting Y" then "Y correcting X" — which migration alone gets
+    /// wrong: the second event would hand the first one's merged pile straight
+    /// back. The pair means the two names traded tracks, so their vote counts
+    /// trade too.
     /// </summary>
     private void OnIdentified(GameEvent evt)
     {
         if (evt.Champion is not { } name || evt.Replaces is not { } previous || name == previous)
             return;
-        if (_selfVotes.Remove(previous, out var votes))
-            _selfVotes[name] = _selfVotes.GetValueOrDefault(name) + votes;
-        if (_selfName == previous)
+
+        if (_lastCorrection is { } pair && pair.VideoTime == evt.VideoTime
+            && pair.Champion == previous && pair.Replaces == name)
+        {
+            // Second half of the exchange. The first half left `previous`
+            // holding both originals (its own plus `Moved`); unwind to a swap.
+            var merged = _selfVotes.GetValueOrDefault(previous);
+            SetVotes(name, merged - pair.Moved);
+            SetVotes(previous, pair.Moved);
+            // Self followed the first half's rename if it was on that name;
+            // otherwise it was the other side of the trade and moves now.
+            if (!pair.RenamedSelf && _selfName == previous)
+                _selfName = name;
+            _lastCorrection = null;
+            return;
+        }
+
+        _selfVotes.Remove(previous, out var moved);
+        if (moved > 0)
+            _selfVotes[name] = _selfVotes.GetValueOrDefault(name) + moved;
+        var renamedSelf = _selfName == previous;
+        if (renamedSelf)
             _selfName = name;
+        _lastCorrection = (evt.VideoTime, name, previous, moved, renamedSelf);
+    }
+
+    private void SetVotes(string name, int votes)
+    {
+        if (votes > 0)
+            _selfVotes[name] = votes;
+        else
+            _selfVotes.Remove(name);
     }
 
     /// <summary>
