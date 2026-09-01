@@ -108,13 +108,16 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
-    public void A_vanish_is_never_followed_into_the_fog()
+    public void A_fresh_vanish_gets_one_look_at_the_fade_point()
     {
-        // Vanishing is the transition to not-visible; the policy does not chase
-        // the fade point, which is exactly the fog-tracking it must not do.
+        // The vanish *moment* is the player's own information: the blip was on
+        // their minimap until seconds ago. One look at where it faded — the
+        // classic "ss/mia" call — then nothing (No_idle_recheck covers after).
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
-        var enemy = Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1);
-        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var policy = NewPolicy(Frame(5.0, 0, self, enemy));
+        policy.OnFrame(Frame(10.0, 0, self,
+            Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1)));
 
         var cue = policy.OnEvent(new GameEvent
         {
@@ -122,8 +125,94 @@ public sealed class AttentionPolicyTests
             VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
         });
 
+        Assert.AreEqual(new GhostCursor(1180, 650), cue);
+        StringAssert.Contains(policy.DrainNotes().Single().Reason, "missing");
+    }
+
+    [TestMethod]
+    public void A_missing_call_is_not_repeated_inside_the_window()
+    {
+        // The enemy shows for a solid spell, fades, shows again, fades again
+        // 15s after the first call: same fact, no second call.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var faded = Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1);
+        var policy = NewPolicy(Frame(5.0, 0, self, enemy));
+        policy.OnFrame(Frame(10.0, 0, self, faded));
+        Assert.IsNotNull(policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 2, Champion = "champ2",
+            VideoTime = 10.1, WorldX = 9000, WorldY = 7500,
+        }));
+
+        policy.OnFrame(Frame(11.0, 0, self, enemy));   // back for another solid spell
+        policy.OnFrame(Frame(25.0, 0, self, faded));
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 2, Champion = "champ2",
+            VideoTime = 25.1, WorldX = 9000, WorldY = 7500,
+        });
+
+        Assert.IsNull(cue);
+        Assert.HasCount(1, policy.DrainNotes(), "one fact, one call");
+    }
+
+    [TestMethod]
+    public void A_blip_flickering_at_the_vision_edge_is_not_missing()
+    {
+        // Fog-edge traffic: visible for under a second, gone again. That enemy
+        // was never solidly on the map, so each flicker is noise, not an MIA.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
+        policy.OnFrame(Frame(11.0, 0, self,
+            Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1)));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
+            VideoTime = 11.1, WorldX = 9000, WorldY = 7500,
+        });
+
         Assert.IsNull(cue);
         Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void A_stale_vanish_is_old_news_not_a_moment()
+    {
+        // A slow upstream debounce means the fade happened long before the
+        // event fired; looking now would be fog-chasing, not awareness — even
+        // for an enemy who had been solidly on the map.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        var policy = NewPolicy(Frame(5.0, 0, self, enemy));
+        policy.OnFrame(Frame(20.0, 0, self,
+            Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 6)));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 2,
+            VideoTime = 20.1, WorldX = 9000, WorldY = 7500,
+        });
+
+        Assert.IsNull(cue);
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void A_vanish_without_world_coordinates_is_ignored()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var enemy = Champ(2, "red", 9000, 7500, visible: false, sinceSeen: 0.1);
+        var policy = NewPolicy(Frame(10.0, 0, self, enemy));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Vanished, Team = "red", TrackId = 2, VideoTime = 10.1,
+        });
+
+        Assert.IsNull(cue);
     }
 
     [TestMethod]
@@ -193,8 +282,10 @@ public sealed class AttentionPolicyTests
     }
 
     [TestMethod]
-    public void Own_team_events_never_trigger_a_glance()
+    public void An_allys_cast_never_triggers_a_glance()
     {
+        // Own-team deaths and respawns are announced and reacted to; allies'
+        // routine spellwork is not what this flags.
         var self = Champ(1, "blue", 7500, 7500, isSelf: true);
         var policy = NewPolicy(Frame(10.0, 0, self, Champ(3, "blue", 8000, 7500)));
 
@@ -237,6 +328,127 @@ public sealed class AttentionPolicyTests
         var cue = policy.OnFrame(Frame(10.1, 2, self, lostLongAgo, justLost));
 
         Assert.AreEqual(new GhostCursor(1240, 560), cue);
+    }
+
+    [TestMethod]
+    public void An_ally_death_event_names_the_casualty_and_snaps_to_them()
+    {
+        // Unlike the counter heuristic, the event says exactly who fell; the
+        // last-known spot of an own-team champion is the player's own minimap.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
+        var policy = NewPolicy(Frame(10.0, 0, self, fallen));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Death, Team = "blue", TrackId = 4, Champion = "champ4",
+            AlliesDead = 1, VideoTime = 10.1,
+        });
+
+        Assert.AreEqual(new GhostCursor(1240, 560), cue);
+        StringAssert.Contains(policy.DrainNotes().Single().Reason, "ally champ4 down");
+    }
+
+    [TestMethod]
+    public void A_death_event_is_never_double_announced_by_the_counter()
+    {
+        // The event carries allies_dead; when the counter frame then arrives
+        // showing the same rise, that death is already old news.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
+        var policy = NewPolicy(Frame(10.0, 0, self, fallen));
+
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Death, Team = "blue", TrackId = 4, Champion = "champ4",
+            AlliesDead = 1, VideoTime = 10.1,
+        });
+        policy.OnFrame(Frame(10.2, 1, self, fallen));
+
+        Assert.HasCount(1, policy.DrainNotes(), "one death, one note");
+    }
+
+    [TestMethod]
+    public void With_liveness_the_counter_heuristic_stays_quiet()
+    {
+        // A liveness-corroborating feed announces deaths as events; the
+        // counter guess would only shadow them with a vaguer note.
+        var policy = new AttentionPolicy(Rect, new AttentionOptions());
+        policy.Configure(CalibratedMeta with { HasLiveness = true });
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var fallen = Champ(4, "blue", 12000, 12000, visible: false, alive: null, sinceSeen: 0.5);
+        policy.Resync(Frame(10.0, 0, self, fallen));
+
+        var cue = policy.OnFrame(Frame(10.1, 1, self, fallen));
+
+        Assert.AreEqual(new GhostCursor(1150, 650), cue, "the cursor just parks at home");
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void An_ally_respawn_gets_a_low_priority_look()
+    {
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var respawned = Champ(4, "blue", 3500, 3500);
+        var policy = NewPolicy(Frame(10.0, 0, self, respawned));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Respawn, Team = "blue", TrackId = 4, Champion = "champ4",
+            DownFor = 25.0, VideoTime = 10.1,
+        });
+
+        Assert.AreEqual(new GhostCursor(1070, 730), cue);
+        var note = policy.DrainNotes().Single();
+        Assert.AreEqual(1, note.Priority);
+        StringAssert.Contains(note.Reason, "ally champ4 back up after 25s");
+    }
+
+    [TestMethod]
+    public void The_players_own_death_gets_no_glance()
+    {
+        // The player lived it; there is nothing to point at.
+        var self = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var policy = NewPolicy(Frame(10.0, 0, self));
+
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Death, Team = "blue", TrackId = 1, Champion = "champ1",
+            AlliesDead = 1, VideoTime = 10.1,
+        });
+
+        Assert.IsNull(cue);
+        Assert.IsEmpty(policy.DrainNotes());
+    }
+
+    [TestMethod]
+    public void An_identity_correction_migrates_the_self_majority()
+    {
+        // The pipeline renames the self track before the roster locks; the
+        // votes earned under the old name must follow it, or self would go
+        // unrecognized until the majority re-accumulated.
+        var ally = Champ(3, "blue", 3000, 3000);
+        var flagged = Champ(1, "blue", 7500, 7500, isSelf: true);
+        var policy = NewPolicy(Frame(0, 0, flagged, ally));
+        for (var i = 0; i < 5; i++)
+            policy.OnFrame(Frame(i * 0.1, 0, flagged, ally));
+
+        policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Identified, Team = "blue", TrackId = 1,
+            Champion = "Annie", Replaces = "champ1", VideoTime = 1.0,
+        });
+
+        // Self renamed and no longer flagged; a nearby enemy cast must still land.
+        var renamed = Champ(1, "blue", 7500, 7500) with { Champion = "Annie" };
+        var enemy = Champ(2, "red", 9000, 7500, visible: true);
+        policy.OnFrame(Frame(1.1, 0, renamed, ally, enemy));
+        var cue = policy.OnEvent(new GameEvent
+        {
+            Kind = EventKind.Cast, Team = "red", TrackId = 2, VideoTime = 1.2,
+        });
+
+        Assert.AreEqual(new GhostCursor(1180, 650), cue, "self survives the rename");
     }
 
     [TestMethod]

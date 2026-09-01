@@ -52,6 +52,14 @@ public sealed class CoachServer : IDisposable
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });
 
+    /// <summary>A team's locked five, for the dashboard's header — state, not advice.</summary>
+    public void PublishRoster(GameEvent evt) =>
+        Publish(new
+        {
+            T = "roster", VideoTime = evt.VideoTime, GameTime = evt.GameTime,
+            Team = evt.Team, Champions = evt.Champions,
+        });
+
     private (double, double) Normalize(ushort x, ushort y) =>
         ((x - _minimap.X) / _minimap.Width, (y - _minimap.Y) / _minimap.Height);
 

@@ -148,6 +148,10 @@ public sealed class Reactor(
             case EventNotice(var evt):
                 Log($"event: {evt.Kind} {evt.Team}/{evt.Champion ?? $"track {evt.TrackId}"} " +
                     $"at video_time={evt.VideoTime:0.000}");
+                // Rosters are durable identity, not advice about a moment, so
+                // the blind gate below does not apply to them.
+                if (evt.Kind == EventKind.Roster)
+                    coach?.PublishRoster(evt);
                 // Events that arrive while blind predate the resync baseline;
                 // advising on them would mean advising on a past we cannot see.
                 if (!_blind)

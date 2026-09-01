@@ -23,6 +23,27 @@ public sealed record AttentionOptions
     /// the viewport roams (death cam, spectating fights).
     /// </summary>
     public string? SelfChampion { get; init; }
+
+    /// <summary>
+    /// A vanish whose last sighting is older than this is old news, not a
+    /// moment: glancing at it would be the fog-chasing this policy avoids.
+    /// </summary>
+    public double VanishFreshSeconds { get; init; } = 3.0;
+
+    /// <summary>
+    /// An enemy must have been on the map at least this long for their fade to
+    /// be news. A blip flickering at the vision edge was never solidly "seen",
+    /// and calling every flicker missing is noise, not awareness — recorded
+    /// sessions carry hundreds of such fog-edge vanishes.
+    /// </summary>
+    public double MinSeenSeconds { get; init; } = 4.0;
+
+    /// <summary>
+    /// One "missing" call per champion per this window. A laner cycling
+    /// through the vision edge is the same fact each time; a coach says "ss"
+    /// once, not every ten seconds.
+    /// </summary>
+    public double VanishRepeatSeconds { get; init; } = 20.0;
 }
 
 /// <summary>
@@ -30,10 +51,12 @@ public sealed record AttentionOptions
 /// cursor lives on the minimap — resting on the self champion, snapping to
 /// things a good player would have clocked <em>on their own screen</em>, dwelling,
 /// then gliding home. It reacts only to enemies the player can currently see
-/// (<c>visible == true</c>) and to allied deaths, which the game announces. It
-/// never consumes information the player does not have: no enemy positions in
-/// fog, no "seconds since seen", no last-known spots, no level or cast sensed
-/// through the fog. All timing runs on video_time so replays are deterministic.
+/// (<c>visible == true</c>), to the moment an enemy fades from the minimap —
+/// which the player watched happen, or should have — and to allied deaths and
+/// respawns, which the game announces. It never consumes information the player
+/// does not have: no enemy positions in fog, no "seconds since seen", no stale
+/// last-known spots, no level or cast sensed through the fog. All timing runs
+/// on video_time so replays are deterministic.
 /// Without world calibration the policy stays inert. The output is where to look
 /// and why — a coaching cue, never input to the game.
 /// </summary>
@@ -42,10 +65,14 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     private sealed record Glance(ushort X, ushort Y, double UntilVideoTime, int Priority);
 
     private ScreenMap? _map;
+    private bool _hasLiveness;
     private FrameEnvelope? _frame;
     private Glance? _glance;
     private (double X, double Y)? _cursor;
     private int? _alliesDead;
+    private readonly Dictionary<int, double> _visibleSince = [];
+    private readonly Dictionary<int, double> _seenFor = [];
+    private readonly Dictionary<string, double> _lastMissingCall = [];
     private readonly Dictionary<string, int> _selfVotes = [];
     private string? _selfName;
     private readonly List<GlanceNote> _notes = [];
@@ -59,7 +86,11 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
         return drained;
     }
 
-    public void Configure(Meta meta) => _map = ScreenMap.FromMeta(meta, minimap);
+    public void Configure(Meta meta)
+    {
+        _map = ScreenMap.FromMeta(meta, minimap);
+        _hasLiveness = meta.HasLiveness;
+    }
 
     public void Resync(FrameEnvelope? latest)
     {
@@ -67,6 +98,16 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
         _glance = null;
         _notes.Clear();
         _alliesDead = latest?.AlliesDead;
+        // Visible spells restart from the baseline: a span that straddles a
+        // gap is a claim about frames we never saw. The missing-call memory
+        // goes with them — video_time can restart with a new run, and one
+        // repeated "ss" after a pause beats a wedged comparison.
+        _visibleSince.Clear();
+        _seenFor.Clear();
+        _lastMissingCall.Clear();
+        if (latest is not null)
+            foreach (var row in latest.Champions.Where(c => c.Visible))
+                _visibleSince[row.TrackId] = latest.VideoTime;
         // _cursor survives: the physical pointer is wherever we last put it.
         // _selfVotes survive too: identity outlives a gap.
     }
@@ -75,10 +116,14 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
     {
         _frame = frame;
         VoteSelf(frame);
+        TrackVisibility(frame);
         if (_map is null)
             return null;
 
-        if (frame.AlliesDead is { } dead)
+        // The counter is the fallback for feeds that cannot corroborate
+        // liveness; with liveness, the death *event* names the casualty and
+        // carries the count, so the guess below would only double-announce.
+        if (!_hasLiveness && frame.AlliesDead is { } dead)
         {
             var rising = dead > (_alliesDead ?? dead);
             _alliesDead = dead;
@@ -101,17 +146,81 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
 
     public GhostCursor? OnEvent(GameEvent evt)
     {
+        if (evt.Kind == EventKind.Identified)
+        {
+            OnIdentified(evt);
+            return null;
+        }
         if (_map is null || Self() is not { } self)
             return null;
-        if (evt.Team is not { } team || team == self.Team)
-            return null;   // allies' own movements are not what this flags
+        if (evt.Team is not { } team)
+            return null;
+        return team == self.Team ? OnAllyEvent(evt, self) : OnEnemyEvent(evt, self, team);
+    }
+
+    /// <summary>
+    /// Identity bookkeeping, never a glance. When the pipeline renames a track
+    /// it announces the correction with <c>replaces</c>; votes earned under the
+    /// old name belong to the new one, or a corrected self would go
+    /// unrecognized until the majority re-accumulated from scratch.
+    /// </summary>
+    private void OnIdentified(GameEvent evt)
+    {
+        if (evt.Champion is not { } name || evt.Replaces is not { } previous || name == previous)
+            return;
+        if (_selfVotes.Remove(previous, out var votes))
+            _selfVotes[name] = _selfVotes.GetValueOrDefault(name) + votes;
+        if (_selfName == previous)
+            _selfName = name;
+    }
+
+    /// <summary>
+    /// Own-team events. An ally's death and respawn are announced to the player
+    /// (kill banner, portrait timer), and own-team positions are always on the
+    /// player's own minimap, so unlike enemies no visibility gate applies. The
+    /// player's own death and respawn need no glance — they lived it.
+    /// </summary>
+    private GhostCursor? OnAllyEvent(GameEvent evt, ChampionRow self)
+    {
+        // Even without a place to look, the event's count supersedes the
+        // frame counter heuristic for this death: never announce it twice.
+        if (evt.Kind == EventKind.Death && evt.AlliesDead is { } counted)
+            _alliesDead = Math.Max(_alliesDead ?? counted, counted);
+
+        // By track first; by name when the track is gone — a corpse's track is
+        // often dropped before the frame that reaches us (latest wins), and
+        // deaths are keyed by champion upstream for the same reason.
+        var row = _frame?.Champions.FirstOrDefault(c =>
+            c.Team == self.Team && c is { WorldX: not null, WorldY: not null }
+            && (c.TrackId == evt.TrackId || (evt.Champion is not null && c.Champion == evt.Champion)));
+        var who = evt.Champion ?? row?.Champion;
+        if (row is null || who == self.Champion)
+            return null;
+
+        var at = _map!.WorldToScreen(row.WorldX!.Value, row.WorldY!.Value);
+        return evt.Kind switch
+        {
+            EventKind.Death => SnapTo(at, evt.VideoTime, priority: 3, $"ally {who ?? "?"} down"),
+            EventKind.Respawn => SnapTo(at, evt.VideoTime, priority: 1,
+                evt.DownFor is { } downFor
+                    ? $"ally {who ?? "?"} back up after {downFor:0}s"
+                    : $"ally {who ?? "?"} back up"),
+            _ => null,
+        };
+    }
+
+    private GhostCursor? OnEnemyEvent(GameEvent evt, ChampionRow self, string team)
+    {
+        if (evt.Kind == EventKind.Vanished)
+            return OnEnemyVanished(evt);
 
         // Fair play: act only on an enemy the player can currently see. A
         // champion in fog — its last position, how long it has been missing, a
         // level or cast sensed through the fog — is information the player does
         // not have, so it is resolved from the *current* row and only when that
-        // row is visible. A vanished enemy is by definition no longer visible
-        // and so is never followed into the fog.
+        // row is visible. (Enemy death and respawn never arrive: liveness is
+        // HUD-corroborated and only allies have HUD panels, so they fall
+        // through with the rest.)
         var row = _frame?.Champions.FirstOrDefault(c =>
             c.TrackId == evt.TrackId && c.Team == team && c.Visible
             && c is { WorldX: not null, WorldY: not null });
@@ -119,7 +228,7 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
             return null;
 
         var who = evt.Champion ?? row.Champion ?? $"track {evt.TrackId}";
-        var at = _map.WorldToScreen(row.WorldX!.Value, row.WorldY!.Value);
+        var at = _map!.WorldToScreen(row.WorldX!.Value, row.WorldY!.Value);
         return evt.Kind switch
         {
             EventKind.Cast => SnapTo(at, evt.VideoTime, priority: 2, $"{who} cast nearby"),
@@ -128,6 +237,60 @@ public sealed class AttentionPolicy(MinimapRect minimap, AttentionOptions option
             EventKind.Reappeared => SnapTo(at, evt.VideoTime, priority: 1, $"{who} back in your view"),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// The one exception to the visible-row rule, because the vanish *moment*
+    /// is the player's own information: the blip sat on their minimap until
+    /// seconds ago and they watched it fade — or should have, which is the
+    /// coaching point. The event carries where that was. Everything after the
+    /// moment stays out of bounds: one look, then no recheck and no drift back
+    /// (see <see cref="OnFrame"/>). Map-wide on purpose — a missing enemy is
+    /// news wherever they faded, which is what "ss/mia" discipline teaches.
+    /// </summary>
+    private GhostCursor? OnEnemyVanished(GameEvent evt)
+    {
+        if (evt is not { WorldX: { } worldX, WorldY: { } worldY, TrackId: { } trackId })
+            return null;
+        // The fade predates the event by the tracker's debounce, carried on
+        // the row as seconds_since_seen. Beyond the bound it is old news.
+        var row = _frame?.Champions.FirstOrDefault(c => c.TrackId == trackId);
+        if (row is { SecondsSinceSeen: var age } && age > options.VanishFreshSeconds)
+            return null;
+        // Only an enemy who was solidly on the map is missing when they fade;
+        // the spell may still be open here when this event outruns the frame
+        // that closes it, so measure from whichever record exists.
+        var fadeAt = evt.VideoTime - (row?.SecondsSinceSeen ?? 0);
+        var seenFor = _visibleSince.TryGetValue(trackId, out var since)
+            ? fadeAt - since
+            : _seenFor.GetValueOrDefault(trackId);
+        if (seenFor < options.MinSeenSeconds)
+            return null;
+        var who = evt.Champion ?? row?.Champion ?? $"track {trackId}";
+        // Said once, it is said: the same champion fading again inside the
+        // window is the same fact, not a new call.
+        if (evt.VideoTime - _lastMissingCall.GetValueOrDefault(who, double.NegativeInfinity)
+            < options.VanishRepeatSeconds)
+            return null;
+        _lastMissingCall[who] = evt.VideoTime;
+        return SnapTo(_map!.WorldToScreen(worldX, worldY), evt.VideoTime, priority: 2, $"{who} missing");
+    }
+
+    /// <summary>
+    /// Visible-spell bookkeeping for the vanish gate: when each track's current
+    /// spell began, and how long its last completed one ran. The spell closes
+    /// at the last sighting (frame time less <c>seconds_since_seen</c>), not at
+    /// the debounced frame that reports it.
+    /// </summary>
+    private void TrackVisibility(FrameEnvelope frame)
+    {
+        foreach (var row in frame.Champions)
+        {
+            if (row.Visible)
+                _visibleSince.TryAdd(row.TrackId, frame.VideoTime);
+            else if (_visibleSince.Remove(row.TrackId, out var since))
+                _seenFor[row.TrackId] = frame.VideoTime - row.SecondsSinceSeen - since;
+        }
     }
 
     private GhostCursor? SnapTo((ushort X, ushort Y) point, double videoTime, int priority, string reason)
