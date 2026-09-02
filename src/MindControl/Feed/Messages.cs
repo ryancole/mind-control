@@ -31,6 +31,14 @@ public sealed record Meta
     public bool HasGameTime { get; init; }
     public bool HasLiveness { get; init; }
     public bool HasNameplates { get; init; }
+
+    // The coaching stages. All three need a spectral-sight run made with
+    // --coach, which feeds every source frame and is offline-VOD only, so a
+    // live capture leaves them false. A policy must check rather than assume:
+    // false means nothing looked, never that nothing happened.
+    public bool HasAbilities { get; init; }
+    public bool HasThreats { get; init; }
+    public bool HasSkillshots { get; init; }
     public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
 }
@@ -72,6 +80,83 @@ public sealed record ChampionRow
     public double? CastSpan { get; init; }
     public bool? CastContinuous { get; init; }
     public bool? CastConfirmed { get; init; }
+
+    // The coaching arrays, on the is_self row only: the client draws nobody
+    // else's cooldowns, nobody else's printed health, and the camera is the
+    // player's own. Null means none resolved on this frame, which is the
+    // usual case -- they are moments, not state.
+    public AbilityUse[]? Abilities { get; init; }
+    public Threat[]? Threats { get; init; }
+    public Skillshot[]? Skillshots { get; init; }
+}
+
+/// <summary>One of the player's own casts, named to a button by the HUD.</summary>
+public sealed record AbilityUse
+{
+    public string Slot { get; init; } = "";
+    public double At { get; init; }
+    public int? Countdown { get; init; }
+    public bool Confirmed { get; init; }
+}
+
+/// <summary>
+/// A bolt that came at the player, resolved. `Outcome` is read off their own
+/// printed health, so unlike a skillshot's it is a measurement rather than a
+/// geometric verdict -- "unknown" means the health text did not resolve in the
+/// window, which happens on about half the frames.
+/// </summary>
+public sealed record Threat
+{
+    public double At { get; init; }
+    public double Arrival { get; init; }
+    public double Closest { get; init; }
+    public double Speed { get; init; }
+    public double[]? Heading { get; init; }
+    public string Outcome { get; init; } = "";
+    public int? Damage { get; init; }
+
+    /// <summary>How far the player moved across the bolt's line between its
+    /// first sighting and its arrival. The one number separating a dodge from
+    /// standing still and not being hit anyway.</summary>
+    public double? MovedAcross { get; init; }
+
+    public double? Origin { get; init; }
+}
+
+/// <summary>
+/// A bolt the player threw. `Outcome` is GEOMETRIC -- whether `Miss` came
+/// inside spectral-sight's hit radius -- and is not read off the target's
+/// health: measured on that project's footage an enemy's bar falls in half of
+/// all windows of the length involved, so `Fall` is corroboration a consumer
+/// may weigh and never a label. Coaching copy must not present it as truth.
+/// </summary>
+public sealed record Skillshot
+{
+    public string Slot { get; init; } = "";
+    public double At { get; init; }
+
+    /// <summary>When the bolt was first seen. Null when the cast launched
+    /// nothing -- a blink or a self-buff, which is how a non-projectile
+    /// ability excludes itself with no per-champion table.</summary>
+    public double? Launched { get; init; }
+
+    public double? Speed { get; init; }
+    public double[]? Heading { get; init; }
+
+    /// <summary>Closest approach of the bolt's line to the target's model, px
+    /// -- the aim error. Null when no enemy was on screen in front of it,
+    /// which is most of a lane phase.</summary>
+    public double? Miss { get; init; }
+
+    public double? Flight { get; init; }
+    public string Outcome { get; init; } = "";
+    public double? Fall { get; init; }
+
+    /// <summary>Signed offset past the target: positive went by on the side
+    /// they were walking toward, negative behind them. Null when they were not
+    /// moving fast enough for the direction to mean anything. Unvalidated
+    /// upstream -- the footage has too few misses to check the sign.</summary>
+    public double? Lead { get; init; }
 }
 
 public sealed record FrameEnvelope
@@ -131,6 +216,29 @@ public sealed record GameEvent
 
     // roster
     public string[]? Champions { get; init; }
+
+    // ability -- shares At and Confirmed with cast
+    public string? Slot { get; init; }
+    public int? Countdown { get; init; }
+
+    // threat and skillshot -- both carry a bolt, so both carry these
+    public double? Speed { get; init; }
+    public double[]? Heading { get; init; }
+    public string? Outcome { get; init; }
+
+    // threat
+    public double? Arrival { get; init; }
+    public double? Closest { get; init; }
+    public int? Damage { get; init; }
+    public double? MovedAcross { get; init; }
+    public double? Origin { get; init; }
+
+    // skillshot
+    public double? Launched { get; init; }
+    public double? Miss { get; init; }
+    public double? Flight { get; init; }
+    public double? Fall { get; init; }
+    public double? Lead { get; init; }
 }
 
 public static class EventKind
@@ -143,4 +251,13 @@ public static class EventKind
     public const string Reappeared = "reappeared";
     public const string Cast = "cast";
     public const string Roster = "roster";
+
+    /// <summary>The player's own cast, named to a button off the HUD.</summary>
+    public const string Ability = "ability";
+
+    /// <summary>A bolt that came at the player, and what came of it.</summary>
+    public const string Threat = "threat";
+
+    /// <summary>A bolt the player threw, and how near it passed.</summary>
+    public const string Skillshot = "skillshot";
 }

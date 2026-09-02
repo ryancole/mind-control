@@ -5,6 +5,9 @@
 # Then here:
 #   etc/dev.ps1                         # coaching feedback to the console
 #   etc/dev.ps1 -Log data/coaching.log  # also append it to a file
+# PositionalBinding off, or app options land in -Log/-Feed positionally
+# (`-- --self Ezreal` once bound "--self" to -Log and "Ezreal" to -Feed).
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$Log,
     [string]$Feed = "http://127.0.0.1:8723",
@@ -14,6 +17,6 @@ param(
 
 $appArgs = @("--feed", $Feed)
 if ($Log) { $appArgs += @("--log", $Log) }
-if ($Rest) { $appArgs += $Rest }   # e.g. etc/dev.ps1 -- --self Ezreal
+if ($Rest) { $appArgs += $Rest }   # e.g. etc/dev.ps1 --self Ezreal
 
 dotnet watch run --project "$PSScriptRoot\..\src\MindControl" -- @appArgs

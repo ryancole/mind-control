@@ -49,6 +49,18 @@ public sealed class CoachServer : IDisposable
         Publish(new { T = "move", VideoTime = videoTime, GameTime = gameTime, Nx = nx, Ny = ny });
     }
 
+    /// <summary>
+    /// Coaching that moves no crosshair -- see <see cref="Policy.CoachCue"/>.
+    /// Deliberately carries no position: the dashboard writes it to the log and
+    /// leaves the ghost where it is.
+    /// </summary>
+    public void PublishCue(CoachCue cue, int? gameTime) =>
+        Publish(new
+        {
+            T = "cue", VideoTime = cue.VideoTime, GameTime = gameTime,
+            Priority = cue.Priority, Reason = cue.Reason,
+        });
+
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });
 

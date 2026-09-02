@@ -182,9 +182,9 @@ public sealed class Reactor(
         }
     }
 
-    private void Apply(GhostCursor? cue, double videoTime, int? gameTime)
+    private void Apply(GhostCursor? cursor, double videoTime, int? gameTime)
     {
-        if (cue is { } c)
+        if (cursor is { } c)
         {
             trace?.WriteMove(videoTime, c);
             coach?.PublishMove(videoTime, c, gameTime);
@@ -194,6 +194,14 @@ public sealed class Reactor(
             Coach($"glance[p{note.Priority}]: {note.Reason}");
             trace?.WriteGlance(note);
             coach?.PublishGlance(note, gameTime);
+        }
+        // Cues are not glances and do not reach the trace: the ghost viewer
+        // replays where attention went, and a cue is precisely the coaching
+        // that has nowhere for it to go.
+        foreach (var cue in policy.DrainCues())
+        {
+            Coach($"cue[p{cue.Priority}]: {cue.Reason}");
+            coach?.PublishCue(cue, gameTime);
         }
     }
 

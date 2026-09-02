@@ -15,6 +15,10 @@ HashSet<string>? kinds =
 [
     EventKind.Death, EventKind.Respawn, EventKind.Cast, EventKind.Vanished,
     EventKind.Reappeared, EventKind.Identified, EventKind.LevelUp, EventKind.Roster,
+    // The coaching stages. Listed explicitly like the rest, which means a kind
+    // spectral-sight adds later is dropped until it is named here -- worth
+    // knowing, because the symptom is silence rather than an error.
+    EventKind.Ability, EventKind.Threat, EventKind.Skillshot,
 ];
 
 for (var i = 0; i < args.Length; i++)
@@ -67,6 +71,10 @@ for (var i = 0; i < args.Length; i++)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
                                      coaching panel (default 8724; 0 disables)
                   --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
+
+                Execution coaching (the player's own casts, the bolts at them, and the
+                bolts they threw) needs a spectral-sight run made with --coach; on a feed
+                without those stages it says so once and stays quiet.
                 """);
             return 0;
         default:
@@ -89,7 +97,13 @@ var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
-var policy = new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion });
+// Two questions asked of the same feed: where attention should be, and how
+// the player's own execution turned out. Attention goes first because it is
+// the one that owns the cursor -- see CompositePolicy on why that ordering is
+// load-bearing and where it stops being enough.
+var policy = new CompositePolicy(
+    new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion }),
+    new ExecutionPolicy());
 using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
 var reactor = new Reactor(feed, policy, options, log, trace, coach);
 
