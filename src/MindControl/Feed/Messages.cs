@@ -129,15 +129,28 @@ public sealed record Threat
 /// health: measured on that project's footage an enemy's bar falls in half of
 /// all windows of the length involved, so `Fall` is corroboration a consumer
 /// may weigh and never a label. Coaching copy must not present it as truth.
+///
+/// Since spectral-sight's origin gate (2026-09-02, `AimConfig.max_origin_miss`)
+/// a credited bolt is one whose line traces back through the player's model.
+/// Before it, most credited bolts were not the player's shot. What remains is
+/// a stray floor of about 7% on credited bolts, and a hit radius whose
+/// justification was measured on the strays: hit/miss is a tendency over many
+/// shots, never a score for one. Strays cannot be filtered on this side --
+/// the event carries the bolt's launch, speed, heading, miss and flight but
+/// not its position relative to the player -- so the test lives upstream.
+/// See `spectral-sight/docs/aim-bolt-findings.md`.
 /// </summary>
 public sealed record Skillshot
 {
     public string Slot { get; init; } = "";
     public double At { get; init; }
 
-    /// <summary>When the bolt was first seen. Null when the cast launched
-    /// nothing -- a blink or a self-buff, which is how a non-projectile
-    /// ability excludes itself with no per-champion table.</summary>
+    /// <summary>When the bolt was first seen leaving the player's model. Null
+    /// when none was: a blink or a self-buff (which is how a non-projectile
+    /// ability excludes itself with no per-champion table), or a shot the
+    /// stage did not see, which is about two thirds of casts. A null errs
+    /// toward under-counting shots thrown, never toward inventing one; a
+    /// consumer treats it as silence.</summary>
     public double? Launched { get; init; }
 
     public double? Speed { get; init; }

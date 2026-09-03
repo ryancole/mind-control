@@ -2,6 +2,7 @@
 #
 # In one terminal (spectral-sight repo):
 #   python tools/replay.py <clip>.jsonl [--from 120] [--speed 4]
+#   (execution coaching: ../mind-control/data/coach-full-20260902-222718.jsonl)
 # Then here:
 #   etc/dev.ps1                         # coaching feedback to the console
 #   etc/dev.ps1 -Log data/coaching.log  # also append it to a file

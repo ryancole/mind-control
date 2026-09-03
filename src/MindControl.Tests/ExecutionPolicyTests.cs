@@ -6,13 +6,15 @@ namespace MindControl.Tests;
 
 /// <summary>
 /// What execution coaching says and, mostly, what it does not. What is pinned
-/// here is the decision per class of event -- a wide shot and a bolt that
-/// found the player still are said, a hit, a cast with no bolt, a bolt with no
-/// target, a dodge and a button press are not -- plus the running counts, the
-/// double-credited fall, that nothing here ever moves the cursor, and that a
-/// feed without the coaching stages says so once instead of going silently
-/// dead. The wording is pinned only where a word carries a caveat: a wide
-/// shot is where the bolt passed, never "you missed".
+/// here is the decision per class of event -- a run of shots going wide and a
+/// bolt that found the player still are said; a lone wide shot, a near shot,
+/// a cast with no bolt, a bolt with no target, a dodge and a button press are
+/// not -- plus the running counts and their thresholds, the double-credited
+/// fall, that nothing here ever moves the cursor, and that a feed without the
+/// coaching stages says so once instead of going silently dead. The wording is
+/// pinned only where a word carries a caveat: a wide shot is where the bolt
+/// passed, never "you missed", and an aim count is over the shots that were
+/// seen, never over casts.
 /// </summary>
 [TestClass]
 public sealed class ExecutionPolicyTests
@@ -39,29 +41,88 @@ public sealed class ExecutionPolicyTests
         return policy.DrainCues();
     }
 
-    private static string OneCue(string json)
+    private static string OneCue(ExecutionPolicy policy, string json)
     {
-        var cues = CuesFor(Policy(), json);
+        var cues = CuesFor(policy, json);
         Assert.HasCount(1, cues);
         return cues[0].Reason;
     }
 
-    private static void Silent(string json) => Assert.IsEmpty(CuesFor(Policy(), json));
+    private static string OneCue(string json) => OneCue(Policy(), json);
 
-    // The fixture's events, verbatim where a real one exists.
+    private static void Silent(ExecutionPolicy policy, string json) => Assert.IsEmpty(CuesFor(policy, json));
+
+    private static void Silent(string json) => Silent(Policy(), json);
+
+    /// <summary>
+    /// A policy one wide shot short of speaking: three near shots and a wide
+    /// one, four seen with one wide, under both defaults (five seen holding
+    /// two wide). The next wide shot is the run.
+    /// </summary>
+    private static ExecutionPolicy OnTheEdge()
+    {
+        var policy = Policy();
+        Silent(policy, NearQ);
+        Silent(policy, NearQ);
+        Silent(policy, NearQ);
+        Silent(policy, WideQ);
+        return policy;
+    }
+
+    // The fixture's events (data/coach-full-20260902-222718.jsonl, the gated
+    // build), verbatim where a real one exists.
 
     private const string WideQ = """
-        {"kind":"skillshot","seq":9,"video_time":278.6,"team":"blue",
-         "champion":"Ezreal","slot":"Q","at":277.4,"launched":277.5,
-         "speed":870,"heading":[-0.499,-0.867],"miss":274.3,"flight":0.594,
-         "outcome":"missed","lead":-274.3}
+        {"kind":"skillshot","seq":9,"video_time":482.9,"team":"blue",
+         "champion":"Ezreal","slot":"Q","at":481.7,"launched":482.033,
+         "speed":1054,"heading":[-0.322,-0.947],"miss":314.5,"flight":0.291,
+         "outcome":"missed","lead":-314.5}
+        """;
+
+    private const string SecondWideQ = """
+        {"kind":"skillshot","seq":9,"video_time":797.4,"team":"blue",
+         "champion":"Ezreal","slot":"Q","at":796.367,"launched":796.867,
+         "speed":1075,"heading":[-0.058,0.998],"miss":189.6,"flight":0.013,
+         "outcome":"missed","lead":-189.6}
+        """;
+
+    private const string WideWNoLead = """
+        {"kind":"skillshot","seq":9,"video_time":907.6,"team":"blue",
+         "champion":"Ezreal","slot":"W","at":906.567,"launched":906.567,
+         "speed":1074,"heading":[0.458,-0.889],"miss":320.5,"flight":0.489,
+         "outcome":"missed"}
+        """;
+
+    private const string WideQAhead = """
+        {"kind":"skillshot","seq":9,"video_time":1071.5,"team":"blue",
+         "champion":"Ezreal","slot":"Q","at":1070.467,"launched":1070.4,
+         "speed":945,"heading":[-0.669,-0.744],"miss":400.8,"flight":0.217,
+         "outcome":"missed","lead":400.8}
+        """;
+
+    private const string WideE = """
+        {"kind":"skillshot","seq":9,"video_time":905.1,"team":"blue",
+         "champion":"Ezreal","slot":"E","at":903.467,"launched":903.933,
+         "speed":1467,"heading":[0.993,0.117],"miss":136.8,"flight":0.474,
+         "outcome":"missed","lead":-136.8}
         """;
 
     private const string NearQ = """
-        {"kind":"skillshot","seq":9,"video_time":215.8,"team":"blue",
-         "champion":"Ezreal","slot":"Q","at":214.1,"launched":214.433,
-         "speed":852,"heading":[1.0,-0.027],"miss":6.1,"flight":0.823,
-         "outcome":"hit","fall":0.051,"lead":6.1}
+        {"kind":"skillshot","seq":9,"video_time":278.4,"team":"blue",
+         "champion":"Ezreal","slot":"Q","at":277.4,"launched":277.5,
+         "speed":1147,"heading":[-0.015,-1.0],"miss":16.3,"flight":0.279,
+         "outcome":"hit","lead":-16.3}
+        """;
+
+    /// <summary>A cast the stage never saw a bolt leave: two thirds of them.</summary>
+    private const string UnseenQ = """
+        {"kind":"skillshot","video_time":190.2,"slot":"Q","at":189.133,"outcome":"unknown"}
+        """;
+
+    /// <summary>A bolt seen leaving the model with no enemy in front of it.</summary>
+    private const string FarmingQ = """
+        {"kind":"skillshot","video_time":159.8,"slot":"Q","at":158.767,"launched":158.9,
+         "speed":965,"heading":[1.0,-0.006],"outcome":"unknown"}
         """;
 
     private const string HitWhileStill = """
@@ -79,60 +140,110 @@ public sealed class ExecutionPolicyTests
         """;
 
     [TestMethod]
-    public void A_shot_that_went_wide_says_how_far_and_which_side()
+    public void A_wide_shot_on_its_own_is_silence()
     {
-        var reason = OneCue(WideQ);
-        StringAssert.Contains(reason, "Q passed 274px behind them");
+        // About 7% of the bolts the stage credits are still not the player's
+        // shot. One wide shot is what a stray looks like; the fixture's lane
+        // phase has exactly one in nine minutes, and it is this one.
+        Silent(WideQ);
+    }
+
+    [TestMethod]
+    public void A_lone_wide_shot_among_many_seen_is_still_silence()
+    {
+        var policy = Policy();
+        for (var i = 0; i < 9; i++)
+            Silent(policy, NearQ);
+        Silent(policy, WideQ);   // 1 of 10: the stray floor, not a tendency
+    }
+
+    [TestMethod]
+    public void A_run_of_wide_shots_is_said_on_the_shot_that_made_it_one()
+    {
+        var reason = OneCue(OnTheEdge(), SecondWideQ);
+        StringAssert.Contains(reason, "Q passed 190px behind them");
+        StringAssert.Contains(reason, "2 of the last 5 shots that were seen went wide");
+    }
+
+    [TestMethod]
+    public void Wide_shots_alone_are_not_enough_seen_to_speak()
+    {
+        // Four wide of four is below the minimum count of seen shots. The
+        // count is over the fights, where there is enough signal to say
+        // anything; a couple of shots is not that.
+        var policy = Policy();
+        Silent(policy, WideQ);
+        Silent(policy, SecondWideQ);
+        Silent(policy, WideWNoLead);
+        Silent(policy, WideE);
+        StringAssert.Contains(OneCue(policy, WideQAhead), "5 of the last 5 shots that were seen went wide");
+    }
+
+    [TestMethod]
+    public void The_denominator_is_shots_that_were_seen_never_casts()
+    {
+        var reason = OneCue(OnTheEdge(), SecondWideQ);
+        StringAssert.Contains(reason, "shots that were seen");
+        Assert.DoesNotContain("cast", reason.ToLowerInvariant());
     }
 
     [TestMethod]
     public void A_wide_shot_is_where_the_bolt_passed_never_a_miss()
     {
-        // The verdict upstream is geometric, against a hit radius that is the
-        // least settled number in that project. The copy says what was
+        // The verdict upstream is geometric, against a hit radius whose
+        // justification turned out to be strays. The copy says what was
         // measured and leaves the word "miss" out of it.
-        var reason = OneCue(WideQ);
+        var reason = OneCue(OnTheEdge(), SecondWideQ);
         Assert.DoesNotContain("miss", reason.ToLowerInvariant());
     }
 
     [TestMethod]
     public void The_side_is_the_sign_of_lead_and_absent_when_lead_is()
     {
-        StringAssert.Contains(OneCue("""
-            {"kind":"skillshot","video_time":345.0,"slot":"W","at":343.9,"launched":344.033,
-             "miss":331.3,"outcome":"missed","lead":331.3}
-            """), "ahead of them");
-        StringAssert.Contains(OneCue("""
-            {"kind":"skillshot","video_time":345.0,"slot":"W","at":343.9,"launched":344.033,
-             "miss":331.3,"outcome":"missed"}
-            """), "wide of them");
+        StringAssert.Contains(OneCue(OnTheEdge(), WideQAhead), "ahead of them");
+        StringAssert.Contains(OneCue(OnTheEdge(), WideWNoLead), "wide of them");
+    }
+
+    [TestMethod]
+    public void The_count_runs_over_every_slot_together()
+    {
+        // The habit is the player's, not the button's; per slot there would
+        // rarely be enough seen shots to say anything (E was seen at a target
+        // three times in the fixture's game, R once).
+        var policy = Policy();
+        Silent(policy, NearQ);
+        Silent(policy, NearQ);
+        Silent(policy, NearQ);
+        Silent(policy, WideE);
+        StringAssert.Contains(OneCue(policy, WideWNoLead), "W passed 321px wide of them; 2 of the last 5");
     }
 
     [TestMethod]
     public void A_shot_that_landed_is_silence()
     {
-        Silent(NearQ);
+        var policy = Policy();
+        for (var i = 0; i < 10; i++)
+            Silent(policy, NearQ);
     }
 
     [TestMethod]
-    public void A_cast_that_launched_nothing_is_silence()
+    public void A_cast_that_launched_nothing_is_silence_and_not_counted()
     {
-        // A blink, a self-buff, or a bolt the vision layer lost: the fixture's
-        // Ezreal, whose Q always launches, had nine such Qs in 270 seconds.
-        // Either way it is not a fact about the player.
-        Silent("""
-            {"kind":"skillshot","video_time":251.1,"slot":"Q","at":250.033,"outcome":"unknown"}
-            """);
+        // A blink, a self-buff, or a shot the stage did not see leave the
+        // model, which is two thirds of casts. Either way it is not a fact
+        // about the player, and it is not a seen shot.
+        var policy = OnTheEdge();
+        Silent(policy, UnseenQ);
+        StringAssert.Contains(OneCue(policy, SecondWideQ), "2 of the last 5 shots");
     }
 
     [TestMethod]
-    public void A_bolt_with_no_enemy_in_front_of_it_is_silence()
+    public void A_bolt_with_no_enemy_in_front_of_it_is_silence_and_not_counted()
     {
-        // Two thirds of a lane phase. A bolt at minions is farming.
-        Silent("""
-            {"kind":"skillshot","video_time":260.2,"slot":"Q","at":259.2,"launched":259.2,
-             "speed":1008,"heading":[0.991,0.133],"outcome":"unknown"}
-            """);
+        // Most of a lane phase. A bolt at minions is farming.
+        var policy = OnTheEdge();
+        Silent(policy, FarmingQ);
+        StringAssert.Contains(OneCue(policy, SecondWideQ), "2 of the last 5 shots");
     }
 
     [TestMethod]
@@ -140,7 +251,7 @@ public sealed class ExecutionPolicyTests
     {
         // The skillshot event a second later says everything this one does.
         Silent("""
-            {"kind":"ability","video_time":214.2,"slot":"Q","at":214.1,"countdown":5,"confirmed":true}
+            {"kind":"ability","video_time":159.8,"slot":"Q","at":158.767,"countdown":5,"confirmed":true}
             """);
         Silent("""
             {"kind":"ability","video_time":353.4,"slot":"F","at":353.333,"countdown":180,"confirmed":true}
@@ -148,40 +259,14 @@ public sealed class ExecutionPolicyTests
     }
 
     [TestMethod]
-    public void The_wide_count_runs_over_scored_shots_of_that_slot_only()
-    {
-        var policy = Policy();
-        CuesFor(policy, NearQ);
-        CuesFor(policy, NearQ);
-        // A W in between does not enter the Q count.
-        CuesFor(policy, """
-            {"kind":"skillshot","video_time":345.0,"slot":"W","at":343.9,"launched":344.033,
-             "miss":331.3,"outcome":"missed","lead":331.3}
-            """);
-        // Nor does an unscored Q.
-        CuesFor(policy, """
-            {"kind":"skillshot","video_time":260.2,"slot":"Q","at":259.2,"launched":259.2,"outcome":"unknown"}
-            """);
-        var cues = CuesFor(policy, WideQ);
-        Assert.HasCount(1, cues);
-        StringAssert.Contains(cues[0].Reason, "1 of your last 3 Qs at a target went wide");
-    }
-
-    [TestMethod]
-    public void The_first_scored_shot_carries_no_count()
-    {
-        Assert.DoesNotContain("of your last", OneCue(WideQ));
-    }
-
-    [TestMethod]
     public void The_window_forgets_the_oldest_shot()
     {
-        var policy = Policy(options: new ExecutionOptions { WindowSize = 3 });
-        CuesFor(policy, WideQ);
-        CuesFor(policy, NearQ);
-        CuesFor(policy, NearQ);
-        var cues = CuesFor(policy, WideQ);
-        StringAssert.Contains(cues[0].Reason, "1 of your last 3 Qs", "the first wide shot has rolled off");
+        var policy = Policy(options: new ExecutionOptions { WindowSize = 3, MinAimedShots = 2, MinWideShots = 2 });
+        Silent(policy, WideQ);
+        StringAssert.Contains(OneCue(policy, SecondWideQ), "2 of the last 2");
+        Silent(policy, NearQ);
+        StringAssert.Contains(OneCue(policy, WideWNoLead), "2 of the last 3");
+        StringAssert.Contains(OneCue(policy, WideQAhead), "2 of the last 3", "the first wide shot has rolled off");
     }
 
     [TestMethod]
@@ -263,10 +348,10 @@ public sealed class ExecutionPolicyTests
     }
 
     [TestMethod]
-    public void A_bolt_that_found_them_still_outranks_a_shot_that_went_wide()
+    public void A_bolt_that_found_them_still_outranks_a_run_of_wide_shots()
     {
-        var policy = Policy();
-        policy.OnEvent(Event(WideQ));
+        var policy = OnTheEdge();
+        policy.OnEvent(Event(SecondWideQ));
         policy.OnEvent(Event(HitWhileStill));
         var priorities = policy.DrainCues().Select(c => c.Priority).ToArray();
         CollectionAssert.AreEqual(new[] { 2, 3 }, priorities);
@@ -300,12 +385,12 @@ public sealed class ExecutionPolicyTests
     [TestMethod]
     public void A_resync_drops_the_counts_and_any_pending_cue()
     {
-        var policy = Policy();
-        policy.OnEvent(Event(WideQ));
+        var policy = OnTheEdge();
+        policy.OnEvent(Event(SecondWideQ));
         policy.OnEvent(Event(HitWhileMoving));
         policy.Resync(null);
         Assert.IsEmpty(policy.DrainCues());
-        Assert.DoesNotContain("of your last", CuesFor(policy, WideQ)[0].Reason);
+        Silent(policy, WideQAhead);   // the run is forgotten with the game
         Assert.DoesNotContain("of the last", CuesFor(policy, HitWhileStill)[0].Reason);
     }
 }
