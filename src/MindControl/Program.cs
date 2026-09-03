@@ -72,9 +72,9 @@ for (var i = 0; i < args.Length; i++)
                                      coaching panel (default 8724; 0 disables)
                   --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
 
-                Execution coaching (the player's own casts, the bolts at them, and the
-                bolts they threw) needs a spectral-sight run made with --coach; on a feed
-                without those stages it says so once and stays quiet.
+                Execution coaching (a shot of the player's that went wide, a bolt that hit
+                them while they stood still) needs a spectral-sight run made with --coach;
+                on a feed without those stages it says so once and stays quiet.
                 """);
             return 0;
         default:

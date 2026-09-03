@@ -29,7 +29,10 @@ Three layers; the policy is the one that churns and stays pure of I/O:
   queued); events, gaps, and connection changes in an ordered notice queue.
 - `src/MindControl/Policy` — `(state, event) → a coaching cue`. Testable
   against replayed timelines with no I/O. `AttentionPolicy` is the fair-play
-  attention demonstrator; `NoOpPolicy` watches and says nothing.
+  attention demonstrator; `ExecutionPolicy` speaks only when a shot went wide
+  or a bolt found the player standing still (it needs a spectral-sight
+  `--coach` run); `CompositePolicy` runs both; `NoOpPolicy` watches and says
+  nothing.
 - `src/MindControl/Reactor.cs` — the decision loop and the safety rules: any
   feed doubt (disconnect, gap, lag, fps collapse, silence) pauses coaching
   rather than advising off stale state.
