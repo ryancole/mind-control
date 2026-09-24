@@ -26,8 +26,8 @@ public sealed record ReactorOptions
 /// any doubt about the feed — disconnect, gap, climbing lag, collapsing fps,
 /// silence — pauses coaching rather than advising off stale state.
 /// The optional <see cref="GhostRecording"/> keeps the ghost's input -- cursor
-/// moves and key presses -- in the misdirection wire format; it is a file, and
-/// this loop never opens a device.
+/// moves, key presses and steps -- in the misdirection wire format; it is a
+/// file, and this loop never opens a device.
 /// </summary>
 public sealed class Reactor(
     FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null,
@@ -216,6 +216,18 @@ public sealed class Reactor(
             trace?.WriteKey(key);
             coach?.PublishKey(key, gameTime);
             recording?.Press(key);
+        }
+        // A step is the movement half: it reaches the recording as a
+        // right-click on the ground and the trace for its timing. It is
+        // stamped at the bolt's first sighting, which is before the event
+        // that reports it, so in the trace it lands out of order and a
+        // reader sorts by video_time.
+        foreach (var step in policy.DrainMoves())
+        {
+            Coach($"step[p{step.Priority}]: {step.Sentence}");
+            trace?.WriteStep(step);
+            coach?.PublishStep(step, gameTime);
+            recording?.Step(step);
         }
     }
 

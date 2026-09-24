@@ -11,8 +11,10 @@ namespace MindControl.Policy;
 /// policies keeps each one's reasoning readable and testable on its own, which
 /// a single class answering both questions would not be.</para>
 ///
-/// <para><b>The one place this is not yet a real design.</b> Notes, cues and
-/// key presses merge cleanly, because they are lists and a log can hold them all. Cursors do
+/// <para><b>The one place this is not yet a real design.</b> Notes, cues, key
+/// presses and steps merge cleanly, because they are lists and a log can hold
+/// them all (a step is a click, an action taken and done, not a place the
+/// cursor rests, so it does not contest attention's cursor either). Cursors do
 /// not: two policies wanting attention in two places is a conflict, and there
 /// is nothing here to arbitrate it. The first non-null wins, in the order the
 /// policies were given. That is honest for the pair this was built for --
@@ -65,6 +67,19 @@ public sealed class CompositePolicy(params IPolicy[] policies) : IPolicy
             if (keys.Count == 0)
                 continue;
             (merged ??= []).AddRange(keys);
+        }
+        return merged is null ? [] : merged;
+    }
+
+    public IReadOnlyList<MoveStep> DrainMoves()
+    {
+        List<MoveStep>? merged = null;
+        foreach (var policy in policies)
+        {
+            var moves = policy.DrainMoves();
+            if (moves.Count == 0)
+                continue;
+            (merged ??= []).AddRange(moves);
         }
         return merged is null ? [] : merged;
     }

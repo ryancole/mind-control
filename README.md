@@ -32,8 +32,10 @@ Three layers; the policy is the one that churns and stays pure of I/O:
   attention demonstrator; `ExecutionPolicy` speaks only when a shot went wide
   or a bolt found the player standing still (it needs a spectral-sight
   `--coach` run); `CastPolicy` presses the ability a coach would have thrown
-  by now ("coach would have pressed Q here"); `CompositePolicy` runs all
-  three; `NoOpPolicy` watches and says nothing.
+  by now ("coach would have pressed Q here"); `DodgePolicy` takes the step a
+  coach would have taken out of a bolt's way ("coach would have stepped left
+  here"); `CompositePolicy` runs all four; `NoOpPolicy` watches and says
+  nothing.
 - `src/MindControl/Reactor.cs` — the decision loop and the safety rules: any
   feed doubt (disconnect, gap, lag, fps collapse, silence) pauses coaching
   rather than advising off stale state.
@@ -99,6 +101,37 @@ not somewhere else. What it does not yet
 demonstrate is *where* the coach would have aimed — the ghost's cursor still
 belongs to attention, on the minimap.
 
+## Movement coaching
+
+The feet. `DodgePolicy` watches the bolts that came at the player
+(spectral-sight's `threat` events: a bolt's heading on the screen, when it was
+first seen and when it arrived, whether the player's printed health fell, and
+how far they moved across its line meanwhile) and, where one hit them standing
+still, takes the step a coach would have taken:
+
+```
+step[p3]: coach would have stepped up-left here: a bolt from the upper right hit you for 12 while you stood still, 0.33s after it came into view
+```
+
+The step is across the bolt's line, and of the two sides it takes the one
+toward the player's own base (down-left on the screen: blue is always the
+local team and the camera never rotates), because either side clears the line
+by the same margin and a coach with nothing else to go on steps toward safety.
+It is stamped at the bolt's first sighting, the latest moment the step could
+have been taken — a real dodge answers the enemy's cast, which comes earlier
+still — and the warning is stated, never judged. It steps only where the
+coach's move would have differed from the player's: a dodge, an unread
+outcome and a hit while already moving are silence, and two bolts credited
+with one fall of the health bar are one step. On the execution fixture below
+that is 14 steps in seventeen minutes, one per bolt that found the player
+still.
+
+What it cannot say is that the bolt was dodgeable. A threat is any bolt
+launched at an enemy champion's plate, a ranged auto-attack as readily as a
+skillshot, and until spectral-sight names the ability nothing here tells
+them apart — so the copy says "a bolt", and the step is what a good player
+does when one is coming either way.
+
 ## Ghost input recording
 
 The ghost's input -- the mouse and keyboard reactions the coach would have
@@ -106,11 +139,17 @@ made -- is also appended to `data/ghost.msdr` in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file
 (`--record <file>` to move it, `--record none` to turn it off). Each run opens
-with a `ScreenSize` frame; every cursor move follows as a `MouseMove`, and
-every key the coach presses as a `KeyDown` and `KeyUp` pair. It is a
-recording, not a connection: this tool never opens the device. The format
-carries no timing, so the trace below remains the record of *when* (key
-presses land there too, as `key` lines).
+with a `ScreenSize` frame; every cursor move follows as a `MouseMove`, every
+key the coach presses as a `KeyDown` and `KeyUp` pair, and every step as a
+`MouseMove` to the ground 200px from the player's model in the step's
+direction followed by a right button down and up — a move order, which is
+how a step is taken in the game. The model's place on the screen is one
+place, the camera being locked; `--anchor <x,y>` names it (default: the
+screen's centre). It is a recording, not a connection: this tool never opens
+the device. The format carries no timing, so the trace below remains the
+record of *when* (key presses and steps land there too, as `key` and `step`
+lines; a step is stamped at the bolt's first sighting, which is earlier than
+the event that reports it, so the trace is not in time order there).
 
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to

@@ -19,6 +19,7 @@ public sealed class CompositePolicyTests
         public readonly List<GlanceNote> Notes = [];
         public readonly List<CoachCue> Cues = [];
         public readonly List<KeyPress> Keys = [];
+        public readonly List<MoveStep> Moves = [];
 
         public void Configure(Meta meta) => Configures++;
         public void Resync(FrameEnvelope? latest) => Resyncs++;
@@ -41,6 +42,13 @@ public sealed class CompositePolicyTests
         {
             var drained = Keys.ToArray();
             Keys.Clear();
+            return drained;
+        }
+
+        public IReadOnlyList<MoveStep> DrainMoves()
+        {
+            var drained = Moves.ToArray();
+            Moves.Clear();
             return drained;
         }
 
@@ -123,5 +131,19 @@ public sealed class CompositePolicyTests
 
         CollectionAssert.AreEqual(new[] { "Q", "W" }, composite.DrainKeys().Select(k => k.Key).ToArray());
         Assert.IsEmpty(composite.DrainKeys(), "drained means drained");
+    }
+
+    [TestMethod]
+    public void Steps_from_every_policy_come_out_in_policy_order()
+    {
+        var first = new Spy();
+        var second = new Spy();
+        first.Moves.Add(new MoveStep(1, "left", -1, 0, 3, "first"));
+        second.Moves.Add(new MoveStep(1, "down", 0, 1, 3, "second"));
+        var composite = new CompositePolicy(first, second);
+
+        CollectionAssert.AreEqual(
+            new[] { "left", "down" }, composite.DrainMoves().Select(m => m.Direction).ToArray());
+        Assert.IsEmpty(composite.DrainMoves(), "drained means drained");
     }
 }

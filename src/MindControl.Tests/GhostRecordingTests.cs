@@ -116,6 +116,40 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void A_step_reads_back_as_a_right_click_a_step_from_the_players_model()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            recording.Step(new MoveStep(218.1, "left", -1, 0, 3, "a bolt from the right"));
+            Assert.AreEqual(4, recording.FramesWritten);
+        }
+
+        // The model is at the screen's centre by default; the click lands
+        // StepPx to the left of it, and the button goes down and back up.
+        CollectionAssert.AreEqual(
+            new Message[]
+            {
+                new ScreenSizeMessage(1920, 1080),
+                new MouseMoveMessage((ushort)(960 - GhostRecording.StepPx), 540),
+                new MouseButtonsMessage(MouseButtons.Right),
+                new MouseButtonsMessage(MouseButtons.None),
+            },
+            ProtocolFile.Read(_path).ToArray());
+    }
+
+    [TestMethod]
+    public void A_step_is_taken_from_the_anchor_given_and_stays_on_the_screen()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080, playerAnchor: (100, 540)))
+            recording.Step(new MoveStep(1, "up-left", -0.70710678, -0.70710678, 3, "diagonal"));
+
+        // 100 - 141 is off the left edge, so the click is clamped to it; the
+        // y lands 141 above the anchor, rounded.
+        var messages = ProtocolFile.Read(_path);
+        Assert.AreEqual(new MouseMoveMessage(0, 399), messages[1]);
+    }
+
+    [TestMethod]
     public void Keycaps_map_to_usages_and_unknown_ones_are_refused()
     {
         Assert.AreEqual(HidUsage.Q, GhostRecording.UsageOf("Q"));

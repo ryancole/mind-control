@@ -5,8 +5,9 @@ namespace MindControl;
 
 /// <summary>
 /// Records the ghost's input -- what the coach would have done with the mouse
-/// and keyboard -- as a misdirection protocol file (<c>.msdr</c>), one frame per
-/// message, in the order the coaching produced them. The file opens with a
+/// and keyboard: glances, key presses and steps -- as a misdirection protocol
+/// file (<c>.msdr</c>), one frame per message, in the order the coaching
+/// produced them. The file opens with a
 /// <see cref="ScreenSizeMessage"/>, as a device session would, so the mouse
 /// coordinates that follow are anchored to the screen they were meant for.
 ///
@@ -18,17 +19,38 @@ namespace MindControl;
 /// </summary>
 public sealed class GhostRecording : IDisposable
 {
-    private readonly ProtocolFileWriter _writer;
+    /// <summary>
+    /// How far from the player's model a step's click lands, in screen
+    /// pixels. Far enough to clear a bolt's line with a margin (the fixture's
+    /// dodges moved 40–74px across it), near enough to still be a sidestep
+    /// and not a retreat. Unmeasured beyond that: nothing has yet replayed a
+    /// recording into a game.
+    /// </summary>
+    public const int StepPx = 200;
 
-    private GhostRecording(ProtocolFileWriter writer) => _writer = writer;
+    private readonly ProtocolFileWriter _writer;
+    private readonly ushort _width, _height;
+    private readonly (ushort X, ushort Y) _anchor;
+
+    private GhostRecording(ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor)
+    {
+        _writer = writer;
+        _width = width;
+        _height = height;
+        _anchor = anchor;
+    }
 
     /// <summary>
     /// Opens <paramref name="path"/> for appending, creating it (and its
     /// directory) if needed, and writes the screen size the coordinates that
     /// follow are in. Appending to a file from an earlier run is fine: each run
     /// restates its screen size, so a reader always knows which one applies.
+    /// <paramref name="playerAnchor"/> is where the player's model sits on
+    /// their screen, which a step is taken from; the camera is locked, so it
+    /// is one place, and the default is the screen's centre.
     /// </summary>
-    public static GhostRecording Append(string path, ushort screenWidth, ushort screenHeight)
+    public static GhostRecording Append(
+        string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
             Directory.CreateDirectory(dir);
@@ -43,7 +65,8 @@ public sealed class GhostRecording : IDisposable
             writer.Dispose();
             throw;
         }
-        return new GhostRecording(writer);
+        var anchor = playerAnchor ?? ((ushort)(screenWidth / 2), (ushort)(screenHeight / 2));
+        return new GhostRecording(writer, screenWidth, screenHeight, anchor);
     }
 
     /// <summary>Frames written through this recording, the screen size included.</summary>
@@ -65,6 +88,22 @@ public sealed class GhostRecording : IDisposable
     }
 
     /// <summary>
+    /// The coach stepped: a move to the ground <see cref="StepPx"/> from the
+    /// player's model in the step's direction, then a right-click there -- a
+    /// press and a release, as with a key. The click is a move order, which
+    /// is how a step is taken in the game; the cursor is left where it was
+    /// clicked, as a player's would be, until attention moves it again.
+    /// </summary>
+    public void Step(MoveStep step)
+    {
+        var x = (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1);
+        var y = (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1);
+        Write(new MouseMoveMessage(x, y));
+        Write(new MouseButtonsMessage(MouseButtons.Right));
+        Write(new MouseButtonsMessage(MouseButtons.None));
+    }
+
+    /// <summary>
     /// The keycap the coach names, as the HID usage the wire carries. Letters
     /// and digits, which is every ability and summoner slot on the default
     /// bindings; anything else is a policy naming a key this recording was
@@ -80,9 +119,8 @@ public sealed class GhostRecording : IDisposable
     };
 
     /// <summary>
-    /// Any input the coach would have made. <see cref="Move"/> and
-    /// <see cref="Press"/> are the callers; button changes would come through
-    /// here too once a policy has reason to demonstrate them.
+    /// Any input the coach would have made. <see cref="Move"/>,
+    /// <see cref="Press"/> and <see cref="Step"/> are the callers.
     /// </summary>
     public void Write(Message message)
     {

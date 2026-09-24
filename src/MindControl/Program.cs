@@ -7,6 +7,10 @@ ushort screenWidth = 1920, screenHeight = 1080;
 // A placeholder guess at the player's minimap rect until real calibration
 // exists (default League HUD, bottom-right, 1920x1080).
 var minimap = new MinimapRect(1620, 780, 300, 300);
+// Where the player's model sits on their screen; a step's right-click is
+// taken from here. The camera is locked, so it is one place -- the centre,
+// give or take, on the default HUD.
+(ushort X, ushort Y)? playerAnchor = null;
 string? tracePath = null;
 string? logPath = null;
 // The ghost's input in misdirection's wire format. On by default: this file is
@@ -42,6 +46,10 @@ for (var i = 0; i < args.Length; i++)
                 double.Parse(rect[0]), double.Parse(rect[1]),
                 double.Parse(rect[2]), double.Parse(rect[3]));
             break;
+        case "--anchor":
+            var anchor = args[++i].Split(',');
+            playerAnchor = (ushort.Parse(anchor[0]), ushort.Parse(anchor[1]));
+            break;
         case "--trace":
             tracePath = args[++i];
             break;
@@ -73,6 +81,8 @@ for (var i = 0; i < args.Length; i++)
                   --feed <url>       feed base URL          (default http://127.0.0.1:8723)
                   --screen <WxH>     target screen size     (default 1920x1080)
                   --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
+                  --anchor <x,y>     the player's model on their screen, where a step is taken
+                                     from (default: screen centre; the camera is locked)
                   --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
                   --record <file|none> append the ghost's mouse and key input as a misdirection
@@ -89,6 +99,10 @@ for (var i = 0; i < args.Length; i++)
                 Cast coaching ("coach would have pressed Q here") needs the ability HUD read
                 and world calibration, and knows the ranges of a few champions only (see
                 AbilityKits); for any other champion it stays quiet.
+
+                Movement coaching ("coach would have stepped left here") needs the threat
+                stage of a --coach run; it steps only where a bolt hit the player standing
+                still, across the bolt's line toward their own base.
                 """);
             return 0;
         default:
@@ -111,16 +125,19 @@ var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
-using var recording = recordPath is null ? null : GhostRecording.Append(recordPath, screenWidth, screenHeight);
-// Three questions asked of the same feed: where attention should be, how the
-// player's own execution turned out, and which ability a coach would have
-// thrown by now. Attention goes first because it is the one that owns the
-// cursor -- see CompositePolicy on why that ordering is load-bearing and
-// where it stops being enough.
+using var recording = recordPath is null
+    ? null
+    : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
+// Four questions asked of the same feed: where attention should be, how the
+// player's own execution turned out, which ability a coach would have thrown
+// by now, and which way they would have stepped. Attention goes first because
+// it is the one that owns the cursor -- see CompositePolicy on why that
+// ordering is load-bearing and where it stops being enough.
 var policy = new CompositePolicy(
     new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion }),
     new ExecutionPolicy(),
-    new CastPolicy(new CastOptions { SelfChampion = selfChampion }));
+    new CastPolicy(new CastOptions { SelfChampion = selfChampion }),
+    new DodgePolicy());
 using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
