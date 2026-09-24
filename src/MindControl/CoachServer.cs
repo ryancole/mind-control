@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using MindControl.Feed;
 using MindControl.Policy;
+using Misdirection.Client;
 
 namespace MindControl;
 
@@ -14,7 +15,10 @@ namespace MindControl;
 /// the same space the dashboard draws its map in. Every line that is advice
 /// (a glance, a cue, a key, a step) carries <c>model</c>, the Jev model whose
 /// answer it is, so a panel can mark what the model said apart from what the
-/// code reports (status, roster, the cursor's motion home).
+/// code reports (status, roster, the cursor's motion home). A glance, a key
+/// or a step also carries <c>input</c>: the misdirection frames the ghost
+/// recording wrote for it, as data (<see cref="GhostRecording.AsData(IEnumerable{Message})"/>),
+/// or null when nothing was recorded. Any icon for the hand is the panel's.
 /// </summary>
 public sealed class CoachServer : IDisposable
 {
@@ -38,13 +42,14 @@ public sealed class CoachServer : IDisposable
         _ = AcceptLoopAsync();
     }
 
-    public void PublishGlance(GlanceNote note, int? gameTime)
+    public void PublishGlance(GlanceNote note, int? gameTime, IReadOnlyList<Message>? input = null)
     {
         var (nx, ny) = Normalize(note.X, note.Y);
         Publish(new
         {
             T = "glance", VideoTime = note.VideoTime, GameTime = gameTime,
             Nx = nx, Ny = ny, Priority = note.Priority, Reason = note.Reason, Model = _model,
+            Input = Data(input),
         });
     }
 
@@ -71,11 +76,12 @@ public sealed class CoachServer : IDisposable
     /// full sentence as <c>reason</c>, so a panel that only knows how to print
     /// a reason still prints the right thing.
     /// </summary>
-    public void PublishKey(KeyPress key, int? gameTime) =>
+    public void PublishKey(KeyPress key, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
         {
             T = "key", VideoTime = key.VideoTime, GameTime = gameTime,
             Key = key.Key, Priority = key.Priority, Reason = key.Sentence, Model = _model,
+            Input = Data(input),
         });
 
     /// <summary>
@@ -84,13 +90,17 @@ public sealed class CoachServer : IDisposable
     /// a screen-space unit vector, and no minimap position, because a step
     /// is on the ground in front of the player and not on the map.
     /// </summary>
-    public void PublishStep(MoveStep step, int? gameTime) =>
+    public void PublishStep(MoveStep step, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
         {
             T = "step", VideoTime = step.VideoTime, GameTime = gameTime,
             Direction = step.Direction, Dx = step.Dx, Dy = step.Dy,
             Priority = step.Priority, Reason = step.Sentence, Model = _model,
+            Input = Data(input),
         });
+
+    private static IReadOnlyList<object>? Data(IReadOnlyList<Message>? input) =>
+        input is null ? null : GhostRecording.AsData(input);
 
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });

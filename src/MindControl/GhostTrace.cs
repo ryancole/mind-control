@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MindControl.Feed;
 using MindControl.Policy;
+using Misdirection.Client;
 
 namespace MindControl;
 
@@ -11,7 +12,10 @@ namespace MindControl;
 /// keys and steps). Lines are in the order they were decided, which for a
 /// step is after the bolt it answers; a reader that wants time order sorts.
 /// The header carries the minimap rect and world bounds the run used, letting
-/// the viewer invert screen pixels back onto the map.
+/// the viewer invert screen pixels back onto the map. A key or a step also
+/// carries <c>input</c>, the misdirection frames the recording wrote for it,
+/// as data; the viewer shows them beside the line and puts an icon to the
+/// hand, which is its decoration and not the trace's.
 /// </summary>
 public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWidth, ushort screenHeight) : IDisposable
 {
@@ -44,18 +48,19 @@ public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWi
         Reason = note.Reason,
     });
 
-    /// <summary>When a key was pressed: the timing the .msdr recording cannot carry.</summary>
-    public void WriteKey(KeyPress key) => Write(new
+    /// <summary>When a key was pressed: the timing the .msdr recording cannot carry, and what it recorded.</summary>
+    public void WriteKey(KeyPress key, IReadOnlyList<Message>? input = null) => Write(new
     {
         T = "key",
         VideoTime = key.VideoTime,
         Key = key.Key,
         Priority = key.Priority,
         Reason = key.Reason,
+        Input = input is null ? null : GhostRecording.AsData(input),
     });
 
-    /// <summary>When and which way the coach stepped: the timing and the direction the .msdr click cannot name.</summary>
-    public void WriteStep(MoveStep step) => Write(new
+    /// <summary>When and which way the coach stepped: the timing and the direction the .msdr click cannot name, and the click itself.</summary>
+    public void WriteStep(MoveStep step, IReadOnlyList<Message>? input = null) => Write(new
     {
         T = "step",
         VideoTime = step.VideoTime,
@@ -64,6 +69,7 @@ public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWi
         Dy = step.Dy,
         Priority = step.Priority,
         Reason = step.Reason,
+        Input = input is null ? null : GhostRecording.AsData(input),
     });
 
     private void Write<TLine>(TLine line) =>

@@ -16,6 +16,13 @@ namespace MindControl;
 /// it needs no translation later. The format carries no timestamps -- a frame
 /// is only what to do, never when -- so the ghost trace (<see cref="GhostTrace"/>)
 /// remains the record of timing.</para>
+///
+/// <para>Each of <see cref="Move"/>, <see cref="Press"/> and <see cref="Step"/>
+/// hands back the frames it wrote, so the coaching output can show not just
+/// "pressed Q" but the KeyDown and KeyUp that went into the file for it:
+/// <see cref="Show(IEnumerable{Message})"/> as plain text for the console,
+/// <see cref="AsData(IEnumerable{Message})"/> as data for the stream and the
+/// trace. Neither decorates; an icon for the hand is a front end's choice.</para>
 /// </summary>
 public sealed class GhostRecording : IDisposable
 {
@@ -38,7 +45,11 @@ public sealed class GhostRecording : IDisposable
         _width = width;
         _height = height;
         _anchor = anchor;
+        Header = Show(new ScreenSizeMessage(width, height));
     }
+
+    /// <summary>The <see cref="ScreenSizeMessage"/> this run opened with, as <see cref="Show(IEnumerable{Message})"/> prints it.</summary>
+    public string Header { get; }
 
     /// <summary>
     /// Opens <paramref name="path"/> for appending, creating it (and its
@@ -73,18 +84,17 @@ public sealed class GhostRecording : IDisposable
     public long FramesWritten => _writer.FramesWritten;
 
     /// <summary>The ghost's attention moved: a mouse move to where it now sits.</summary>
-    public void Move(GhostCursor cursor) => Write(new MouseMoveMessage(cursor.X, cursor.Y));
+    public IReadOnlyList<Message> Move(GhostCursor cursor) => Write(new MouseMoveMessage(cursor.X, cursor.Y));
 
     /// <summary>
     /// The coach pressed a key: a down and an up, back to back. The format has
     /// no timing, so a tap is the only press there is; a held key would need
     /// the trace to say how long, and no policy holds one.
     /// </summary>
-    public void Press(KeyPress key)
+    public IReadOnlyList<Message> Press(KeyPress key)
     {
         var usage = UsageOf(key.Key);
-        Write(new KeyDownMessage(usage));
-        Write(new KeyUpMessage(usage));
+        return Write(new KeyDownMessage(usage), new KeyUpMessage(usage));
     }
 
     /// <summary>
@@ -94,13 +104,14 @@ public sealed class GhostRecording : IDisposable
     /// is how a step is taken in the game; the cursor is left where it was
     /// clicked, as a player's would be, until attention moves it again.
     /// </summary>
-    public void Step(MoveStep step)
+    public IReadOnlyList<Message> Step(MoveStep step)
     {
         var x = (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1);
         var y = (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1);
-        Write(new MouseMoveMessage(x, y));
-        Write(new MouseButtonsMessage(MouseButtons.Right));
-        Write(new MouseButtonsMessage(MouseButtons.None));
+        return Write(
+            new MouseMoveMessage(x, y),
+            new MouseButtonsMessage(MouseButtons.Right),
+            new MouseButtonsMessage(MouseButtons.None));
     }
 
     /// <summary>
@@ -119,15 +130,72 @@ public sealed class GhostRecording : IDisposable
     };
 
     /// <summary>
-    /// Any input the coach would have made. <see cref="Move"/>,
+    /// The keycap a wire usage stands for, the inverse of <see cref="UsageOf"/>;
+    /// "?" for a usage this recording never writes.
+    /// </summary>
+    public static string KeycapOf(byte usage) => usage switch
+    {
+        >= HidUsage.A and <= HidUsage.Z => ((char)('A' + (usage - HidUsage.A))).ToString(),
+        HidUsage.Digit0 => "0",
+        >= HidUsage.Digit1 and <= HidUsage.Digit9 => ((char)('1' + (usage - HidUsage.Digit1))).ToString(),
+        _ => "?",
+    };
+
+    /// <summary>
+    /// Frames as the console prints them: plain text, comma separated, one
+    /// entry per frame. A key carries its keycap and the usage on the wire;
+    /// a move its screen pixels; a button change the mask it set. Anything
+    /// this recording does not write is shown as the library shows a frame,
+    /// type and hex. No decoration: the text is the data, and a front end
+    /// that wants an icon for the hand picks it from <see cref="AsData"/>.
+    /// </summary>
+    public static string Show(IEnumerable<Message> frames) => string.Join(", ", frames.Select(Describe));
+
+    public static string Show(params Message[] frames) => Show((IEnumerable<Message>)frames);
+
+    /// <summary>
+    /// Frames as the stream and the trace carry them: one object per frame
+    /// with a <c>type</c> naming the message (<c>key_down</c>,
+    /// <c>mouse_move</c>, ...) and its fields by name, so a front end can
+    /// decorate by type without parsing text.
+    /// </summary>
+    public static IReadOnlyList<object> AsData(IEnumerable<Message> frames) => frames.Select(AsData).ToList();
+
+    public static object AsData(Message frame) => frame switch
+    {
+        KeyDownMessage k => new { Type = "key_down", Key = KeycapOf(k.Usage), k.Usage },
+        KeyUpMessage k => new { Type = "key_up", Key = KeycapOf(k.Usage), k.Usage },
+        MouseMoveMessage m => new { Type = "mouse_move", m.X, m.Y },
+        MouseButtonsMessage b => new { Type = "mouse_buttons", Buttons = b.Buttons.ToString() },
+        MouseWheelMessage w => new { Type = "mouse_wheel", w.Vertical, w.Horizontal },
+        ScreenSizeMessage s => new { Type = "screen_size", s.Width, s.Height },
+        _ => new { Type = frame.Type.ToString().ToLowerInvariant(), Payload = Convert.ToHexString(frame.ToFrame().Payload) },
+    };
+
+    private static string Describe(Message frame) => frame switch
+    {
+        KeyDownMessage k => $"KeyDown {KeycapOf(k.Usage)} (0x{k.Usage:X2})",
+        KeyUpMessage k => $"KeyUp {KeycapOf(k.Usage)} (0x{k.Usage:X2})",
+        MouseMoveMessage m => $"MouseMove {m.X},{m.Y}",
+        MouseButtonsMessage b => $"MouseButtons {b.Buttons}",
+        MouseWheelMessage w => $"MouseWheel {w.Vertical},{w.Horizontal}",
+        ScreenSizeMessage s => $"ScreenSize {s.Width}x{s.Height}",
+        _ => frame.ToFrame().ToString(),
+    };
+
+    /// <summary>
+    /// Any input the coach would have made, in order; returns the frames so
+    /// the caller can show what went into the file. <see cref="Move"/>,
     /// <see cref="Press"/> and <see cref="Step"/> are the callers.
     /// </summary>
-    public void Write(Message message)
+    public IReadOnlyList<Message> Write(params Message[] messages)
     {
-        _writer.Write(message);
-        // Flushed per frame, like the trace and the log: a run ends with
+        foreach (var message in messages)
+            _writer.Write(message);
+        // Flushed per call, like the trace and the log: a run ends with
         // Ctrl-C, and the last thing the ghost did should be on disk by then.
         _writer.Flush();
+        return messages;
     }
 
     public void Dispose() => _writer.Dispose();

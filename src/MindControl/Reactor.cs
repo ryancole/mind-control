@@ -1,5 +1,6 @@
 using MindControl.Feed;
 using MindControl.Policy;
+using Misdirection.Client;
 
 namespace MindControl;
 
@@ -27,7 +28,10 @@ public sealed record ReactorOptions
 /// silence — pauses coaching rather than advising off stale state.
 /// The optional <see cref="GhostRecording"/> keeps the ghost's input -- cursor
 /// moves, key presses and steps -- in the misdirection wire format; it is a
-/// file, and this loop never opens a device.
+/// file, and this loop never opens a device. What it wrote for a glance, a
+/// key or a step rides with that line of coaching -- plain text on the
+/// console, data on the stream and in the trace -- so the log reads as the
+/// demonstration and not only the advice.
 /// </summary>
 public sealed class Reactor(
     FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null,
@@ -187,17 +191,22 @@ public sealed class Reactor(
 
     private void Apply(GhostCursor? cursor, double videoTime, int? gameTime)
     {
+        IReadOnlyList<Message>? moved = null;
         if (cursor is { } c)
         {
             trace?.WriteMove(videoTime, c);
             coach?.PublishMove(videoTime, c, gameTime);
-            recording?.Move(c);
+            moved = recording?.Move(c);
         }
         foreach (var note in policy.DrainNotes())
         {
-            Coach($"glance[p{note.Priority}]: {note.Reason}");
+            // The cursor snaps to the glance that won this tick, so the move
+            // just recorded belongs to the note it landed on; a note that lost
+            // the snap to a higher priority moved nothing and shows nothing.
+            var input = cursor is { } at && at.X == note.X && at.Y == note.Y ? moved : null;
+            Coach($"glance[p{note.Priority}]: {note.Reason}", input);
             trace?.WriteGlance(note);
-            coach?.PublishGlance(note, gameTime);
+            coach?.PublishGlance(note, gameTime, input);
         }
         // Cues are not glances and do not reach the trace: the ghost viewer
         // replays where attention went, and a cue is precisely the coaching
@@ -212,10 +221,10 @@ public sealed class Reactor(
         // timing, which the recording cannot hold).
         foreach (var key in policy.DrainKeys())
         {
-            Coach($"key[p{key.Priority}]: {key.Sentence}");
-            trace?.WriteKey(key);
-            coach?.PublishKey(key, gameTime);
-            recording?.Press(key);
+            var input = recording?.Press(key);
+            Coach($"key[p{key.Priority}]: {key.Sentence}", input);
+            trace?.WriteKey(key, input);
+            coach?.PublishKey(key, gameTime, input);
         }
         // A step is the movement half: it reaches the recording as a
         // right-click on the ground and the trace for its timing. It is
@@ -224,16 +233,22 @@ public sealed class Reactor(
         // reader sorts by video_time.
         foreach (var step in policy.DrainMoves())
         {
-            Coach($"step[p{step.Priority}]: {step.Sentence}");
-            trace?.WriteStep(step);
-            coach?.PublishStep(step, gameTime);
-            recording?.Step(step);
+            var input = recording?.Step(step);
+            Coach($"step[p{step.Priority}]: {step.Sentence}", input);
+            trace?.WriteStep(step, input);
+            coach?.PublishStep(step, gameTime, input);
         }
     }
 
-    /// <summary>A line of coaching feedback: to the console, and to the --log file if one is open.</summary>
-    private void Coach(string message)
+    /// <summary>
+    /// A line of coaching feedback: to the console, and to the --log file if
+    /// one is open. <paramref name="input"/> is what the recording wrote for
+    /// it, named plainly after the advice; null when nothing was recorded.
+    /// </summary>
+    private void Coach(string message, IReadOnlyList<Message>? input = null)
     {
+        if (input is not null)
+            message = $"{message}  recorded: {GhostRecording.Show(input)}";
         Log(message);
         log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {message}");
     }

@@ -161,7 +161,7 @@ try
     Console.WriteLine($"coaching against {feedUri} with {model} — feedback to the console" +
         (logPath is null ? "" : $" and {logPath}") +
         (coach is null ? "" : $", served at http://localhost:{servePort}/stream") +
-        (recordPath is null ? "" : $"; ghost input recorded to {recordPath}") +
+        (recording is null ? "" : $"; ghost input recorded to {recordPath}, opened with {recording.Header}") +
         (auditPath is null ? "" : $"; questions and answers to {auditPath}") +
         "; no input is sent anywhere");
     await reactor.RunAsync(cts.Token);

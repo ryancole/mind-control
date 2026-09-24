@@ -150,6 +150,74 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void What_was_written_is_handed_back_and_shown_plainly()
+    {
+        IReadOnlyList<Message> moved, pressed, stepped;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            Assert.AreEqual("ScreenSize 1920x1080", recording.Header);
+
+            moved = recording.Move(new GhostCursor(1700, 900));
+            CollectionAssert.AreEqual(new Message[] { new MouseMoveMessage(1700, 900) }, moved.ToArray());
+            Assert.AreEqual("MouseMove 1700,900", GhostRecording.Show(moved));
+
+            pressed = recording.Press(new KeyPress(17.5, "Q", 2, "Karma in range"));
+            CollectionAssert.AreEqual(
+                new Message[] { new KeyDownMessage(HidUsage.Q), new KeyUpMessage(HidUsage.Q) }, pressed.ToArray());
+            Assert.AreEqual("KeyDown Q (0x14), KeyUp Q (0x14)", GhostRecording.Show(pressed));
+
+            stepped = recording.Step(new MoveStep(218.1, "left", -1, 0, 3, "a bolt from the right"));
+            Assert.AreEqual(
+                "MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(stepped));
+        }
+
+        // The file holds exactly what was handed back, in order.
+        CollectionAssert.AreEqual(
+            new Message[] { new ScreenSizeMessage(1920, 1080) }.Concat(moved).Concat(pressed).Concat(stepped).ToArray(),
+            ProtocolFile.Read(_path).ToArray());
+    }
+
+    [TestMethod]
+    public void Showing_frames_is_plain_text_with_nothing_added()
+    {
+        Assert.AreEqual(
+            "MouseMove 1,2, KeyDown D (0x07), KeyUp D (0x07), MouseButtons Right",
+            GhostRecording.Show(
+                new MouseMoveMessage(1, 2),
+                new KeyDownMessage(HidUsage.D), new KeyUpMessage(HidUsage.D),
+                new MouseButtonsMessage(MouseButtons.Right)));
+        Assert.AreEqual("", GhostRecording.Show());
+        // A frame this recording never writes still shows, as the library shows it.
+        Assert.AreEqual("Ping []", GhostRecording.Show(new PingMessage()));
+    }
+
+    [TestMethod]
+    public void Frames_as_data_name_their_type_and_fields_for_a_front_end()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            GhostRecording.AsData(
+            [
+                new KeyDownMessage(HidUsage.Q), new KeyUpMessage(HidUsage.Q),
+                new MouseMoveMessage(760, 540), new MouseButtonsMessage(MouseButtons.Right),
+                new ScreenSizeMessage(1920, 1080), new PongMessage(3),
+            ]),
+            MindControl.Feed.FeedJson.Options);
+        Assert.AreEqual(
+            """[{"type":"key_down","key":"Q","usage":20},{"type":"key_up","key":"Q","usage":20},""" +
+            """{"type":"mouse_move","x":760,"y":540},{"type":"mouse_buttons","buttons":"Right"},""" +
+            """{"type":"screen_size","width":1920,"height":1080},{"type":"pong","payload":"03"}]""",
+            json);
+    }
+
+    [TestMethod]
+    public void Keycaps_map_to_usages_and_back()
+    {
+        foreach (var keycap in "ABCQZ0159")
+            Assert.AreEqual(keycap.ToString(), GhostRecording.KeycapOf(GhostRecording.UsageOf(keycap.ToString())));
+        Assert.AreEqual("?", GhostRecording.KeycapOf(HidUsage.Space));
+    }
+
+    [TestMethod]
     public void Keycaps_map_to_usages_and_unknown_ones_are_refused()
     {
         Assert.AreEqual(HidUsage.Q, GhostRecording.UsageOf("Q"));

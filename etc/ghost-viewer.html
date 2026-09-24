@@ -36,7 +36,7 @@
   <span id="status">pick the timeline and the ghost trace, or drop them here</span>
 </div>
 <canvas id="map" width="640" height="640"></canvas>
-<canvas id="ticks" width="640" height="14" title="glances — click to jump"></canvas>
+<canvas id="ticks" width="640" height="14" title="glances (bars), keys ⌨ and steps 🖱 — click to jump"></canvas>
 <div id="controls">
   <button id="play">play</button>
   <select id="speed">
@@ -56,6 +56,7 @@ const canvas = $("map"), ctx = canvas.getContext("2d");
 let frames = [];       // [{vt, gameTime, rows}]
 let moves = [];        // [{vt, x, y}] in player-screen pixels
 let glances = [];      // [{vt, x, y, priority, reason}]
+let inputs = [];       // [{vt, kind, icon, text, frames}] keys and steps: the ghost's hands
 const PRIORITY_COLOR = { 0: "#5a6b7d", 1: "#8fa1b3", 2: "#ffd65a", 3: "#ff5a5a" };
 let world = null;      // {min_x, min_y, max_x, max_y}
 let minimap = null;    // {x, y, width, height} on the player's screen
@@ -85,7 +86,30 @@ function parseTrace(text) {
   moves = lines.filter(l => l.t === "move").map(l => ({ vt: l.video_time, x: l.x, y: l.y }));
   glances = lines.filter(l => l.t === "glance")
     .map(l => ({ vt: l.video_time, x: l.x, y: l.y, priority: l.priority, reason: l.reason }));
+  // The icon is this page's dress for the hand; the trace carries only the type.
+  inputs = lines.filter(l => l.t === "key" || l.t === "step")
+    .map(l => ({
+      vt: l.video_time, kind: l.t, icon: l.t === "key" ? "⌨" : "🖱",
+      text: l.t === "key" ? `pressed ${l.key}: ${l.reason}` : `stepped ${l.direction}: ${l.reason}`,
+      frames: (l.input ?? []).map(describeFrame).join(", "),
+    }))
+    .sort((a, b) => a.vt - b.vt);
   ready();
+}
+
+// The misdirection frames the recording wrote for a key or a step, as the
+// console prints them.
+const hex = n => "0x" + n.toString(16).toUpperCase().padStart(2, "0");
+function describeFrame(f) {
+  switch (f.type) {
+    case "key_down": return `KeyDown ${f.key} (${hex(f.usage)})`;
+    case "key_up": return `KeyUp ${f.key} (${hex(f.usage)})`;
+    case "mouse_move": return `MouseMove ${f.x},${f.y}`;
+    case "mouse_buttons": return `MouseButtons ${f.buttons}`;
+    case "mouse_wheel": return `MouseWheel ${f.vertical},${f.horizontal}`;
+    case "screen_size": return `ScreenSize ${f.width}x${f.height}`;
+    default: return f.type;
+  }
 }
 
 function ready() {
@@ -94,7 +118,7 @@ function ready() {
   t1 = frames[frames.length - 1].vt;
   simT = t0;
   $("status").textContent = `${frames.length} frames, ${moves.length} cursor moves, ` +
-    `${glances.length} glances, video ${fmt(t0)}–${fmt(t1)}`;
+    `${glances.length} glances, ${inputs.length} keys and steps, video ${fmt(t0)}–${fmt(t1)}`;
   drawTicks();
   draw();
 }
@@ -108,6 +132,9 @@ function drawTicks() {
     tctx.fillStyle = PRIORITY_COLOR[g.priority] ?? "#8fa1b3";
     tctx.fillRect((g.vt - t0) / (t1 - t0) * tc.width - 1, 2, 2, 10);
   }
+  tctx.font = "10px system-ui"; tctx.textBaseline = "middle"; tctx.fillStyle = "#e8eef5";
+  for (const i of inputs)
+    tctx.fillText(i.icon, (i.vt - t0) / (t1 - t0) * tc.width - 5, 7);
 }
 
 // world units -> canvas (y flipped: world y grows northward)
@@ -201,6 +228,23 @@ function draw() {
     ctx.fillRect(lx - 4, ly - 12, w + 8, 17);
     ctx.fillStyle = color;
     ctx.fillText(g.reason, lx, ly);
+  }
+
+  // The hand: the key or step most recently taken, with the frames it
+  // recorded, as a badge at the foot of the map.
+  const ii = latestIndex(inputs, simT, "vt");
+  if (ii >= 0 && simT - inputs[ii].vt < 2.5) {
+    const i = inputs[ii];
+    const head = `${i.icon} coach would have ${i.text}`;
+    const bx = 8, by = canvas.height - 30, bw = canvas.width - 16;
+    ctx.fillStyle = "rgba(16, 20, 24, 0.85)";
+    ctx.fillRect(bx - 4, by - 14, bw + 8, i.frames ? 40 : 20);
+    ctx.font = "13px system-ui"; ctx.fillStyle = "#e8eef5";
+    ctx.fillText(head, bx, by, bw);
+    if (i.frames) {
+      ctx.font = "12px ui-monospace, monospace"; ctx.fillStyle = "#8fa1b3";
+      ctx.fillText(i.frames, bx, by + 18, bw);
+    }
   }
 
   const gt = frame?.gameTime;

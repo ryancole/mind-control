@@ -106,7 +106,7 @@ Five questions, each asked when there is something to ask about:
   right now?* A clear yes is a key press:
 
   ```
-  key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up
+  key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up  recorded: KeyDown Q (0x14), KeyUp Q (0x14)
   ```
 
   Asked at most four times a video-second, one question in flight at a time.
@@ -118,7 +118,7 @@ Five questions, each asked when there is something to ask about:
   sighting:
 
   ```
-  step[p3]: coach would have stepped up-left here: a bolt from the upper right hit you for 12 while you stood still, 0.33s after it came into view
+  step[p3]: coach would have stepped up-left here: a bolt from the upper right hit you for 12 while you stood still, 0.33s after it came into view  recorded: MouseMove 819,399, MouseButtons Right, MouseButtons None
   ```
 - **A shot of the player's** (`skillshot` events, only those seen leaving
   them with an enemy in front): *given the recent shots, is aim worth a word?*
@@ -179,7 +179,21 @@ direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
 place, the camera being locked; `--anchor <x,y>` names it (default: the
 screen's centre). It is a recording, not a connection: this tool never opens
-the device. The format carries no timing, so the trace below remains the
+the device.
+
+What went into the file is also shown on the coaching line it came from,
+after the advice and plainly: `recorded: KeyDown Q (0x14), KeyUp Q (0x14)`
+for a key (the keycap and the HID usage on the wire), `recorded: MouseMove
+819,399, MouseButtons Right, MouseButtons None` for a step, and the
+`ScreenSize` frame on the startup line. A glance shows the `MouseMove` that
+snapped the cursor to it; the glide home afterwards is recorded but not
+printed, being a move per frame with nothing to say. The same frames ride as
+data — `input`, a list of `{type, ...}` objects (`key_down`, `mouse_move`,
+`mouse_buttons`, ...) — on the SSE stream's glance, key and step lines and
+on the trace's key and step lines. The text and the data carry no
+decoration; the ghost viewer puts a ⌨ or 🖱 to a key or a step from the
+type, which is its own choice of dress, and a coaching panel can do the
+same. With `--record none` nothing is written, so nothing is shown. The format carries no timing, so the trace below remains the
 record of *when* (key presses and steps land there too, as `key` and `step`
 lines; a step is stamped at the bolt's first sighting, which is earlier than
 the event that reports it, so the trace is not in time order there).
@@ -187,7 +201,9 @@ the event that reports it, so the trace is not in time order there).
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the ghost's cursor over the map, with every glance labeled with its
-reason and jumpable from the tick strip.
+reason and jumpable from the tick strip. Keys and steps sit on the strip as
+⌨ and 🖱, and while one is fresh a badge at the foot of the map names it and
+the frames it recorded.
 
 `etc/minimap-calibrator.html` turns a screenshot of the player's screen into
 the exact `--screen`/`--minimap` arguments: paste the screenshot (Ctrl+V),
