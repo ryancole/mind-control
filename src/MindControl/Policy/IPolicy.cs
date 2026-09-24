@@ -27,6 +27,21 @@ public sealed record GlanceNote(double VideoTime, ushort X, ushort Y, int Priori
 /// </summary>
 public sealed record CoachCue(double VideoTime, int Priority, string Reason);
 
+/// <summary>
+/// A key the coach would have pressed at this moment, and why. The keyboard
+/// half of the demonstration: where a glance moves the ghost's cursor, a key
+/// press is the ghost's hand on the keyboard. <see cref="Key"/> is the keycap
+/// as the player knows it ("Q", "W", "D"), not a HID code; the recording maps
+/// it. Like a cue it carries no position: the ability is aimed by the mouse,
+/// and where the coach would have aimed is not yet demonstrated (the cursor
+/// belongs to attention), so the press says only <em>that</em> and <em>when</em>.
+/// </summary>
+public sealed record KeyPress(double VideoTime, string Key, int Priority, string Reason)
+{
+    /// <summary>The line as the player reads it, wherever it is shown.</summary>
+    public string Sentence => $"coach would have pressed {Key} here: {Reason}";
+}
+
 public interface IPolicy
 {
     /// <summary>Called once with the run's capability header before any frame or event.</summary>
@@ -37,6 +52,9 @@ public interface IPolicy
 
     /// <summary>Coaching said since the last drain that moves no cursor.</summary>
     IReadOnlyList<CoachCue> DrainCues() => [];
+
+    /// <summary>Keys the coach would have pressed since the last drain.</summary>
+    IReadOnlyList<KeyPress> DrainKeys() => [];
 
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);

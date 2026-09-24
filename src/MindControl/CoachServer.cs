@@ -61,6 +61,18 @@ public sealed class CoachServer : IDisposable
             Priority = cue.Priority, Reason = cue.Reason,
         });
 
+    /// <summary>
+    /// A key the coach would have pressed. Carries the key on its own and the
+    /// full sentence as <c>reason</c>, so a panel that only knows how to print
+    /// a reason still prints the right thing.
+    /// </summary>
+    public void PublishKey(KeyPress key, int? gameTime) =>
+        Publish(new
+        {
+            T = "key", VideoTime = key.VideoTime, GameTime = gameTime,
+            Key = key.Key, Priority = key.Priority, Reason = key.Sentence,
+        });
+
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });
 

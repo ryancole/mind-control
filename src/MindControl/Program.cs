@@ -85,6 +85,10 @@ for (var i = 0; i < args.Length; i++)
                 Execution coaching (a shot of the player's that went wide, a bolt that hit
                 them while they stood still) needs a spectral-sight run made with --coach;
                 on a feed without those stages it says so once and stays quiet.
+
+                Cast coaching ("coach would have pressed Q here") needs the ability HUD read
+                and world calibration, and knows the ranges of a few champions only (see
+                AbilityKits); for any other champion it stays quiet.
                 """);
             return 0;
         default:
@@ -108,13 +112,15 @@ var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = scr
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 using var recording = recordPath is null ? null : GhostRecording.Append(recordPath, screenWidth, screenHeight);
-// Two questions asked of the same feed: where attention should be, and how
-// the player's own execution turned out. Attention goes first because it is
-// the one that owns the cursor -- see CompositePolicy on why that ordering is
-// load-bearing and where it stops being enough.
+// Three questions asked of the same feed: where attention should be, how the
+// player's own execution turned out, and which ability a coach would have
+// thrown by now. Attention goes first because it is the one that owns the
+// cursor -- see CompositePolicy on why that ordering is load-bearing and
+// where it stops being enough.
 var policy = new CompositePolicy(
     new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion }),
-    new ExecutionPolicy());
+    new ExecutionPolicy(),
+    new CastPolicy(new CastOptions { SelfChampion = selfChampion }));
 using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 

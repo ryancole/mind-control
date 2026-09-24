@@ -31,8 +31,9 @@ Three layers; the policy is the one that churns and stays pure of I/O:
   against replayed timelines with no I/O. `AttentionPolicy` is the fair-play
   attention demonstrator; `ExecutionPolicy` speaks only when a shot went wide
   or a bolt found the player standing still (it needs a spectral-sight
-  `--coach` run); `CompositePolicy` runs both; `NoOpPolicy` watches and says
-  nothing.
+  `--coach` run); `CastPolicy` presses the ability a coach would have thrown
+  by now ("coach would have pressed Q here"); `CompositePolicy` runs all
+  three; `NoOpPolicy` watches and says nothing.
 - `src/MindControl/Reactor.cs` — the decision loop and the safety rules: any
   feed doubt (disconnect, gap, lag, fps collapse, silence) pauses coaching
   rather than advising off stale state.
@@ -73,15 +74,43 @@ open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
 the ghost's attention drawn as a gold crosshair on the map. The stream is
 output-only, like the console.
 
+## Cast coaching
+
+The keyboard half of the demonstration. `CastPolicy` watches the player's own
+ability HUD (spectral-sight's `ability` events name the button and print its
+cooldown) and the enemies drawn on their screen, and when an ability is known
+to be up and a visible enemy has stood inside its range for two seconds
+without the player throwing it, the coach presses the key:
+
+```
+key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up
+```
+
+It is deliberately conservative. A slot is only known to be up after its first
+cast has been seen with a readable countdown (it may not be skilled before
+that); an enemy in fog is not in range of anything; an empty mana bar and a
+dead player are silence; and it knows the ranges of only the champions listed
+in `AbilityKits` (Ezreal's Q and W today — E is a blink and R is global, and
+neither is something to throw at whoever is closest). On the execution fixture
+below (`--self Ezreal`, replayed from 140s) it presses Q 16 times and W 22
+times in seventeen minutes, and on roughly half of the Q presses the player
+pressed the same key inside the next two seconds: the coach is a beat ahead,
+not somewhere else. What it does not yet
+demonstrate is *where* the coach would have aimed — the ghost's cursor still
+belongs to attention, on the minimap.
+
+## Ghost input recording
+
 The ghost's input -- the mouse and keyboard reactions the coach would have
 made -- is also appended to `data/ghost.msdr` in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file
 (`--record <file>` to move it, `--record none` to turn it off). Each run opens
-with a `ScreenSize` frame and every cursor move follows as a `MouseMove`; keys
-have a path in but nothing coaches them yet. It is a recording, not a
-connection: this tool never opens the device. The format carries no timing,
-so the trace below remains the record of *when*.
+with a `ScreenSize` frame; every cursor move follows as a `MouseMove`, and
+every key the coach presses as a `KeyDown` and `KeyUp` pair. It is a
+recording, not a connection: this tool never opens the device. The format
+carries no timing, so the trace below remains the record of *when* (key
+presses land there too, as `key` lines).
 
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to

@@ -110,7 +110,8 @@ public sealed record ExecutionOptions
 /// what the player just did with their own hand, and every skillshot cast is
 /// said again a second later by the <c>skillshot</c> event with the same
 /// <c>at</c>, which carries everything this one does and more. Summoner spells
-/// (D/F) are the player's own HUD too.</item>
+/// (D/F) are the player's own HUD too. (<see cref="CastPolicy"/> does read
+/// them -- for the cooldown they print, never to remark on the cast.)</item>
 /// </list>
 ///
 /// <para><b>Things the copy must not overstate.</b> The denominator of an
