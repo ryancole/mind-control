@@ -25,10 +25,12 @@ public sealed record ReactorOptions
 /// viewer). It drives no device and sends nothing to the game. The one rule:
 /// any doubt about the feed — disconnect, gap, climbing lag, collapsing fps,
 /// silence — pauses coaching rather than advising off stale state.
+/// The optional <see cref="GhostRecording"/> keeps the ghost's input in the
+/// misdirection wire format; it is a file, and this loop never opens a device.
 /// </summary>
 public sealed class Reactor(
     FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null,
-    CoachServer? coach = null)
+    CoachServer? coach = null, GhostRecording? recording = null)
 {
     private static readonly TimeSpan HealthLogInterval = TimeSpan.FromSeconds(5);
 
@@ -188,6 +190,7 @@ public sealed class Reactor(
         {
             trace?.WriteMove(videoTime, c);
             coach?.PublishMove(videoTime, c, gameTime);
+            recording?.Move(c);
         }
         foreach (var note in policy.DrainNotes())
         {

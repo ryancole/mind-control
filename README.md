@@ -73,6 +73,16 @@ open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
 the ghost's attention drawn as a gold crosshair on the map. The stream is
 output-only, like the console.
 
+The ghost's input -- the mouse and keyboard reactions the coach would have
+made -- is also appended to `data/ghost.msdr` in the wire format of the
+[misdirection](../misdirection) HID bridge, via the
+[misdirection-client](submodules/misdirection-client) library's protocol file
+(`--record <file>` to move it, `--record none` to turn it off). Each run opens
+with a `ScreenSize` frame and every cursor move follows as a `MouseMove`; keys
+have a path in but nothing coaches them yet. It is a recording, not a
+connection: this tool never opens the device. The format carries no timing,
+so the trace below remains the record of *when*.
+
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the ghost's cursor over the map, with every glance labeled with its
