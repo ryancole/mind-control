@@ -50,6 +50,22 @@ etc/dev.ps1 -Log data/coaching.log  # also append it to a file
 
 `dotnet test` needs nothing running.
 
+The execution-coaching fixture is `data/coach-full-20260902-222718.jsonl`
+(local, gitignored): the whole of `Recording 2026-08-30 200315` exported with
+`--coach` by spectral-sight's gated build of 2026-09-02, video 142–1121s. Its
+counts are in `ExecutionPolicy`'s doc comment, and the measurements behind the
+gate in `spectral-sight/docs/aim-bolt-findings.md`. Earlier `--coach` exports
+credited casts with bolts that were mostly not the player's shot; nothing
+measured on them is to be trusted or preserved. To replay it:
+
+```powershell
+# terminal 1, in the spectral-sight repo (lane until ~700s, fights after):
+python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --from 700 --speed 4
+
+# terminal 2, here:
+etc/dev.ps1 -- --self Ezreal
+```
+
 While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
 turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
