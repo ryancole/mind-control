@@ -2,43 +2,60 @@
 
 An observe-and-advise coaching reactor: it consumes the live game-state feed
 published by [spectral-sight](../spectral-sight) and prints real-time,
-fair-play coaching feedback — where a good player's attention should be on the
-minimap, and why. It sends no input to the game or to any device; it only
-watches and explains.
+fair-play coaching feedback — where a good player's attention would be, which
+button they would have pressed, which way they would have stepped, and why.
+It sends no input to the game or to any device; it only watches and explains.
+
+The coaching itself is [Jev](https://docs.typesafe.ai/concepts/system-one)'s,
+TypeSafe's System One model. Every decision is a question put to it about
+the moment — *would a good player press Q now? was that bolt worth a step,
+and which way? does this fade deserve a look?* — and answered as a
+probability, a level or an option. This tool measures, asks, and turns the
+answer into a demonstrated input; it decides nothing itself.
 
 Two rules keep it fair:
 
 - **Advises, never acts.** The output is coaching notes (and, optionally, a
-  recorded ghost-cursor path for the viewer). Nothing is ever sent back into
-  the game.
-- **Uses only what the player can see.** The policy reacts to enemies that are
-  currently visible on the player's own screen, and to allied deaths (which the
-  game announces). It never consumes fog-of-war information — no enemy
-  positions in fog, no "seconds since seen", no last-known spots, no level or
-  cast sensed through the fog.
+  recorded ghost-cursor path for the viewer and the ghost's input as a
+  protocol file). Nothing is ever sent back into the game.
+- **Uses only what the player can see.** The model is shown enemies that are
+  currently visible on the player's own screen, the player's own HUD, and
+  allied deaths (which the game announces). It is never shown fog-of-war
+  information — no enemy positions in fog, no "seconds since seen", no
+  last-known spots, no level or cast sensed through the fog. The one
+  exception is the moment an enemy fades from the minimap, which the player
+  watched happen.
 
 Input boundary: SSE feed at `http://127.0.0.1:8723`, wire format in
 `spectral-sight/docs/output-format.md` (schema 1).
 
 ## Layout
 
-Three layers; the policy is the one that churns and stays pure of I/O:
+Three layers; the policy is the one that churns and stays pure of I/O of its
+own:
 
 - `src/MindControl/Feed` — SSE → typed envelopes and events. Frames land in a
   latest-wins mailbox (capacity 1, drop-oldest: stale game state is never
   queued); events, gaps, and connection changes in an ordered notice queue.
-- `src/MindControl/Policy` — `(state, event) → a coaching cue`. Testable
-  against replayed timelines with no I/O. `AttentionPolicy` is the fair-play
-  attention demonstrator; `ExecutionPolicy` speaks only when a shot went wide
-  or a bolt found the player standing still (it needs a spectral-sight
-  `--coach` run); `CastPolicy` presses the ability a coach would have thrown
-  by now ("coach would have pressed Q here"); `DodgePolicy` takes the step a
-  coach would have taken out of a bolt's way ("coach would have stepped left
-  here"); `CompositePolicy` runs all four; `NoOpPolicy` watches and says
-  nothing.
+- `src/MindControl/Policy` — `(state, event) → a coaching cue`. `JevPolicy`
+  is the coach: it keeps the perception (who the player is, what has been
+  seen for how long, which buttons the HUD has shown come back), the
+  geometry (world units to minimap pixels, the two sides of a bolt's line)
+  and the cursor's motor (a glance dwells, then glides home), builds a
+  `Moment` — the fair-play state the model is shown — and asks the questions
+  in `CoachQuestions`. The only I/O is the injected Jev client, so a replayed
+  timeline with a scripted client exercises it exactly (`dotnet test` needs
+  nothing running and no key). `NoOpPolicy` watches and says nothing.
 - `src/MindControl/Reactor.cs` — the decision loop and the safety rules: any
   feed doubt (disconnect, gap, lag, fps collapse, silence) pauses coaching
   rather than advising off stale state.
+
+The Jev client is the [jev-dotnet](submodules/jev) submodule. The API key
+lives in this project's user secrets, not the environment:
+
+```powershell
+dotnet user-secrets set Jev <key> --project src/MindControl
+```
 
 ## Dev loop
 
@@ -55,19 +72,20 @@ etc/dev.ps1 -Log data/coaching.log  # also append it to a file
 
 The execution-coaching fixture is `data/coach-full-20260902-222718.jsonl`
 (local, gitignored): the whole of `Recording 2026-08-30 200315` exported with
-`--coach` by spectral-sight's gated build of 2026-09-02, video 142–1121s. Its
-counts are in `ExecutionPolicy`'s doc comment, and the measurements behind the
-gate in `spectral-sight/docs/aim-bolt-findings.md`. Earlier `--coach` exports
-credited casts with bolts that were mostly not the player's shot; nothing
-measured on them is to be trusted or preserved. To replay it:
+`--coach` by spectral-sight's gated build of 2026-09-02, video 142–1121s. To
+replay it:
 
 ```powershell
 # terminal 1, in the spectral-sight repo (lane until ~700s, fights after):
-python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --from 700 --speed 4
+python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --from 140 --speed 4
 
 # terminal 2, here:
-etc/dev.ps1 -- --self Ezreal
+etc/dev.ps1 -- --self Ezreal --audit data/audit.jsonl
 ```
+
+Keep the replay speed modest: the coach asks a question about the moment up
+to four times a video-second and one per event, and Jev's limit is 1,200
+requests a minute. A run at `--speed 4` sits around a third of that.
 
 While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
@@ -76,61 +94,74 @@ open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
 the ghost's attention drawn as a gold crosshair on the map. The stream is
 output-only, like the console.
 
-## Cast coaching
+## Coaching by Jev
 
-The keyboard half of the demonstration. `CastPolicy` watches the player's own
-ability HUD (spectral-sight's `ability` events name the button and print its
-cooldown) and the enemies drawn on their screen, and when an ability is known
-to be up and a visible enemy has stood inside its range for two seconds
-without the player throwing it, the coach presses the key:
+Five questions, each asked when there is something to ask about:
 
-```
-key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up
-```
+- **Which button, now.** Whenever the player is alive, an enemy is on their
+  screen, and a button the HUD has shown a cooldown for has counted down, the
+  coach is asked one yes/no per such button: *would a good player press it
+  right now?* A clear yes is a key press:
 
-It is deliberately conservative. A slot is only known to be up after its first
-cast has been seen with a readable countdown (it may not be skilled before
-that); an enemy in fog is not in range of anything; an empty mana bar and a
-dead player are silence; and it knows the ranges of only the champions listed
-in `AbilityKits` (Ezreal's Q and W today — E is a blink and R is global, and
-neither is something to throw at whoever is closest). On the execution fixture
-below (`--self Ezreal`, replayed from 140s) it presses Q 16 times and W 22
-times in seventeen minutes, and on roughly half of the Q presses the player
-pressed the same key inside the next two seconds: the coach is a beat ahead,
-not somewhere else. What it does not yet
-demonstrate is *where* the coach would have aimed — the ghost's cursor still
-belongs to attention, on the minimap.
+  ```
+  key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up
+  ```
 
-## Movement coaching
+  Asked at most four times a video-second, one question in flight at a time.
+- **A bolt at the player** (spectral-sight's `threat` events): *is this worth
+  a remark?* and *would a good player have stepped?*, plus *which way?* as a
+  choice between the two sides of the bolt's line, each described by whether
+  it goes toward the player's own base and toward or away from the nearest
+  visible enemy. A yes is a cue and a step, stamped at the bolt's first
+  sighting:
 
-The feet. `DodgePolicy` watches the bolts that came at the player
-(spectral-sight's `threat` events: a bolt's heading on the screen, when it was
-first seen and when it arrived, whether the player's printed health fell, and
-how far they moved across its line meanwhile) and, where one hit them standing
-still, takes the step a coach would have taken:
+  ```
+  step[p3]: coach would have stepped up-left here: a bolt from the upper right hit you for 12 while you stood still, 0.33s after it came into view
+  ```
+- **A shot of the player's** (`skillshot` events, only those seen leaving
+  them with an enemy in front): *given the recent shots, is aim worth a word?*
+  A yes is a cue naming where the bolt passed and the run it made.
+- **Something to look at** (an enemy casting, levelling or reappearing in
+  view; an enemy fading from the minimap; an ally falling or returning): *how
+  much does it deserve a glance?* on a four-level scale. The most likely
+  level is the glance's priority; level 0 is no glance. A glance moves the
+  ghost's cursor to the spot on the minimap, holds, and glides home.
 
-```
-step[p3]: coach would have stepped up-left here: a bolt from the upper right hit you for 12 while you stood still, 0.33s after it came into view
-```
+What the model is told is the `Moment`: the player's champion, health, mana
+and level; each button's status with what it is and how far it reaches
+(`AbilityKits`, a fact table, not a gate); every visible enemy's distance,
+screen direction, time in view and time inside the player's reach; the
+player's own team; what the coach itself did in the last few seconds; and the
+event in question, with its measurements. Everything is a measurement the
+code made — the model is asked for judgement, never for arithmetic — and the
+fair-play boundary is that this state is built from visible rows only.
 
-The step is across the bolt's line, and of the two sides it takes the one
-toward the player's own base (down-left on the screen: blue is always the
-local team and the camera never rotates), because either side clears the line
-by the same margin and a coach with nothing else to go on steps toward safety.
-It is stamped at the bolt's first sighting, the latest moment the step could
-have been taken — a real dodge answers the enemy's cast, which comes earlier
-still — and the warning is stated, never judged. It steps only where the
-coach's move would have differed from the player's: a dodge, an unread
-outcome and a hit while already moving are silence, and two bolts credited
-with one fall of the health bar are one step. On the execution fixture below
-that is 14 steps in seventeen minutes, one per bolt that found the player
-still.
+The rubrics are the text in `CoachQuestions`; the thresholds that used to be
+code (how long an enemy sits in range before a throw, how many wide shots
+make a run, how long a blip must have been seen before its fade is a missing
+call) are sentences there now. The knobs that remain are plumbing: `YesAt`,
+the probability below which a yes is a no (0.6 — a yes with a margin, and
+since the coach is told what it just did, a press drops the next answer to
+about 0.35, so a lower bar does not mean a spammed key); `AskEverySeconds`,
+the floor between questions about the moment (0.25); and `--model`, pinned to
+`jev-1.13.0` because a threshold tuned against one release's calibration
+should not move with `jev-latest`.
 
-What it cannot say is that the bolt was dodgeable. A threat is any bolt
-launched at an enemy champion's plate, a ranged auto-attack as readily as a
-skillshot, and until spectral-sight names the ability nothing here tells
-them apart — so the copy says "a bolt", and the step is what a good player
-does when one is coming either way.
+`--audit <file>` records every question and its answer as JSONL: the state
+the model saw, the questions as asked, and the answers exactly as returned.
+A press or a glance in the log traces back to a probability there, and a
+silence to the one that fell short; it is also the record of what the model
+was shown, which is the fair-play boundary made inspectable. The model's
+latency is about a tenth of a second, and the ghost runs that far behind the
+moment: every output is stamped with the video time it was asked about, so
+the trace and the log carry the coach's timing rather than the network's.
+
+What the copy must not claim, and still does not: a bolt is "a bolt", never
+an ability (a ranged auto-attack qualifies as readily as a skillshot, and
+until spectral-sight names the ability nothing here tells them apart); a wide
+shot is where the bolt passed, never "you missed"; an aim count is over the
+shots that were seen, never over casts; the warning a bolt gave is stated,
+never judged.
 
 ## Ghost input recording
 

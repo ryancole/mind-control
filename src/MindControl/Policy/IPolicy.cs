@@ -4,11 +4,14 @@ namespace MindControl.Policy;
 
 /// <summary>
 /// The decision layer: (state, event) → a coaching cue. Implementations must be
-/// pure of I/O — no clocks, no sockets, no ports — so a recorded timeline
-/// replayed through the feed exercises them exactly. Internal state derived from
-/// the frames is fine; that state must be rebuildable from a /state snapshot via
-/// <see cref="Resync"/>. A policy only ever observes and advises: its output is
-/// where to look and why, never input to the game.
+/// pure of I/O of their own — no clocks, no sockets, no ports — so a recorded
+/// timeline replayed through the feed exercises them exactly. The one I/O a
+/// policy may do is put a question to the coach model, and that goes through
+/// an injected client a test can script (see <see cref="JevPolicy"/>).
+/// Internal state derived from the frames is fine; that state must be
+/// rebuildable from a /state snapshot via <see cref="Resync"/>. A policy only
+/// ever observes and advises: its output is where to look and why, never
+/// input to the game.
 /// </summary>
 /// <remarks>
 /// One attention decision, explained. Coaching is explanation-driven: the trace
