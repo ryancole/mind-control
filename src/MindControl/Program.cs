@@ -9,6 +9,9 @@ ushort screenWidth = 1920, screenHeight = 1080;
 var minimap = new MinimapRect(1620, 780, 300, 300);
 string? tracePath = null;
 string? logPath = null;
+// The ghost's input in misdirection's wire format. On by default: this file is
+// the demonstration the whole pipeline exists to produce. data/ is gitignored.
+string? recordPath = "data/ghost.msdr";
 string? selfChampion = null;
 var servePort = 8724;
 HashSet<string>? kinds =
@@ -45,6 +48,11 @@ for (var i = 0; i < args.Length; i++)
         case "--log":
             logPath = args[++i];
             break;
+        case "--record":
+            // "none" turns it off, the way "all" lifts the --kinds filter.
+            var record = args[++i];
+            recordPath = record == "none" ? null : record;
+            break;
         case "--self":
             selfChampion = args[++i];
             break;
@@ -67,6 +75,8 @@ for (var i = 0; i < args.Length; i++)
                   --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
                   --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
+                  --record <file|none> append the ghost's mouse and key input as a misdirection
+                                     protocol file (.msdr)  (default data/ghost.msdr)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
                                      coaching panel (default 8724; 0 disables)
@@ -97,6 +107,7 @@ var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
+using var recording = recordPath is null ? null : GhostRecording.Append(recordPath, screenWidth, screenHeight);
 // Two questions asked of the same feed: where attention should be, and how
 // the player's own execution turned out. Attention goes first because it is
 // the one that owns the cursor -- see CompositePolicy on why that ordering is
@@ -105,13 +116,14 @@ var policy = new CompositePolicy(
     new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion }),
     new ExecutionPolicy());
 using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
-var reactor = new Reactor(feed, policy, options, log, trace, coach);
+var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try
 {
     Console.WriteLine($"coaching against {feedUri} — feedback to the console" +
         (logPath is null ? "" : $" and {logPath}") +
         (coach is null ? "" : $", served at http://localhost:{servePort}/stream") +
+        (recordPath is null ? "" : $"; ghost input recorded to {recordPath}") +
         "; no input is sent anywhere");
     await reactor.RunAsync(cts.Token);
 }
