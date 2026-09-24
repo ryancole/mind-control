@@ -73,6 +73,20 @@ public sealed class CoachServer : IDisposable
             Key = key.Key, Priority = key.Priority, Reason = key.Sentence,
         });
 
+    /// <summary>
+    /// A step the coach would have taken. Like a key it carries the full
+    /// sentence as <c>reason</c>; the direction rides alongside as a name and
+    /// a screen-space unit vector, and no minimap position, because a step
+    /// is on the ground in front of the player and not on the map.
+    /// </summary>
+    public void PublishStep(MoveStep step, int? gameTime) =>
+        Publish(new
+        {
+            T = "step", VideoTime = step.VideoTime, GameTime = gameTime,
+            Direction = step.Direction, Dx = step.Dx, Dy = step.Dy,
+            Priority = step.Priority, Reason = step.Sentence,
+        });
+
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });
 

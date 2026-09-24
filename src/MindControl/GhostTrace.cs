@@ -5,9 +5,11 @@ using MindControl.Policy;
 namespace MindControl;
 
 /// <summary>
-/// Records the ghost's cursor path and key presses as JSONL keyed by video_time,
-/// so a run can be replayed visually over the timeline that produced it
-/// (etc/ghost-viewer.html, which draws the cursor and ignores the keys).
+/// Records the ghost's cursor path, key presses and steps as JSONL keyed by
+/// video_time, so a run can be replayed visually over the timeline that
+/// produced it (etc/ghost-viewer.html, which draws the cursor and ignores the
+/// keys and steps). Lines are in the order they were decided, which for a
+/// step is after the bolt it answers; a reader that wants time order sorts.
 /// The header carries the minimap rect and world bounds the run used, letting
 /// the viewer invert screen pixels back onto the map.
 /// </summary>
@@ -50,6 +52,18 @@ public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWi
         Key = key.Key,
         Priority = key.Priority,
         Reason = key.Reason,
+    });
+
+    /// <summary>When and which way the coach stepped: the timing and the direction the .msdr click cannot name.</summary>
+    public void WriteStep(MoveStep step) => Write(new
+    {
+        T = "step",
+        VideoTime = step.VideoTime,
+        Direction = step.Direction,
+        Dx = step.Dx,
+        Dy = step.Dy,
+        Priority = step.Priority,
+        Reason = step.Reason,
     });
 
     private void Write<TLine>(TLine line) =>

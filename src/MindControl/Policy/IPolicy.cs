@@ -42,6 +42,23 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
     public string Sentence => $"coach would have pressed {Key} here: {Reason}";
 }
 
+/// <summary>
+/// A step the coach would have taken at this moment, and why. The movement
+/// half of the demonstration: where a key press is the ghost's hand on the
+/// keyboard, a step is its right-click on the ground. <see cref="Direction"/>
+/// is the way as the player would say it ("left", "up-right"), and
+/// (<see cref="Dx"/>, <see cref="Dy"/>) the same as a unit vector in their
+/// screen space, y down; the recording turns it into a click a fixed distance
+/// from the player's model, which sits at one place on their screen because
+/// the camera is locked. It is an action and not somewhere to look, so unlike
+/// a glance it does not compete for the cursor.
+/// </summary>
+public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
+{
+    /// <summary>The line as the player reads it, wherever it is shown.</summary>
+    public string Sentence => $"coach would have stepped {Direction} here: {Reason}";
+}
+
 public interface IPolicy
 {
     /// <summary>Called once with the run's capability header before any frame or event.</summary>
@@ -55,6 +72,9 @@ public interface IPolicy
 
     /// <summary>Keys the coach would have pressed since the last drain.</summary>
     IReadOnlyList<KeyPress> DrainKeys() => [];
+
+    /// <summary>Steps the coach would have taken since the last drain.</summary>
+    IReadOnlyList<MoveStep> DrainMoves() => [];
 
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);
