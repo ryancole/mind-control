@@ -53,9 +53,36 @@ public sealed class GhostRecording : IDisposable
     public void Move(GhostCursor cursor) => Write(new MouseMoveMessage(cursor.X, cursor.Y));
 
     /// <summary>
-    /// Any input the coach would have made. Key presses and button changes go
-    /// through here once a policy has reason to demonstrate them; today only
-    /// <see cref="Move"/> has a caller.
+    /// The coach pressed a key: a down and an up, back to back. The format has
+    /// no timing, so a tap is the only press there is; a held key would need
+    /// the trace to say how long, and no policy holds one.
+    /// </summary>
+    public void Press(KeyPress key)
+    {
+        var usage = UsageOf(key.Key);
+        Write(new KeyDownMessage(usage));
+        Write(new KeyUpMessage(usage));
+    }
+
+    /// <summary>
+    /// The keycap the coach names, as the HID usage the wire carries. Letters
+    /// and digits, which is every ability and summoner slot on the default
+    /// bindings; anything else is a policy naming a key this recording was
+    /// not taught, and that is a bug to hear about, not a frame to guess at.
+    /// </summary>
+    public static byte UsageOf(string key) => key switch
+    {
+        [>= 'A' and <= 'Z' and var letter] => (byte)(HidUsage.A + (letter - 'A')),
+        [>= 'a' and <= 'z' and var letter] => (byte)(HidUsage.A + (letter - 'a')),
+        ['0'] => HidUsage.Digit0,
+        [>= '1' and <= '9' and var digit] => (byte)(HidUsage.Digit1 + (digit - '1')),
+        _ => throw new ArgumentException($"no HID usage known for key \"{key}\"", nameof(key)),
+    };
+
+    /// <summary>
+    /// Any input the coach would have made. <see cref="Move"/> and
+    /// <see cref="Press"/> are the callers; button changes would come through
+    /// here too once a policy has reason to demonstrate them.
     /// </summary>
     public void Write(Message message)
     {

@@ -18,6 +18,7 @@ public sealed class CompositePolicyTests
         public int Frames, Events, Configures, Resyncs;
         public readonly List<GlanceNote> Notes = [];
         public readonly List<CoachCue> Cues = [];
+        public readonly List<KeyPress> Keys = [];
 
         public void Configure(Meta meta) => Configures++;
         public void Resync(FrameEnvelope? latest) => Resyncs++;
@@ -33,6 +34,13 @@ public sealed class CompositePolicyTests
         {
             var drained = Cues.ToArray();
             Cues.Clear();
+            return drained;
+        }
+
+        public IReadOnlyList<KeyPress> DrainKeys()
+        {
+            var drained = Keys.ToArray();
+            Keys.Clear();
             return drained;
         }
 
@@ -102,5 +110,18 @@ public sealed class CompositePolicyTests
         Assert.IsNull(composite.OnFrame(new FrameEnvelope()));
         Assert.IsEmpty(composite.DrainNotes());
         Assert.IsEmpty(composite.DrainCues());
+    }
+
+    [TestMethod]
+    public void Key_presses_from_every_policy_come_out_in_policy_order()
+    {
+        var first = new Spy();
+        var second = new Spy();
+        first.Keys.Add(new KeyPress(1, "Q", 2, "first"));
+        second.Keys.Add(new KeyPress(1, "W", 2, "second"));
+        var composite = new CompositePolicy(first, second);
+
+        CollectionAssert.AreEqual(new[] { "Q", "W" }, composite.DrainKeys().Select(k => k.Key).ToArray());
+        Assert.IsEmpty(composite.DrainKeys(), "drained means drained");
     }
 }

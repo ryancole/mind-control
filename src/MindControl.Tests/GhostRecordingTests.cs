@@ -93,4 +93,35 @@ public sealed class GhostRecordingTests
         Assert.HasCount(2, messages);
         Assert.AreEqual(new MouseMoveMessage(5, 6), messages[1]);
     }
+
+    [TestMethod]
+    public void A_press_reads_back_as_a_key_down_and_up_on_the_keycap_usage()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            recording.Move(new GhostCursor(1700, 900));
+            recording.Press(new KeyPress(17.5, "Q", 2, "Karma in range"));
+            Assert.AreEqual(4, recording.FramesWritten);
+        }
+
+        CollectionAssert.AreEqual(
+            new Message[]
+            {
+                new ScreenSizeMessage(1920, 1080),
+                new MouseMoveMessage(1700, 900),
+                new KeyDownMessage(HidUsage.Q),
+                new KeyUpMessage(HidUsage.Q),
+            },
+            ProtocolFile.Read(_path).ToArray());
+    }
+
+    [TestMethod]
+    public void Keycaps_map_to_usages_and_unknown_ones_are_refused()
+    {
+        Assert.AreEqual(HidUsage.Q, GhostRecording.UsageOf("Q"));
+        Assert.AreEqual(HidUsage.D, GhostRecording.UsageOf("d"));
+        Assert.AreEqual(HidUsage.Digit1, GhostRecording.UsageOf("1"));
+        Assert.AreEqual(HidUsage.Digit0, GhostRecording.UsageOf("0"));
+        Assert.ThrowsExactly<ArgumentException>(() => GhostRecording.UsageOf("Space"));
+    }
 }

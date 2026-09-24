@@ -25,8 +25,9 @@ public sealed record ReactorOptions
 /// viewer). It drives no device and sends nothing to the game. The one rule:
 /// any doubt about the feed — disconnect, gap, climbing lag, collapsing fps,
 /// silence — pauses coaching rather than advising off stale state.
-/// The optional <see cref="GhostRecording"/> keeps the ghost's input in the
-/// misdirection wire format; it is a file, and this loop never opens a device.
+/// The optional <see cref="GhostRecording"/> keeps the ghost's input -- cursor
+/// moves and key presses -- in the misdirection wire format; it is a file, and
+/// this loop never opens a device.
 /// </summary>
 public sealed class Reactor(
     FeedClient feed, IPolicy policy, ReactorOptions options, TextWriter? log = null, GhostTrace? trace = null,
@@ -205,6 +206,16 @@ public sealed class Reactor(
         {
             Coach($"cue[p{cue.Priority}]: {cue.Reason}");
             coach?.PublishCue(cue, gameTime);
+        }
+        // A key press is the keyboard half of the demonstration, so unlike a
+        // cue it does reach the recording (as a tap) and the trace (for its
+        // timing, which the recording cannot hold).
+        foreach (var key in policy.DrainKeys())
+        {
+            Coach($"key[p{key.Priority}]: {key.Sentence}");
+            trace?.WriteKey(key);
+            coach?.PublishKey(key, gameTime);
+            recording?.Press(key);
         }
     }
 
