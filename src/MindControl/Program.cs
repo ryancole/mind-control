@@ -1,3 +1,5 @@
+using Jev;
+using Microsoft.Extensions.Configuration;
 using MindControl;
 using MindControl.Feed;
 using MindControl.Policy;
@@ -13,10 +15,14 @@ var minimap = new MinimapRect(1620, 780, 300, 300);
 (ushort X, ushort Y)? playerAnchor = null;
 string? tracePath = null;
 string? logPath = null;
+string? auditPath = null;
 // The ghost's input in misdirection's wire format. On by default: this file is
 // the demonstration the whole pipeline exists to produce. data/ is gitignored.
 string? recordPath = "data/ghost.msdr";
 string? selfChampion = null;
+// Pinned, not the alias: the thresholds in JevOptions were tuned against one
+// release's calibration, and jev-latest moves without notice.
+var model = JevModels.Jev1_13_0;
 var servePort = 8724;
 HashSet<string>? kinds =
 [
@@ -56,6 +62,9 @@ for (var i = 0; i < args.Length; i++)
         case "--log":
             logPath = args[++i];
             break;
+        case "--audit":
+            auditPath = args[++i];
+            break;
         case "--record":
             // "none" turns it off, the way "all" lifts the --kinds filter.
             var record = args[++i];
@@ -63,6 +72,9 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--self":
             selfChampion = args[++i];
+            break;
+        case "--model":
+            model = args[++i];
             break;
         case "--serve":
             servePort = int.Parse(args[++i]);
@@ -76,6 +88,8 @@ for (var i = 0; i < args.Length; i++)
             Console.WriteLine("""
                 mind-control: watches the spectral-sight feed and prints fair-play coaching feedback.
                 It observes and advises only — no input is ever sent to the game or any device.
+                The coaching itself is Jev's (TypeSafe's System One model): every decision is a
+                question put to it about what the player can see, answered as a probability.
 
                 options:
                   --feed <url>       feed base URL          (default http://127.0.0.1:8723)
@@ -85,24 +99,23 @@ for (var i = 0; i < args.Length; i++)
                                      from (default: screen centre; the camera is locked)
                   --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
+                  --audit <file>     record every question put to Jev and its answer (JSONL)
                   --record <file|none> append the ghost's mouse and key input as a misdirection
                                      protocol file (.msdr)  (default data/ghost.msdr)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
+                  --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
                                      coaching panel (default 8724; 0 disables)
                   --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
 
-                Execution coaching (a shot of the player's that went wide, a bolt that hit
-                them while they stood still) needs a spectral-sight run made with --coach;
-                on a feed without those stages it says so once and stays quiet.
+                The Jev API key is read from this project's user secrets (entry "Jev"):
+                  dotnet user-secrets set Jev <key> --project src/MindControl
+                or, failing that, from the TYPESAFE_API_KEY environment variable.
 
-                Cast coaching ("coach would have pressed Q here") needs the ability HUD read
-                and world calibration, and knows the ranges of a few champions only (see
-                AbilityKits); for any other champion it stays quiet.
-
-                Movement coaching ("coach would have stepped left here") needs the threat
-                stage of a --coach run; it steps only where a bolt hit the player standing
-                still, across the bolt's line toward their own base.
+                Button presses need the ability HUD read; steps need the threat stage; aim
+                remarks need the skillshot stage. All three come from a spectral-sight run
+                made with --coach; on a feed without them the coach says so once and asks
+                only about what it can see.
                 """);
             return 0;
         default:
@@ -121,32 +134,35 @@ Console.CancelKeyPress += (_, e) =>
     try { cts.Cancel(); } catch (ObjectDisposedException) { }
 };
 
+// The key lives in user secrets, not the environment; the client only knows
+// the environment on its own, so it is handed over explicitly.
+var secrets = new ConfigurationBuilder().AddUserSecrets(typeof(Program).Assembly, optional: true).Build();
+using var jev = OpenJev(secrets["Jev"], model);
+if (jev is null)
+    return 2;
+
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
+using var audit = auditPath is null ? null : new JevAudit(auditPath);
 using var recording = recordPath is null
     ? null
     : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
-// Four questions asked of the same feed: where attention should be, how the
-// player's own execution turned out, which ability a coach would have thrown
-// by now, and which way they would have stepped. Attention goes first because
-// it is the one that owns the cursor -- see CompositePolicy on why that
-// ordering is load-bearing and where it stops being enough.
-var policy = new CompositePolicy(
-    new AttentionPolicy(minimap, new AttentionOptions { SelfChampion = selfChampion }),
-    new ExecutionPolicy(),
-    new CastPolicy(new CastOptions { SelfChampion = selfChampion }),
-    new DodgePolicy());
+// One policy owns everything -- attention, hands and feet -- because they are
+// one set of questions about one moment, and the model answers them together.
+var policy = new JevPolicy(jev, minimap, new JevOptions { SelfChampion = selfChampion },
+    audit is null ? null : audit.Write);
 using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try
 {
-    Console.WriteLine($"coaching against {feedUri} — feedback to the console" +
+    Console.WriteLine($"coaching against {feedUri} with {model} — feedback to the console" +
         (logPath is null ? "" : $" and {logPath}") +
         (coach is null ? "" : $", served at http://localhost:{servePort}/stream") +
         (recordPath is null ? "" : $"; ghost input recorded to {recordPath}") +
+        (auditPath is null ? "" : $"; questions and answers to {auditPath}") +
         "; no input is sent anywhere");
     await reactor.RunAsync(cts.Token);
 }
@@ -155,3 +171,23 @@ catch (OperationCanceledException)
     // Ctrl-C: clean shutdown.
 }
 return 0;
+
+static JevClient? OpenJev(string? apiKey, string model)
+{
+    try
+    {
+        return new JevClient(new JevClientOptions
+        {
+            ApiKey = apiKey,
+            DefaultModel = model,
+            Timeout = TimeSpan.FromSeconds(2),
+            SerializerOptions = Moment.JsonOptions,
+        });
+    }
+    catch (JevConfigurationException e)
+    {
+        Console.Error.WriteLine($"jev: {e.Message}");
+        Console.Error.WriteLine("set the key with: dotnet user-secrets set Jev <key> --project src/MindControl");
+        return null;
+    }
+}
