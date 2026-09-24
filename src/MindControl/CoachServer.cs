@@ -11,21 +11,26 @@ namespace MindControl;
 /// live. Strictly output: it serves what the reactor already decided and
 /// accepts nothing back; the observe-and-advise boundary is unchanged.
 /// Positions go out normalized to the minimap rect (0..1, y down), which is
-/// the same space the dashboard draws its map in.
+/// the same space the dashboard draws its map in. Every line that is advice
+/// (a glance, a cue, a key, a step) carries <c>model</c>, the Jev model whose
+/// answer it is, so a panel can mark what the model said apart from what the
+/// code reports (status, roster, the cursor's motion home).
 /// </summary>
 public sealed class CoachServer : IDisposable
 {
     private const int ReplayCount = 32;
 
     private readonly MinimapRect _minimap;
+    private readonly string _model;
     private readonly HttpListener _listener = new();
     private readonly List<StreamWriter> _clients = [];
     private readonly Queue<string> _replay = new();
     private readonly Lock _lock = new();
 
-    public CoachServer(int port, MinimapRect minimap)
+    public CoachServer(int port, MinimapRect minimap, string model)
     {
         _minimap = minimap;
+        _model = model;
         // localhost (not 127.0.0.1): the one prefix http.sys grants without
         // elevation or a urlacl reservation.
         _listener.Prefixes.Add($"http://localhost:{port}/");
@@ -39,7 +44,7 @@ public sealed class CoachServer : IDisposable
         Publish(new
         {
             T = "glance", VideoTime = note.VideoTime, GameTime = gameTime,
-            Nx = nx, Ny = ny, Priority = note.Priority, Reason = note.Reason,
+            Nx = nx, Ny = ny, Priority = note.Priority, Reason = note.Reason, Model = _model,
         });
     }
 
@@ -58,7 +63,7 @@ public sealed class CoachServer : IDisposable
         Publish(new
         {
             T = "cue", VideoTime = cue.VideoTime, GameTime = gameTime,
-            Priority = cue.Priority, Reason = cue.Reason,
+            Priority = cue.Priority, Reason = cue.Reason, Model = _model,
         });
 
     /// <summary>
@@ -70,7 +75,7 @@ public sealed class CoachServer : IDisposable
         Publish(new
         {
             T = "key", VideoTime = key.VideoTime, GameTime = gameTime,
-            Key = key.Key, Priority = key.Priority, Reason = key.Sentence,
+            Key = key.Key, Priority = key.Priority, Reason = key.Sentence, Model = _model,
         });
 
     /// <summary>
@@ -84,7 +89,7 @@ public sealed class CoachServer : IDisposable
         {
             T = "step", VideoTime = step.VideoTime, GameTime = gameTime,
             Direction = step.Direction, Dx = step.Dx, Dy = step.Dy,
-            Priority = step.Priority, Reason = step.Sentence,
+            Priority = step.Priority, Reason = step.Sentence, Model = _model,
         });
 
     public void PublishStatus(string state, string? reason = null) =>

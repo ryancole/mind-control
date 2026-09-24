@@ -91,8 +91,10 @@ While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
 turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
 open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
-the ghost's attention drawn as a gold crosshair on the map. The stream is
-output-only, like the console.
+the ghost's attention drawn as a gold crosshair on the map. Every line
+that is advice carries `model`, the Jev release whose answer it is, and the
+panel marks those with a ✦; status and roster lines are the code's own and
+go unmarked. The stream is output-only, like the console.
 
 ## Coaching by Jev
 
