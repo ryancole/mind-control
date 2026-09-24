@@ -1,3 +1,6 @@
 [submodule "submodules/misdirection-client"]
 	path = submodules/misdirection-client
 	url = https://github.com/ryancole/misdirection-client.git
+[submodule "submodules/jev"]
+	path = submodules/jev
+	url = https://github.com/ryancole/jev-dotnet.git

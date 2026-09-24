@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/submodules/">
+    <Project Path="../submodules/jev/src/Jev/Jev.csproj" />
     <Project Path="../submodules/misdirection-client/src/Misdirection.Client/Misdirection.Client.csproj" />
   </Folder>
   <Project Path="MindControl.Tests/MindControl.Tests.csproj" />
