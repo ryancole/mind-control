@@ -153,7 +153,7 @@ using var recording = recordPath is null
 // one set of questions about one moment, and the model answers them together.
 var policy = new JevPolicy(jev, minimap, new JevOptions { SelfChampion = selfChampion },
     audit is null ? null : audit.Write);
-using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap);
+using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap, model);
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try
