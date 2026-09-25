@@ -47,7 +47,12 @@ public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHei
         Input = input is null ? null : GhostRecording.AsData(input),
     });
 
-    /// <summary>When and which way the coach stepped: the direction the .msdr click cannot name, and the click itself (the gap before it included).</summary>
+    /// <summary>
+    /// When and which way the coach stepped: the direction the .msdr click
+    /// cannot name, and the click itself (the gap before it included). A walk
+    /// also carries its <c>destination</c>, the place on the map the click on
+    /// the minimap stands for; null for a sidestep on the ground.
+    /// </summary>
     public void WriteStep(MoveStep step, IReadOnlyList<Message>? input = null) => Write(new
     {
         T = "step",
@@ -55,6 +60,7 @@ public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHei
         Direction = step.Direction,
         Dx = step.Dx,
         Dy = step.Dy,
+        Destination = step.Destination,
         Priority = step.Priority,
         Reason = step.Reason,
         Input = input is null ? null : GhostRecording.AsData(input),

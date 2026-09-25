@@ -70,14 +70,15 @@ public sealed class CoachServer : IDisposable
     /// <summary>
     /// A step the coach would have taken. Like a key it carries the full
     /// sentence as <c>reason</c>; the direction rides alongside as a name and
-    /// a screen-space unit vector; a step is on the ground in front of the
-    /// player, so it carries no place on the map.
+    /// a screen-space unit vector. A sidestep is on the ground in front of
+    /// the player and carries no place on the map; a walk carries the place
+    /// it goes to as <c>destination</c>.
     /// </summary>
     public void PublishStep(MoveStep step, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
         {
             T = "step", VideoTime = step.VideoTime, GameTime = gameTime,
-            Direction = step.Direction, Dx = step.Dx, Dy = step.Dy,
+            Direction = step.Direction, Dx = step.Dx, Dy = step.Dy, Destination = step.Destination,
             Priority = step.Priority, Reason = step.Sentence, Model = _model,
             Input = Data(input),
         });

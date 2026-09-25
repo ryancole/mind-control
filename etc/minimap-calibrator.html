@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!--
+  Minimap calibrator: turns a screenshot of the coached player's screen into
+  the --screen and --minimap arguments mind-control needs. Load the screenshot
+  (file picker, drag-drop, or just Ctrl+V), then click two opposite corners of
+  the minimap; the loupe magnifies around the pointer for pixel accuracy.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>minimap calibrator</title>
+<style>
+  body { margin: 0; background: #101418; color: #cfd8e3; font: 14px/1.4 system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; color: #e8eef5; }
+  #bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #stage { position: relative; }
+  canvas#shot { background: #1a2129; border: 1px solid #2c3844; border-radius: 6px;
+                cursor: crosshair; display: block; }
+  canvas#loupe { position: absolute; top: 8px; right: 8px; border: 1px solid #3a4856;
+                 border-radius: 6px; pointer-events: none; display: none; }
+  #hint { color: #8fa1b3; }
+  #out { display: none; align-items: center; gap: 10px; }
+  code { background: #1a2129; border: 1px solid #2c3844; border-radius: 4px;
+         padding: 6px 10px; font-size: 13px; user-select: all; }
+  button { background: #232d38; color: #cfd8e3; border: 1px solid #3a4856;
+           border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+  #warn { color: #ffd65a; display: none; }
+</style>
+</head>
+<body>
+<h1>mind-control minimap calibrator</h1>
+<div id="bar">
+  <label><input type="file" id="file" accept="image/*"></label>
+  <span id="hint">load a screenshot of the player's full screen (or paste it with Ctrl+V)</span>
+  <button id="reset" style="display:none">start over</button>
+</div>
+<div id="stage">
+  <canvas id="shot" width="960" height="540"></canvas>
+  <canvas id="loupe" width="160" height="160"></canvas>
+</div>
+<div id="out">
+  <code id="argLine"></code>
+  <button id="copy">copy</button>
+</div>
+<div id="warn"></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const shot = $("shot"), sctx = shot.getContext("2d");
+const loupe = $("loupe"), lctx = loupe.getContext("2d");
+let img = null, scale = 1;       // canvas px = image px * scale
+let points = [];                 // clicked corners, in image pixels
+
+function loadImage(source) {
+  const url = source instanceof Blob ? URL.createObjectURL(source) : source;
+  const image = new Image();
+  image.onload = () => { img = image; points = []; fit(); render(); updateHint(); };
+  image.onerror = () => $("hint").textContent = "could not load that image";
+  image.src = url;
+}
+
+function fit() {
+  const maxW = Math.min(1200, window.innerWidth - 48), maxH = window.innerHeight - 220;
+  scale = Math.min(maxW / img.width, maxH / img.height, 1);
+  shot.width = Math.round(img.width * scale);
+  shot.height = Math.round(img.height * scale);
+}
+
+function render() {
+  sctx.clearRect(0, 0, shot.width, shot.height);
+  if (!img) return;
+  sctx.drawImage(img, 0, 0, shot.width, shot.height);
+  sctx.strokeStyle = "#ffd65a"; sctx.fillStyle = "#ffd65a"; sctx.lineWidth = 1.5;
+  for (const p of points) {
+    const [cx, cy] = [p.x * scale, p.y * scale];
+    sctx.beginPath(); sctx.moveTo(cx - 8, cy); sctx.lineTo(cx + 8, cy); sctx.stroke();
+    sctx.beginPath(); sctx.moveTo(cx, cy - 8); sctx.lineTo(cx, cy + 8); sctx.stroke();
+  }
+  if (points.length === 2) {
+    const r = rect();
+    sctx.strokeStyle = "#4aa3ff"; sctx.lineWidth = 2;
+    sctx.strokeRect(r.x * scale, r.y * scale, r.w * scale, r.h * scale);
+  }
+}
+
+const rect = () => {
+  const x = Math.min(points[0].x, points[1].x), y = Math.min(points[0].y, points[1].y);
+  return { x, y, w: Math.abs(points[0].x - points[1].x), h: Math.abs(points[0].y - points[1].y) };
+};
+
+function updateHint() {
+  $("reset").style.display = img ? "" : "none";
+  $("out").style.display = "none";
+  $("warn").style.display = "none";
+  if (!img) return;
+  if (points.length === 0)
+    $("hint").textContent = `${img.width}x${img.height} loaded — click the minimap's TOP-LEFT corner`;
+  else if (points.length === 1)
+    $("hint").textContent = "now click the minimap's BOTTOM-RIGHT corner";
+  else {
+    const r = rect();
+    $("hint").textContent = "done — paste this onto the mind-control command line:";
+    $("argLine").textContent =
+      `--screen ${img.width}x${img.height} --minimap ${r.x},${r.y},${r.w},${r.h}`;
+    $("out").style.display = "flex";
+    if (Math.abs(r.w - r.h) > Math.max(r.w, r.h) * 0.1) {
+      $("warn").textContent =
+        `heads up: that rect is ${r.w}x${r.h} — the League minimap is square, so re-check the corners`;
+      $("warn").style.display = "block";
+    }
+  }
+}
+
+function addPoint(ix, iy) {
+  if (!img) return;
+  if (points.length >= 2) points = [];
+  points.push({ x: Math.round(ix), y: Math.round(iy) });
+  render(); updateHint();
+}
+
+shot.addEventListener("click", e => addPoint(e.offsetX / scale, e.offsetY / scale));
+
+shot.addEventListener("mousemove", e => {
+  if (!img || points.length >= 2) { loupe.style.display = "none"; return; }
+  loupe.style.display = "block";
+  const [ix, iy] = [e.offsetX / scale, e.offsetY / scale];
+  lctx.imageSmoothingEnabled = false;                       // 8x pixel loupe
+  lctx.clearRect(0, 0, 160, 160);
+  lctx.drawImage(img, ix - 10, iy - 10, 20, 20, 0, 0, 160, 160);
+  lctx.strokeStyle = "#ffd65a";
+  lctx.beginPath(); lctx.moveTo(80, 0); lctx.lineTo(80, 160); lctx.stroke();
+  lctx.beginPath(); lctx.moveTo(0, 80); lctx.lineTo(160, 80); lctx.stroke();
+});
+shot.addEventListener("mouseleave", () => loupe.style.display = "none");
+
+$("file").onchange = e => e.target.files[0] && loadImage(e.target.files[0]);
+$("reset").onclick = () => { points = []; render(); updateHint(); };
+$("copy").onclick = () => navigator.clipboard.writeText($("argLine").textContent)
+  .then(() => $("copy").textContent = "copied!")
+  .then(() => setTimeout(() => $("copy").textContent = "copy", 1200));
+
+document.addEventListener("paste", e => {
+  const item = [...e.clipboardData.items].find(i => i.type.startsWith("image/"));
+  if (item) loadImage(item.getAsFile());
+});
+document.body.addEventListener("dragover", e => e.preventDefault());
+document.body.addEventListener("drop", e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) loadImage(e.dataTransfer.files[0]);
+});
+
+const imgParam = new URLSearchParams(location.search).get("img");
+if (imgParam) loadImage(imgParam);
+</script>
+</body>
+</html>

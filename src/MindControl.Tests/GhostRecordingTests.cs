@@ -1,3 +1,4 @@
+using MindControl.Feed;
 using MindControl.Policy;
 using Misdirection.Client;
 
@@ -200,6 +201,59 @@ public sealed class GhostRecordingTests
         // y lands 141 above the anchor, rounded.
         var messages = ProtocolFile.Read(_path);
         Assert.AreEqual(new MouseMoveMessage(0, 399), messages[1]);
+    }
+
+    [TestMethod]
+    public void A_walk_to_a_place_on_the_map_is_a_right_click_on_the_minimap()
+    {
+        IReadOnlyList<Message> walk;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            Assert.AreEqual(new MinimapRect(1620, 780, 300, 300), recording.Minimap, "the stock HUD's corner at 1080p");
+            recording.Calibrate(new WorldBounds { MaxX = 14870, MaxY = 14980 });
+            walk = recording.Step(new MoveStep(103.0, "up-right", 0.8, -0.6, 2, "off to lane")
+            {
+                Destination = new Destination("bot lane", 13100, 3600),
+            });
+        }
+
+        // Bot lane's (13100, 3600) is 88% across the map and 24% up it, so
+        // the click lands 264px into the minimap and 228px down it: one
+        // order for the whole trip, not a step's 200px on the ground.
+        Assert.AreEqual("MouseMove 1884,1008, MouseButtons Right, MouseButtons None", GhostRecording.Show(walk));
+        CollectionAssert.AreEqual(
+            new Message[]
+            {
+                new ScreenSizeMessage(1920, 1080),
+                new MouseMoveMessage(1884, 1008),
+                new MouseButtonsMessage(MouseButtons.Right),
+                new MouseButtonsMessage(MouseButtons.None),
+            },
+            ProtocolFile.Read(_path).ToArray());
+    }
+
+    [TestMethod]
+    public void A_walk_lands_on_the_minimap_given_and_is_a_step_on_the_ground_until_the_feed_is_calibrated()
+    {
+        var walk = new MoveStep(1, "up-right", 0.8, -0.6, 2, "off to lane")
+        {
+            Destination = new Destination("bot lane", 13100, 3600),
+        };
+        using var recording = GhostRecording.Append(_path, 1920, 1080, minimap: new MinimapRect(1500, 700, 400, 400));
+
+        // No world bounds yet: the walk has nowhere on the minimap to land,
+        // so it is taken as a step on the ground its way.
+        Assert.AreEqual(new MouseMoveMessage(1120, 420), recording.Step(walk)[0]);
+
+        recording.Calibrate(new WorldBounds { MaxX = 14870, MaxY = 14980 });
+        Assert.AreEqual(new MouseMoveMessage(1852, 1004), recording.Step(walk)[0]);
+    }
+
+    [TestMethod]
+    public void The_default_minimap_is_the_stock_corner_scaled_with_the_screen()
+    {
+        Assert.AreEqual("1620,780,300,300", MinimapRect.Default(1920, 1080).ToString());
+        Assert.AreEqual(new MinimapRect(2160, 1040, 400, 400), MinimapRect.Default(2560, 1440));
     }
 
     [TestMethod]
