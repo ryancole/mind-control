@@ -3,7 +3,7 @@
 An observe-and-advise coaching reactor: it consumes the live game-state feed
 published by [spectral-sight](../spectral-sight) and prints real-time,
 fair-play coaching feedback — which button a good player would have pressed,
-which way they would have stepped, and why.
+which way they would have stepped, where a new level's point goes, and why.
 It sends no input to the game or to any device; it only watches and explains.
 
 The coaching itself is [Jev](https://docs.typesafe.ai/concepts/system-one)'s,
@@ -100,7 +100,7 @@ connected client gets only the latest one. The stream is output-only, like the c
 
 ## Coaching by Jev
 
-Four questions, each asked when there is something to ask about:
+Five questions, each asked when there is something to ask about:
 
 - **Which button, now.** Whenever the player is alive, an enemy is on their
   screen, and a button the HUD has shown a cooldown for has counted down, the
@@ -141,6 +141,30 @@ Four questions, each asked when there is something to ask about:
   started, yes; in lane waiting for minions, no) is the rubric's call, not a
   threshold in code. Needs a world-calibrated feed, since the map is read
   in game units.
+- **A new level** (`level_up` events for the player's own champion): *would
+  a good player spend the point right now?* and *which ability takes it?*, a
+  choice among the buttons the game would accept a point in — Q, W and E,
+  plus R at 6, 11 and 16, less any the coach's own points have filled — each
+  described by what the ability is, its place in the champion's usual skill
+  order when `AbilityKits` has one, whether it has been seen cast this game
+  (one never seen cast may hold no point yet), and how many points the coach
+  has put in it since it began watching. A yes is the level-up chord, Ctrl
+  held around the slot:
+
+  ```
+  key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
+  ```
+
+  Which ability takes the point is the rubric's call; the code keeps the
+  game's rules — which levels take an ultimate point, and that a basic
+  ability holds five points and the ultimate three, so a button the coach
+  has filled on its own line is not offered again, because the model does
+  not count — and the fact that a level only rises, so the same level
+  reported twice (the tracker's rows trading places under the name) is asked
+  about once. Needs nameplates read, since the level comes off the player's
+  own. The feed reports a level-up only as a level *rising*, so the first
+  point of a game — level 1, known as state rather than as an event — is not
+  demonstrated, and the coach's count of its own points misses it.
 
 What the model is told is the `Moment`: the player's champion, health, mana
 and level; each button's status with what it is and how far it reaches
@@ -150,7 +174,8 @@ player's own team; where the player stands on the map and how long they have
 stood there, with each lane's distance, direction and allies (`RiftMap`, the
 lanes as the lines their turrets lie on -- geometry, not a gate); what the
 coach itself did in the last few seconds; and the event in question, with its
-measurements. Everything is a measurement the
+measurements (for a level-up: the level reached, and whether it is one the
+ultimate takes a point at). Everything is a measurement the
 code made — the model is asked for judgement, never for arithmetic — and the
 fair-play boundary is that this state is built from visible rows only.
 
@@ -191,7 +216,9 @@ made -- is also appended to `data/ghost.msdr` in the wire format of the
 [misdirection-client](submodules/misdirection-client) library's protocol file
 (`--record <file>` to move it, `--record none` to turn it off). Each run opens
 with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
-and `KeyUp` pair, and every step as a
+and `KeyUp` pair (a level-up's point as the chord, `KeyDown Ctrl` before the
+pair and `KeyUp Ctrl` after it, which the game reads as a point into the
+ability rather than a cast), and every step as a
 `MouseMove` to the ground 200px from the player's model in the step's
 direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one

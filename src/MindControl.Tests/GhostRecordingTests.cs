@@ -147,6 +147,28 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void A_press_with_Ctrl_held_reads_back_as_the_chord()
+    {
+        IReadOnlyList<Message> pressed;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            pressed = recording.Press(new KeyPress(452.1, "Q", 2, "the point goes in Q") { WithControl = true });
+            Assert.AreEqual(5, recording.FramesWritten);
+        }
+
+        // Ctrl goes down first and comes up last, the tap inside it: the
+        // game reads that as a point into Q, not a cast of it.
+        var chord = new Message[]
+        {
+            new KeyDownMessage(HidUsage.LeftControl), new KeyDownMessage(HidUsage.Q),
+            new KeyUpMessage(HidUsage.Q), new KeyUpMessage(HidUsage.LeftControl),
+        };
+        CollectionAssert.AreEqual(chord, pressed.ToArray());
+        CollectionAssert.AreEqual(chord, ProtocolFile.Read(_path).Skip(1).ToArray());
+        Assert.AreEqual("KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)", GhostRecording.Show(pressed));
+    }
+
+    [TestMethod]
     public void A_step_reads_back_as_a_right_click_a_step_from_the_players_model()
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
@@ -354,6 +376,7 @@ public sealed class GhostRecordingTests
     {
         foreach (var keycap in "ABCQZ0159")
             Assert.AreEqual(keycap.ToString(), GhostRecording.KeycapOf(GhostRecording.UsageOf(keycap.ToString())));
+        Assert.AreEqual("Ctrl", GhostRecording.KeycapOf(HidUsage.LeftControl), "the modifier a chord holds");
         Assert.AreEqual("?", GhostRecording.KeycapOf(HidUsage.Space));
     }
 

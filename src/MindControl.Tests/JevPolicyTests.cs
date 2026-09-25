@@ -20,7 +20,7 @@ public sealed class JevPolicyTests
 {
     private static readonly Meta Coaching = new()
     {
-        Schema = 1, HasAbilities = true, HasThreats = true, HasSkillshots = true,
+        Schema = 1, HasNameplates = true, HasAbilities = true, HasThreats = true, HasSkillshots = true,
         WorldBounds = new() { MaxX = 14870, MaxY = 14980 },
     };
 
@@ -671,6 +671,173 @@ public sealed class JevPolicyTests
         Assert.AreEqual("Q passed 315px behind them; 1 of the last 4 shots that were seen went wide", cue.Reason);
         Assert.DoesNotContain("miss", cue.Reason.ToLowerInvariant());
         Assert.DoesNotContain("cast", cue.Reason.ToLowerInvariant());
+    }
+
+    // --- A new level ---
+
+    private static GameEvent LevelUp(int level, double videoTime = 452.1, string champion = "Ezreal", int track = 1) => new()
+    {
+        Kind = EventKind.LevelUp, VideoTime = videoTime, Team = "blue", Champion = champion, TrackId = track, Level = level,
+    };
+
+    [TestMethod]
+    public void The_players_own_level_up_is_asked_about_with_the_buttons_as_options()
+    {
+        var (policy, jev) = Coach(baseline: Clocked(450, 312, Self(), Enemy(900)));
+        policy.OnEvent(Cast("Q", 440, 5));
+        policy.OnEvent(LevelUp(7));
+
+        var ask = jev.Asks.Single();
+        CollectionAssert.AreEquivalent(new[] { "spend", "slot" }, ask.Questions.Keys.ToArray());
+        var occasion = (LevelOccasion)ask.State.Occasion!;
+        Assert.AreEqual(7, occasion.Level);
+        Assert.IsFalse(occasion.UltimateTakesAPoint);
+        Assert.AreEqual(7, occasion.CoachWatchingSinceLevel);
+        Assert.AreEqual("5:12", ask.State.GameClock);
+        var slot = (ChoiceQuestion)ask.Questions["slot"];
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, slot.Options.ToArray(), "no point goes into the ultimate at 7");
+        StringAssert.Contains((string)slot.Criteria["Q"]!, "Mystic Shot");
+        StringAssert.Contains((string)slot.Criteria["Q"]!, "the ability this champion usually maxes first");
+        StringAssert.Contains((string)slot.Criteria["Q"]!, "seen cast this game, so it holds a point already");
+        StringAssert.Contains((string)slot.Criteria["Q"]!, "the coach has put no point in it since it began watching");
+        StringAssert.Contains((string)slot.Criteria["W"]!, "usually maxes second");
+        StringAssert.Contains((string)slot.Criteria["W"]!, "never seen cast this game, so it may hold no point yet");
+        StringAssert.Contains((string)slot.Criteria["E"]!, "usually maxes last");
+        Assert.IsNull(ask.Options?.Retry, "a question about an event keeps the client's retries");
+    }
+
+    [TestMethod]
+    public void The_coach_is_told_where_it_has_put_the_points_so_far()
+    {
+        var (policy, jev) = Coach(baseline: Frame(450, Self()));
+        jev.Script = (id, q) => id switch
+        {
+            "spend" => FakeJev.Yes,
+            "slot" => FakeJev.Pick(q, "Q"),
+            _ => null,
+        };
+        policy.OnEvent(LevelUp(7));
+        policy.OnEvent(LevelUp(8, 473.2));
+        policy.OnEvent(LevelUp(9, 500.0));
+
+        Assert.AreEqual(7, ((LevelOccasion)jev.Last.State.Occasion!).CoachWatchingSinceLevel);
+        var slot = (ChoiceQuestion)jev.Last.Questions["slot"];
+        StringAssert.Contains((string)slot.Criteria["Q"]!, "the coach has put 2 points in it since it began watching");
+        StringAssert.Contains((string)slot.Criteria["W"]!, "the coach has put no point in it since it began watching");
+        Assert.HasCount(3, policy.DrainKeys());
+
+        // A gap may be a new game: the count starts over, and says so.
+        policy.Resync(Frame(510, Self()));
+        policy.OnEvent(LevelUp(10, 510.5));
+        Assert.AreEqual(10, ((LevelOccasion)jev.Last.State.Occasion!).CoachWatchingSinceLevel);
+        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!, "put no point in it");
+    }
+
+    [TestMethod]
+    public void An_ability_the_coach_has_filled_is_not_offered_again()
+    {
+        // The model cannot count, so the game's cap is kept in code: five
+        // points in a basic ability, three in the ultimate, on the coach's
+        // own line.
+        var (policy, jev) = Coach(baseline: Frame(100, Self()));
+        // The ultimate whenever it is offered, else the first button offered.
+        jev.Script = (id, q) => id switch
+        {
+            "spend" => FakeJev.Yes,
+            "slot" => FakeJev.Pick(q, ((ChoiceQuestion)q).Options.Contains("R") ? "R" : ((ChoiceQuestion)q).Options.First()),
+            _ => null,
+        };
+        for (var level = 2; level <= 9; level++)
+            policy.OnEvent(LevelUp(level, 100 + level));
+        // Q took 2, 3, 4, 5 and 7; R took 6; W took 8 and 9.
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, ((ChoiceQuestion)jev.Asks[^3].Questions["slot"]).Options.ToArray(), "level 7 puts the fifth point in Q");
+        CollectionAssert.AreEqual(new[] { "W", "E" }, ((ChoiceQuestion)jev.Asks[^2].Questions["slot"]).Options.ToArray(), "level 8: Q is full");
+        var atNine = (ChoiceQuestion)jev.Last.Questions["slot"];
+        CollectionAssert.AreEqual(new[] { "W", "E" }, atNine.Options.ToArray());
+        StringAssert.Contains((string)atNine.Criteria["W"]!, "the coach has put 1 point in it");
+
+        for (var level = 10; level <= 18; level++)
+            policy.OnEvent(LevelUp(level, 100 + level));
+        // W filled at 13; R took 11 and 16, its third; E took 14, 15, 17 and 18.
+        CollectionAssert.AreEqual(new[] { "E" }, ((ChoiceQuestion)jev.Last.Questions["slot"]).Options.ToArray(), "level 18: only E has room");
+        Assert.HasCount(17, policy.DrainKeys(), "a point at every level from 2 to 18");
+    }
+
+    [TestMethod]
+    public void The_ultimate_is_offered_at_the_levels_that_take_it()
+    {
+        var (policy, jev) = Coach(baseline: Frame(385, Self()));
+        policy.OnEvent(LevelUp(6, 385.7));
+        Assert.IsTrue(((LevelOccasion)jev.Last.State.Occasion!).UltimateTakesAPoint);
+        var slot = (ChoiceQuestion)jev.Last.Questions["slot"];
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E", "R" }, slot.Options.ToArray());
+        StringAssert.Contains((string)slot.Criteria["R"]!, "takes a point at levels 6, 11 and 16, and this is one of them");
+        StringAssert.Contains((string)slot.Criteria["R"]!, "Trueshot Barrage");
+
+        policy.OnEvent(LevelUp(11, 730.6));
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E", "R" }, ((ChoiceQuestion)jev.Last.Questions["slot"]).Options.ToArray());
+        policy.OnEvent(LevelUp(12, 897.2));
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, ((ChoiceQuestion)jev.Last.Questions["slot"]).Options.ToArray());
+    }
+
+    [TestMethod]
+    public void A_yes_puts_the_point_in_the_chosen_ability_with_Ctrl_held()
+    {
+        var (policy, jev) = Coach(baseline: Clocked(450, 312, Self()));
+        jev.Script = (id, q) => id switch
+        {
+            "spend" => FakeJev.Yes,
+            "slot" => FakeJev.Pick(q, "Q"),
+            _ => null,
+        };
+        policy.OnEvent(LevelUp(7));
+
+        var press = policy.DrainKeys().Single();
+        Assert.AreEqual(452.1, press.VideoTime);
+        Assert.AreEqual("Q", press.Key);
+        Assert.IsTrue(press.WithControl);
+        Assert.AreEqual("Ctrl+Q", press.Chord);
+        Assert.AreEqual(2, press.Priority);
+        Assert.AreEqual(
+            "coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; "
+            + "a good player would put the point in Q (Mystic Shot: a skillshot poke)",
+            press.Sentence);
+        Assert.IsEmpty(policy.DrainMoves());
+        Assert.IsEmpty(policy.DrainCues());
+
+        policy.OnFrame(Clocked(452.6, 314, Self()));
+        policy.OnEvent(LevelUp(8, 473.2));
+        var reminded = jev.Last.State.Coach.Single();
+        Assert.AreEqual("put the point in Q", reminded.Did);
+        Assert.AreEqual(21.1, reminded.SecondsAgo);
+    }
+
+    [TestMethod]
+    public void A_no_on_spending_is_no_press_even_with_an_ability_chosen()
+    {
+        var (policy, jev) = Coach(baseline: Frame(450, Self()));
+        jev.Script = (id, q) => id == "slot" ? FakeJev.Pick(q, "Q") : null;
+        policy.OnEvent(LevelUp(7));
+        Assert.HasCount(1, jev.Asks);
+        Assert.IsEmpty(policy.DrainKeys());
+    }
+
+    [TestMethod]
+    public void An_allys_level_and_a_level_already_asked_about_are_not_questions()
+    {
+        var (policy, jev) = Coach(baseline: Frame(450, Self(), Ally(3, 3000, 3000)));
+        policy.OnEvent(LevelUp(7, champion: "champ3", track: 3));
+        Assert.IsEmpty(jev.Asks, "an ally's point is theirs to spend");
+
+        policy.OnEvent(LevelUp(7));
+        policy.OnEvent(LevelUp(7, 452.5));
+        policy.OnEvent(LevelUp(6, 452.9));
+        Assert.HasCount(1, jev.Asks, "levels only rise: the same level again is the same level-up read twice");
+
+        // A gap may be a new game: the level is asked about afresh.
+        policy.Resync(Frame(460, Self()));
+        policy.OnEvent(LevelUp(7, 460.5));
+        Assert.HasCount(2, jev.Asks);
     }
 
     // --- Late answers ---

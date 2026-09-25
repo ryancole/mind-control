@@ -29,7 +29,7 @@ HashSet<string>? kinds =
     // named here -- worth knowing, because the symptom is silence rather
     // than an error.
     EventKind.Identified, EventKind.Roster,
-    EventKind.Ability, EventKind.Threat, EventKind.Skillshot,
+    EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
 ];
 
 for (var i = 0; i < args.Length; i++)
@@ -106,7 +106,8 @@ for (var i = 0; i < args.Length; i++)
                 Button presses need the ability HUD read; steps need the threat stage; aim
                 remarks need the skillshot stage. All three come from a spectral-sight run
                 made with --coach; walking a player who stands still to lane needs a
-                world-calibrated feed. On a feed without them the coach says so once and
+                world-calibrated feed, and putting a point into an ability at a level-up
+                needs nameplates read. On a feed without them the coach says so once and
                 asks only about what it can see.
                 """);
             return 0;

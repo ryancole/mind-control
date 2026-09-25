@@ -25,14 +25,22 @@ public sealed record CoachCue(double VideoTime, int Priority, string Reason);
 /// A key the coach would have pressed at this moment, and why. The keyboard
 /// half of the demonstration: the ghost's hand on the keyboard. <see cref="Key"/>
 /// is the keycap as the player knows it ("Q", "W", "D"), not a HID code; the
-/// recording maps it. Like a cue it carries no position: the ability is aimed
-/// by the mouse, and where the coach would have aimed is not yet demonstrated,
-/// so the press says only <em>that</em> and <em>when</em>.
+/// recording maps it. <see cref="WithControl"/> is Ctrl held around it, which
+/// is how a point goes into an ability rather than the ability being cast;
+/// the recording writes the chord. Like a cue it carries no position: the
+/// ability is aimed by the mouse, and where the coach would have aimed is not
+/// yet demonstrated, so the press says only <em>that</em> and <em>when</em>.
 /// </summary>
 public sealed record KeyPress(double VideoTime, string Key, int Priority, string Reason)
 {
+    /// <summary>Ctrl held while the key is tapped: the game's level-up chord.</summary>
+    public bool WithControl { get; init; }
+
+    /// <summary>The keys as the player would name them: "Q", or "Ctrl+Q".</summary>
+    public string Chord => WithControl ? $"Ctrl+{Key}" : Key;
+
     /// <summary>The line as the player reads it, wherever it is shown.</summary>
-    public string Sentence => $"coach would have pressed {Key} here: {Reason}";
+    public string Sentence => $"coach would have pressed {Chord} here: {Reason}";
 }
 
 /// <summary>

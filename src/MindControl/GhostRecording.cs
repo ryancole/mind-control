@@ -108,11 +108,19 @@ public sealed class GhostRecording : IDisposable
     /// The coach pressed a key: a down and an up, back to back, after the gap
     /// since the last press or step. A tap is the only press there is; a
     /// held key would need a policy to say how long, and none holds one.
+    /// With <see cref="KeyPress.WithControl"/> the tap sits inside a Ctrl
+    /// down and up -- the chord the game reads as a point into the ability
+    /// rather than a cast of it. Ctrl goes on the wire as its own usage; the
+    /// firmware folds it into the modifier byte.
     /// </summary>
     public IReadOnlyList<Message> Press(KeyPress key)
     {
         var usage = UsageOf(key.Key);
-        return WriteAt(key.VideoTime, new KeyDownMessage(usage), new KeyUpMessage(usage));
+        return key.WithControl
+            ? WriteAt(key.VideoTime,
+                new KeyDownMessage(HidUsage.LeftControl), new KeyDownMessage(usage),
+                new KeyUpMessage(usage), new KeyUpMessage(HidUsage.LeftControl))
+            : WriteAt(key.VideoTime, new KeyDownMessage(usage), new KeyUpMessage(usage));
     }
 
     /// <summary>
@@ -157,14 +165,16 @@ public sealed class GhostRecording : IDisposable
     };
 
     /// <summary>
-    /// The keycap a wire usage stands for, the inverse of <see cref="UsageOf"/>;
-    /// "?" for a usage this recording never writes.
+    /// The keycap a wire usage stands for, the inverse of <see cref="UsageOf"/>,
+    /// plus "Ctrl" for the modifier a chord holds; "?" for a usage this
+    /// recording never writes.
     /// </summary>
     public static string KeycapOf(byte usage) => usage switch
     {
         >= HidUsage.A and <= HidUsage.Z => ((char)('A' + (usage - HidUsage.A))).ToString(),
         HidUsage.Digit0 => "0",
         >= HidUsage.Digit1 and <= HidUsage.Digit9 => ((char)('1' + (usage - HidUsage.Digit1))).ToString(),
+        HidUsage.LeftControl => "Ctrl",
         _ => "?",
     };
 
