@@ -54,15 +54,16 @@ public sealed class CoachServer : IDisposable
         });
 
     /// <summary>
-    /// A key the coach would have pressed. Carries the key on its own and the
-    /// full sentence as <c>reason</c>, so a panel that only knows how to print
-    /// a reason still prints the right thing.
+    /// A key the coach would have pressed. Carries the key on its own (the
+    /// chord as the player would name it: "Q", "Ctrl+Q") and the full sentence
+    /// as <c>reason</c>, so a panel that only knows how to print a reason
+    /// still prints the right thing.
     /// </summary>
     public void PublishKey(KeyPress key, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
         {
             T = "key", VideoTime = key.VideoTime, GameTime = gameTime,
-            Key = key.Key, Priority = key.Priority, Reason = key.Sentence, Model = _model,
+            Key = key.Chord, Priority = key.Priority, Reason = key.Sentence, Model = _model,
             Input = Data(input),
         });
 

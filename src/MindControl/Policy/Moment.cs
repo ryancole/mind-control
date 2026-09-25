@@ -90,6 +90,17 @@ public sealed record BoltOccasion(
     string Kind, string? From, string Outcome, int? Damage, double? MovedAcrossPx,
     double? WarningSeconds, double? PreviousLandingSecondsAgo, int? PreviousLandingDamage);
 
+/// <summary>
+/// The player reaching a new level, off their own HUD: a point to spend.
+/// <see cref="UltimateTakesAPoint"/> is the game's rule that the ultimate
+/// takes a point at levels 6, 11 and 16 and at no other.
+/// <see cref="CoachWatchingSinceLevel"/> is the first level-up the coach saw
+/// this game: the points placed before it, the level-one point among them,
+/// are in nobody's count. Which buttons have been seen cast, and so
+/// certainly hold a point already, is in <see cref="Moment.Abilities"/>.
+/// </summary>
+public sealed record LevelOccasion(string Kind, int Level, bool UltimateTakesAPoint, int CoachWatchingSinceLevel);
+
 /// <summary>A shot of the player's that was seen leaving them with an enemy in front of it.</summary>
 public sealed record ShotOccasion(
     string Kind, string Slot, double PassedPx, string Side, bool Wide,

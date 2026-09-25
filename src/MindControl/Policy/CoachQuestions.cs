@@ -81,6 +81,37 @@ public static class CoachQuestions
         + "it by the same margin; each is described by whether it goes toward the player's own base and "
         + "toward or away from the nearest visible enemy. With nothing else to go on, step toward safety.";
 
+    /// <summary>
+    /// Asked when the player reaches a new level: is the point to be spent
+    /// now? The level and which buttons have been seen cast are in the
+    /// state; whether there is ever a reason to hold a point is decided
+    /// here, in words.
+    /// </summary>
+    public const string Spend =
+        "The player has just reached a new level; `occasion` says which, and `abilities` says which "
+        + "buttons have been seen cast this game (one never seen cast may have no point in it yet). "
+        + "Would a good player spend the new ability point right now? Yes: putting a point in takes no "
+        + "time and can be done in a fight, in lane or while dead, and an unspent point is power left on "
+        + "the table, so a good player spends it the moment the level comes. The one point a good player "
+        + "ever holds is the first, at level one, in case the game opens with an invade; every point "
+        + "after that is spent at once, whoever is on the screen.";
+
+    public const string Slot =
+        "Which ability does this champion's usual skill order put the point into at this level? Each "
+        + "option says what the ability is, its place in the champion's usual order (the one usually "
+        + "maxed first, second or last, or the ultimate), whether it has been seen cast this game, and "
+        + "how many points the coach has put in it since the level-up it first saw "
+        + "(`coach_watching_since_level`; the points placed before that, the level-one point among "
+        + "them, are in no option's count). Three rules, the first outranking the second and the second "
+        + "the third. First: whenever the ultimate is offered (levels six, eleven and sixteen), it takes "
+        + "the point, ahead of every other ability, however far along the usual order is. Second: at "
+        + "levels two and three the point goes to a basic ability never seen cast this game, whatever "
+        + "the usual order, so that each basic ability has a point by level three. Third, from level "
+        + "four on: the ability usually maxed first, for as long as it is offered (one the coach has "
+        + "filled is not offered); once it is gone, the one usually maxed second; the one usually maxed "
+        + "last takes no further point until both are gone. Where no order is on file, go by what the "
+        + "abilities are and what this champion's players usually max.";
+
     public const string ShotRemark =
         "The player has just thrown a skillshot that was seen leaving their champion with an enemy in "
         + "front of it; `occasion` says how far the bolt passed from that enemy and on which side, and "

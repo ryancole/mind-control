@@ -66,7 +66,8 @@ public sealed record Consultation(
 
 /// <summary>
 /// The coach: every coaching decision -- which button to press, whether and
-/// which way to step, whether a shot or a bolt is worth a word -- is a
+/// which way to step, whether a shot or a bolt is worth a word, which
+/// ability a new level's point goes into -- is a
 /// question put to Jev, TypeSafe's System One model, and
 /// answered as a probability, a level or an option. Nothing here decides; it
 /// measures, asks, and turns the answer into the output the reactor already
@@ -77,7 +78,9 @@ public sealed record Consultation(
 /// corrections applied), how long each enemy has been in view, which buttons
 /// the HUD has shown a cooldown for and when they come back, the last few
 /// shots seen at a target, the last bolt that landed, how long the player
-/// has stood on one spot. Geometry: the two sides of a bolt's line, which way
+/// has stood on one spot, the highest level a point has been asked about
+/// at. Rules of the game: the ultimate takes a point at 6, 11 and 16 and at
+/// no other level. Geometry: the two sides of a bolt's line, which way
 /// is toward home, which way on the screen an enemy is, where on the map the
 /// player stands and how far each lane is (<see cref="RiftMap"/>). Fair
 /// play: <see cref="Moment"/> is built from visible
@@ -131,6 +134,16 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private (double X, double Y)? _restAt;
     private double _stillSince;
 
+    // Perception: the levels whose points have been asked about -- the first,
+    // since which the coach has been watching, and the highest, since a level
+    // only rises and a level-up at or below it is the same one read again (the
+    // tracker's rows trade places under the name) -- and where the coach put
+    // each point. Those are the coach's own placements, a lower bound on the
+    // ability's points and never a reading of the HUD's rank pips, which the
+    // feed does not carry.
+    private int _firstLevelAsked, _highestLevelAsked;
+    private readonly Dictionary<string, int> _pointsPlaced = [];
+
     // What the coach said since the last drain.
     private readonly List<CoachCue> _cues = [];
     private readonly List<KeyPress> _keys = [];
@@ -152,8 +165,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly Lock _wireLock = new();
 
     /// <summary>
-    /// The occasions ("now", "idle", "bolt", "shot") of the questions on their
-    /// way to the model, oldest first, raised each time that changes: when one
+    /// The occasions ("now", "idle", "bolt", "shot", "level") of the questions
+    /// on their way to the model, oldest first, raised each time that changes: when one
     /// is sent and when its answer or failure comes back. It follows the
     /// network, not <see cref="Settle"/>, so it is raised on whichever thread
     /// the answer arrived on, and a question whose answer a resync will drop
@@ -176,6 +189,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             missing.Add("skillshots (aim will not be remarked on)");
         if (meta.WorldBounds is null)
             missing.Add("world calibration (nobody will be walked to lane)");
+        if (!meta.HasNameplates)
+            missing.Add("nameplates (no level-up will have its point placed)");
         if (missing.Count > 0)
             _cues.Add(new CoachCue(0, 1,
                 $"this feed carries no {string.Join(", ", missing)}; spectral-sight needs a --coach run"));
@@ -221,6 +236,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastLanding = null;
         _recent.Clear();
         _restAt = null;
+        _firstLevelAsked = 0;
+        _highestLevelAsked = 0;
+        _pointsPlaced.Clear();
         if (latest is not null)
         {
             foreach (var row in latest.Champions.Where(c => c.Visible))
@@ -269,6 +287,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 break;
             case EventKind.Skillshot:
                 OnSkillshot(evt);
+                break;
+            case EventKind.LevelUp:
+                OnLevelUp(evt);
                 break;
         }
         Settle();
@@ -540,6 +561,85 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _cues.Add(new CoachCue(evt.VideoTime, 2, sentence));
                 Remember("remarked on aim", evt.VideoTime);
             });
+    }
+
+    // --- A new level: a point to put into an ability ---
+
+    /// <summary>
+    /// The player's own level rising, off their nameplate: a point to spend.
+    /// Whether to spend it now and which ability takes it are the model's
+    /// calls; the code offers the buttons the game would accept a point in
+    /// (the ultimate only at 6, 11 and 16, and nothing the coach's own points
+    /// have filled: five in a basic ability, three in the ultimate, since the
+    /// game refuses more and the coach demonstrates one line), says of each
+    /// what it is, whether it has been seen cast, and how many points the
+    /// coach itself has put in it since it began watching, and turns a yes
+    /// into the level-up chord, Ctrl and the slot. An ally's level is theirs;
+    /// a level at or below one already asked about is the same level-up read
+    /// twice.
+    /// </summary>
+    private void OnLevelUp(GameEvent evt)
+    {
+        if (evt.Level is not { } level || Self() is not { } self)
+            return;
+        if (evt.Champion is { } champion ? champion != self.Champion : evt.TrackId != self.TrackId)
+            return;
+        if (level <= _highestLevelAsked)
+            return;
+        _highestLevelAsked = level;
+        if (_firstLevelAsked == 0)
+            _firstLevelAsked = level;
+
+        var ultimate = level is 6 or 11 or 16;
+        var occasion = new LevelOccasion("you reached a new level", level, ultimate, _firstLevelAsked);
+        var moment = Describe(_frame, self, occasion, evt.VideoTime);
+
+        var criteria = new ChoiceCriteria();
+        foreach (var slot in AbilityKits.Slots)
+        {
+            if (slot == "R" && !ultimate)
+                continue;
+            var points = _pointsPlaced.GetValueOrDefault(slot);
+            if (points >= (slot == "R" ? 3 : 5))
+                continue;   // full on the coach's own line: the game would refuse another
+            var known = AbilityKits.For(self.Champion, slot);
+            var what = known?.Kind ?? "what it is is not on file";
+            var order = known?.UsuallyMaxed is { } place
+                ? $"the ability this champion usually maxes {place}"
+                : slot == "R" ? "the ultimate, which takes a point at levels 6, 11 and 16, and this is one of them: it comes before any other ability"
+                : "its place in this champion's usual skill order is not on file";
+            var seen = _casts.ContainsKey(slot)
+                ? "seen cast this game, so it holds a point already"
+                : "never seen cast this game, so it may hold no point yet";
+            var placed = points switch
+            {
+                0 => "the coach has put no point in it since it began watching",
+                1 => "the coach has put 1 point in it since it began watching",
+                var n => $"the coach has put {n} points in it since it began watching",
+            };
+            criteria[slot] = $"{slot}: {what}; {order}; {seen}; {placed}";
+        }
+        if (criteria.Count == 0)
+            return;   // every button the coach could offer is full on its own line
+        var questions = new Questions()
+            .Noul("spend", CoachQuestions.Spend,
+                yes: "a good player would put the point into an ability right now",
+                no: "a good player would hold the point, which after level one they do not")
+            .Choice("slot", CoachQuestions.Slot, criteria);
+
+        var clock = moment.GameClock is { } time ? $" at {time}" : "";
+        Ask("level", moment, questions, evt.VideoTime, OccasionRequest, released: null, answered: response =>
+        {
+            if (!response.TryGet<NoulAnswer>("spend", out var spend) || !spend!.IsYes(_options.YesAt))
+                return;
+            if (!response.TryGet<ChoiceAnswer>("slot", out var slot) || !criteria.ContainsKey(slot!.Choice))
+                return;
+            var note = AbilityKits.For(self.Champion, slot.Choice) is { } known ? $" ({known.Kind})" : "";
+            var reason = $"you reached level {level}{clock}; a good player would put the point in {slot.Choice}{note}";
+            _keys.Add(new KeyPress(evt.VideoTime, slot.Choice, 2, reason) { WithControl = true });
+            _pointsPlaced[slot.Choice] = _pointsPlaced.GetValueOrDefault(slot.Choice) + 1;
+            Remember($"put the point in {slot.Choice}", evt.VideoTime);
+        });
     }
 
     // --- Asking, and collecting the answers ---

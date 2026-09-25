@@ -32,12 +32,16 @@ public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHei
         Source = meta.Source,
     });
 
-    /// <summary>When a key was pressed, in video time, and what the .msdr recording wrote for it (the gap before it included).</summary>
+    /// <summary>
+    /// When a key was pressed, in video time, and what the .msdr recording
+    /// wrote for it (the gap before it included). <c>key</c> is the chord as
+    /// the player would name it ("Q", "Ctrl+Q"), which is what the viewer prints.
+    /// </summary>
     public void WriteKey(KeyPress key, IReadOnlyList<Message>? input = null) => Write(new
     {
         T = "key",
         VideoTime = key.VideoTime,
-        Key = key.Key,
+        Key = key.Chord,
         Priority = key.Priority,
         Reason = key.Reason,
         Input = input is null ? null : GhostRecording.AsData(input),
