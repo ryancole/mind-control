@@ -197,7 +197,10 @@ direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
 place, the camera being locked; `--anchor <x,y>` names it (default: the
 screen's centre). It is a recording, not a connection: this tool never opens
-the device.
+the device. The file stays open for the run, shared for reading, and the
+library's reader opens a file a writer still holds, so misdirection can play
+the recording by path while a run is still appending to it: a read sees every
+frame flushed so far and a clean end of file, never a torn frame.
 
 The file carries the timing too, as the format's `FILE_DELAY` records: before
 each press or step, the video time that passed since the previous one, so
