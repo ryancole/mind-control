@@ -22,7 +22,8 @@ public sealed record Moment
         + "You sit in a coach's seat over their shoulder, deciding what a good player would do "
         + "in their place at this exact moment. Everything below is what the player can see: "
         + "their own HUD, champions drawn on the screen in front of them, and their own team on "
-        + "the minimap. Enemies hidden in fog of war are not listed, because the player cannot "
+        + "the minimap, themselves included (`whereabouts` is where they stand on it, how long they "
+        + "have stood there, and how far each lane is). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself.";
@@ -42,6 +43,7 @@ public sealed record Moment
     public IReadOnlyList<SlotFacts> Abilities { get; init; } = [];
     public IReadOnlyList<EnemyFacts> VisibleEnemies { get; init; } = [];
     public IReadOnlyList<AllyFacts> Allies { get; init; } = [];
+    public WhereaboutsFacts? Whereabouts { get; init; }
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
@@ -69,6 +71,16 @@ public sealed record EnemyFacts(
 
 /// <summary>An ally, always on the player's own minimap.</summary>
 public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);
+
+/// <summary>
+/// Where the player stands, off their own minimap: the place named as a coach
+/// would (<see cref="RiftMap.Place"/>), how long they have stood on that spot,
+/// and each lane's distance and screen direction with the allies already in it.
+/// </summary>
+public sealed record WhereaboutsFacts(string Place, double StoodStillForSeconds, IReadOnlyList<LaneFacts> Lanes);
+
+/// <summary>A lane as seen from where the player stands. No direction when they are standing in it.</summary>
+public sealed record LaneFacts(string Lane, double DistanceUnits, string? ScreenDirection, IReadOnlyList<string> AlliesThere);
 
 /// <summary>Something the coach already did: "pressed Q", "stepped up-left", "remarked on aim".</summary>
 public sealed record RecentAction(string Did, double SecondsAgo);

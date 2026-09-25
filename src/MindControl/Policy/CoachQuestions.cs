@@ -30,6 +30,33 @@ public static class CoachQuestions
         return questions;
     }
 
+    /// <summary>
+    /// Asked while the player stands on one spot: should they be walking to a
+    /// lane instead? The still time, the place and the lanes are in
+    /// `whereabouts`; what counts as idling is decided here, in words.
+    /// </summary>
+    public const string Walk =
+        "The player has been standing on one spot; `whereabouts` says where, for how long, and how far "
+        + "each lane is. Would a good player in this seat be walking to a lane right now instead? Yes when "
+        + "they are idling in the fountain or their own base and nothing keeps them there. At the start of "
+        + "the game a good player spends the first half minute or so buying and is on the way to lane by "
+        + "about 0:45, well before the first minions meet around 1:30: standing in the fountain before then, "
+        + "with the allies still in base too, is shopping, not idling, and after it is. After a recall or a "
+        + "respawn later in the game they buy in a few seconds and walk straight back out. Yes when "
+        + "they stand in the jungle or river with no enemy on the screen and nothing to do there. No when "
+        + "they are already in a lane: standing in lane, waiting for the minions or holding ground against a "
+        + "visible enemy, is laning, not idling. No when an enemy is on the screen near them, because then "
+        + "the moment is about that enemy. No when the still time is only a couple of seconds: a pause is not "
+        + "idling. The coach having stepped toward a lane a few seconds ago while the player still stands is "
+        + "a reason to step again, not to stop: the ghost keeps walking until the player does.";
+
+    public const string Lane =
+        "Which lane would a good player in this seat be walking to? Each option gives its distance and "
+        + "direction from where the player stands and which allies are already in it. Go by the champion's "
+        + "role first (a marksman or a support belongs in bot lane, a mid champion in mid, a top champion in "
+        + "top), then by the allies: the lane their partner is in, and not a lane that already has the allies "
+        + "it needs. Distance decides only between lanes that are otherwise equally theirs.";
+
     public const string BoltRemark =
         "A bolt has just come at the player; `occasion` says where from, what came of it, how far they "
         + "moved across its line between first seeing it and its arrival, and how much warning there was. "
