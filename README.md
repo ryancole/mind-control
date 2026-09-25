@@ -91,7 +91,12 @@ turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
 open `http://127.0.0.1:8723/` and the cues appear next to the event log. Every line
 that is advice carries `model`, the Jev release whose answer it is, and the
 panel marks those with a ✦; status and roster lines are the code's own and
-go unmarked. The stream is output-only, like the console.
+go unmarked. An `asking` line — `{"t":"asking","occasions":["now","bolt"]}` —
+says which questions are on their way to Jev right now, oldest first, and
+`occasions` is empty once they are all back; it tracks the network, not the
+coaching, so a panel can light a "thinking" indicator off it. It changes
+several times a second, so it stays out of the stream's replay, and a newly
+connected client gets only the latest one. The stream is output-only, like the console.
 
 ## Coaching by Jev
 

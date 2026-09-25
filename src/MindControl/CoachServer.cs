@@ -17,6 +17,9 @@ namespace MindControl;
 /// carries <c>input</c>: the misdirection frames the ghost
 /// recording wrote for it, as data (<see cref="GhostRecording.AsData(IEnumerable{Message})"/>),
 /// or null when nothing was recorded. Any icon for the hand is the panel's.
+/// An <c>asking</c> line says which questions are on their way to Jev right
+/// now (<c>occasions</c>, empty when none), for a panel's "thinking" light;
+/// it is state, not advice, so it carries no <c>model</c>.
 /// </summary>
 public sealed class CoachServer : IDisposable
 {
@@ -26,6 +29,7 @@ public sealed class CoachServer : IDisposable
     private readonly HttpListener _listener = new();
     private readonly List<StreamWriter> _clients = [];
     private readonly Queue<string> _replay = new();
+    private string? _asking;
     private readonly Lock _lock = new();
 
     public CoachServer(int port, string model)
@@ -91,14 +95,28 @@ public sealed class CoachServer : IDisposable
             Team = evt.Team, Champions = evt.Champions,
         });
 
-    private void Publish<TLine>(TLine line)
+    /// <summary>
+    /// The questions on their way to Jev, by occasion, oldest first. It
+    /// changes several times a second, so it is kept out of the replay (it
+    /// would crowd out the roster); a client that connects is sent the latest
+    /// one instead, after the replay.
+    /// </summary>
+    public void PublishAsking(IReadOnlyList<string> occasions) =>
+        Publish(new { T = "asking", Occasions = occasions }, replay: false);
+
+    private void Publish<TLine>(TLine line, bool replay = true)
     {
         var data = $"data: {JsonSerializer.Serialize(line, FeedJson.Options)}\n\n";
         lock (_lock)
         {
-            _replay.Enqueue(data);
-            while (_replay.Count > ReplayCount)
-                _replay.Dequeue();
+            if (replay)
+            {
+                _replay.Enqueue(data);
+                while (_replay.Count > ReplayCount)
+                    _replay.Dequeue();
+            }
+            else
+                _asking = data;
             // Localhost writes land in http.sys buffers; a client that has
             // gone away throws and is dropped rather than stalling the loop.
             _clients.RemoveAll(client =>
@@ -144,6 +162,8 @@ public sealed class CoachServer : IDisposable
                 {
                     foreach (var line in _replay)
                         writer.Write(line);
+                    if (_asking is not null)
+                        writer.Write(_asking);
                     _clients.Add(writer);
                 }
                 catch (Exception e) when (e is IOException or ObjectDisposedException or HttpListenerException)

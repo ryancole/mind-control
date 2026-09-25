@@ -146,6 +146,8 @@ using var recording = recordPath is null
 var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
     audit is null ? null : audit.Write);
 using var coach = servePort == 0 ? null : new CoachServer(servePort, model);
+if (coach is not null)
+    policy.AskingChanged += coach.PublishAsking;
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try
