@@ -10,34 +10,24 @@ namespace MindControl.Policy;
 /// an injected client a test can script (see <see cref="JevPolicy"/>).
 /// Internal state derived from the frames is fine; that state must be
 /// rebuildable from a /state snapshot via <see cref="Resync"/>. A policy only
-/// ever observes and advises: its output is where to look and why, never
-/// input to the game.
+/// ever observes and advises: its output is what a good player would have
+/// done and why, never input to the game.
 /// </summary>
 /// <remarks>
-/// One attention decision, explained. Coaching is explanation-driven: the trace
-/// and the log carry these so a human can audit *why* the ghost moved.
+/// Coaching that is said and not done: what the player's own cast came to, or
+/// what a bolt at them came to. Those are facts about a moment that has
+/// already passed, so there is nothing for the ghost's hands to do about them,
+/// and the cue carries only the words.
 /// </remarks>
-public sealed record GlanceNote(double VideoTime, ushort X, ushort Y, int Priority, string Reason);
-
-/// <summary>
-/// Coaching with nowhere to look. A glance is attention -- somewhere on the map
-/// worth a look, so it carries a position and moves the ghost. A cue is
-/// execution: what the player's own cast came to, or what a bolt at them came
-/// to. Those are facts about a moment that has already passed and about the
-/// player's own screen, so there is no place on the map to point at, and
-/// pretending otherwise would send the ghost somewhere a good player would not
-/// have looked.
-/// </summary>
 public sealed record CoachCue(double VideoTime, int Priority, string Reason);
 
 /// <summary>
 /// A key the coach would have pressed at this moment, and why. The keyboard
-/// half of the demonstration: where a glance moves the ghost's cursor, a key
-/// press is the ghost's hand on the keyboard. <see cref="Key"/> is the keycap
-/// as the player knows it ("Q", "W", "D"), not a HID code; the recording maps
-/// it. Like a cue it carries no position: the ability is aimed by the mouse,
-/// and where the coach would have aimed is not yet demonstrated (the cursor
-/// belongs to attention), so the press says only <em>that</em> and <em>when</em>.
+/// half of the demonstration: the ghost's hand on the keyboard. <see cref="Key"/>
+/// is the keycap as the player knows it ("Q", "W", "D"), not a HID code; the
+/// recording maps it. Like a cue it carries no position: the ability is aimed
+/// by the mouse, and where the coach would have aimed is not yet demonstrated,
+/// so the press says only <em>that</em> and <em>when</em>.
 /// </summary>
 public sealed record KeyPress(double VideoTime, string Key, int Priority, string Reason)
 {
@@ -53,8 +43,7 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// (<see cref="Dx"/>, <see cref="Dy"/>) the same as a unit vector in their
 /// screen space, y down; the recording turns it into a click a fixed distance
 /// from the player's model, which sits at one place on their screen because
-/// the camera is locked. It is an action and not somewhere to look, so unlike
-/// a glance it does not compete for the cursor.
+/// the camera is locked.
 /// </summary>
 public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
 {
@@ -67,10 +56,7 @@ public interface IPolicy
     /// <summary>Called once with the run's capability header before any frame or event.</summary>
     void Configure(Meta meta);
 
-    /// <summary>Explanations of decisions made since the last drain.</summary>
-    IReadOnlyList<GlanceNote> DrainNotes();
-
-    /// <summary>Coaching said since the last drain that moves no cursor.</summary>
+    /// <summary>Coaching said since the last drain: words only, nothing for the hands.</summary>
     IReadOnlyList<CoachCue> DrainCues() => [];
 
     /// <summary>Keys the coach would have pressed since the last drain.</summary>
@@ -82,11 +68,11 @@ public interface IPolicy
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);
 
-    /// <summary>Where attention should sit after this frame, or null to leave it be.</summary>
-    GhostCursor? OnFrame(FrameEnvelope frame);
+    /// <summary>A frame of game state; anything the coach decides is collected by the drains.</summary>
+    void OnFrame(FrameEnvelope frame);
 
-    /// <summary>Where attention should snap for this event, or null if it warrants no look.</summary>
-    GhostCursor? OnEvent(GameEvent evt);
+    /// <summary>An event from the feed; anything the coach decides is collected by the drains.</summary>
+    void OnEvent(GameEvent evt);
 }
 
 /// <summary>Placeholder while the plumbing is proven out. Watches, never acts.</summary>
@@ -94,11 +80,9 @@ public sealed class NoOpPolicy : IPolicy
 {
     public void Configure(Meta meta) { }
 
-    public IReadOnlyList<GlanceNote> DrainNotes() => [];
-
     public void Resync(FrameEnvelope? latest) { }
 
-    public GhostCursor? OnFrame(FrameEnvelope frame) => null;
+    public void OnFrame(FrameEnvelope frame) { }
 
-    public GhostCursor? OnEvent(GameEvent evt) => null;
+    public void OnEvent(GameEvent evt) { }
 }

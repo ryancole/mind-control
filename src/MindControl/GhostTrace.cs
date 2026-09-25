@@ -6,46 +6,27 @@ using Misdirection.Client;
 namespace MindControl;
 
 /// <summary>
-/// Records the ghost's cursor path, key presses and steps as JSONL keyed by
-/// video_time, so a run can be replayed visually over the timeline that
-/// produced it (etc/ghost-viewer.html, which draws the cursor and ignores the
-/// keys and steps). Lines are in the order they were decided, which for a
-/// step is after the bolt it answers; a reader that wants time order sorts.
-/// The header carries the minimap rect and world bounds the run used, letting
-/// the viewer invert screen pixels back onto the map. A key or a step also
-/// carries <c>input</c>, the misdirection frames the recording wrote for it,
-/// as data; the viewer shows them beside the line and puts an icon to the
-/// hand, which is its decoration and not the trace's.
+/// Records when the coach pressed a key and when it stepped, as JSONL keyed
+/// by video_time, so a run can be replayed visually over the timeline that
+/// produced it (etc/ghost-viewer.html). The .msdr recording holds what the
+/// hands did but no timing; this is the timing. Lines are in the order they
+/// were decided, which for a step is after the bolt it answers; a reader that
+/// wants time order sorts. The header carries the screen size and world
+/// bounds the run used. A key or a step also carries <c>input</c>, the
+/// misdirection frames the recording wrote for it, as data; the viewer shows
+/// them beside the line and puts an icon to the hand, which is its decoration
+/// and not the trace's.
 /// </summary>
-public sealed class GhostTrace(string path, MinimapRect minimap, ushort screenWidth, ushort screenHeight) : IDisposable
+public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHeight) : IDisposable
 {
     private readonly StreamWriter _writer = new(path) { AutoFlush = true };
 
     public void WriteMeta(Meta meta) => Write(new
     {
         T = "meta",
-        Minimap = minimap,
         Screen = new { Width = screenWidth, Height = screenHeight },
         WorldBounds = meta.WorldBounds,
         Source = meta.Source,
-    });
-
-    public void WriteMove(double videoTime, GhostCursor cursor) => Write(new
-    {
-        T = "move",
-        VideoTime = videoTime,
-        X = cursor.X,
-        Y = cursor.Y,
-    });
-
-    public void WriteGlance(GlanceNote note) => Write(new
-    {
-        T = "glance",
-        VideoTime = note.VideoTime,
-        X = note.X,
-        Y = note.Y,
-        Priority = note.Priority,
-        Reason = note.Reason,
     });
 
     /// <summary>When a key was pressed: the timing the .msdr recording cannot carry, and what it recorded.</summary>

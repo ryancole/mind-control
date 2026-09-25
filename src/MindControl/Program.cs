@@ -6,9 +6,6 @@ using MindControl.Policy;
 
 var feedUri = new Uri("http://127.0.0.1:8723");
 ushort screenWidth = 1920, screenHeight = 1080;
-// A placeholder guess at the player's minimap rect until real calibration
-// exists (default League HUD, bottom-right, 1920x1080).
-var minimap = new MinimapRect(1620, 780, 300, 300);
 // Where the player's model sits on their screen; a step's right-click is
 // taken from here. The camera is locked, so it is one place -- the centre,
 // give or take, on the default HUD.
@@ -26,11 +23,12 @@ var model = JevModels.Jev1_13_0;
 var servePort = 8724;
 HashSet<string>? kinds =
 [
-    EventKind.Death, EventKind.Respawn, EventKind.Cast, EventKind.Vanished,
-    EventKind.Reappeared, EventKind.Identified, EventKind.LevelUp, EventKind.Roster,
-    // The coaching stages. Listed explicitly like the rest, which means a kind
-    // spectral-sight adds later is dropped until it is named here -- worth
-    // knowing, because the symptom is silence rather than an error.
+    // Identity corrections and rosters are bookkeeping the policy and the
+    // dashboard keep; the rest are the coaching stages. Listed explicitly,
+    // which means a kind spectral-sight adds later is dropped until it is
+    // named here -- worth knowing, because the symptom is silence rather
+    // than an error.
+    EventKind.Identified, EventKind.Roster,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot,
 ];
 
@@ -45,12 +43,6 @@ for (var i = 0; i < args.Length; i++)
             var parts = args[++i].Split('x');
             screenWidth = ushort.Parse(parts[0]);
             screenHeight = ushort.Parse(parts[1]);
-            break;
-        case "--minimap":
-            var rect = args[++i].Split(',');
-            minimap = new MinimapRect(
-                double.Parse(rect[0]), double.Parse(rect[1]),
-                double.Parse(rect[2]), double.Parse(rect[3]));
             break;
         case "--anchor":
             var anchor = args[++i].Split(',');
@@ -94,10 +86,9 @@ for (var i = 0; i < args.Length; i++)
                 options:
                   --feed <url>       feed base URL          (default http://127.0.0.1:8723)
                   --screen <WxH>     target screen size     (default 1920x1080)
-                  --minimap <x,y,w,h> minimap rect on the player's screen (default 1620,780,300,300)
                   --anchor <x,y>     the player's model on their screen, where a step is taken
                                      from (default: screen centre; the camera is locked)
-                  --trace <file>     record the ghost's cursor path for etc/ghost-viewer.html
+                  --trace <file>     record when the coach pressed and stepped, for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
                   --audit <file>     record every question put to Jev and its answer (JSONL)
                   --record <file|none> append the ghost's mouse and key input as a misdirection
@@ -106,7 +97,7 @@ for (var i = 0; i < args.Length; i++)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
                                      coaching panel (default 8724; 0 disables)
-                  --kinds <a,b|all>  event kinds passed to the policy (default: all but the noisy ones)
+                  --kinds <a,b|all>  event kinds passed to the policy (default: the ones the coach uses)
 
                 The Jev API key is read from this project's user secrets (entry "Jev"):
                   dotnet user-secrets set Jev <key> --project src/MindControl
@@ -143,17 +134,17 @@ if (jev is null)
 
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
-using var trace = tracePath is null ? null : new GhostTrace(tracePath, minimap, screenWidth, screenHeight);
+using var trace = tracePath is null ? null : new GhostTrace(tracePath, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 using var audit = auditPath is null ? null : new JevAudit(auditPath);
 using var recording = recordPath is null
     ? null
     : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
-// One policy owns everything -- attention, hands and feet -- because they are
-// one set of questions about one moment, and the model answers them together.
-var policy = new JevPolicy(jev, minimap, new JevOptions { SelfChampion = selfChampion },
+// One policy owns everything -- hands and feet -- because they are one set
+// of questions about one moment, and the model answers them together.
+var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
     audit is null ? null : audit.Write);
-using var coach = servePort == 0 ? null : new CoachServer(servePort, minimap, model);
+using var coach = servePort == 0 ? null : new CoachServer(servePort, model);
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try

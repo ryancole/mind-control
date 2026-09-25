@@ -7,7 +7,7 @@ namespace MindControl;
 /// Records every question put to the coach model and its answer as JSONL
 /// keyed by video_time: the state the model saw, the questions as they were
 /// asked, and the answers exactly as they came back. This is how the coaching
-/// is audited and tuned -- a press or a glance in the log traces back to a
+/// is audited and tuned -- a press or a step in the log traces back to a
 /// probability here, and a silence to the probability that fell short -- and
 /// it is the record of what the model was shown, which is the fair-play
 /// boundary made inspectable.

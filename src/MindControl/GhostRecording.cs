@@ -5,7 +5,7 @@ namespace MindControl;
 
 /// <summary>
 /// Records the ghost's input -- what the coach would have done with the mouse
-/// and keyboard: glances, key presses and steps -- as a misdirection protocol
+/// and keyboard: key presses and steps -- as a misdirection protocol
 /// file (<c>.msdr</c>), one frame per message, in the order the coaching
 /// produced them. The file opens with a
 /// <see cref="ScreenSizeMessage"/>, as a device session would, so the mouse
@@ -17,7 +17,7 @@ namespace MindControl;
 /// is only what to do, never when -- so the ghost trace (<see cref="GhostTrace"/>)
 /// remains the record of timing.</para>
 ///
-/// <para>Each of <see cref="Move"/>, <see cref="Press"/> and <see cref="Step"/>
+/// <para>Each of <see cref="Press"/> and <see cref="Step"/>
 /// hands back the frames it wrote, so the coaching output can show not just
 /// "pressed Q" but the KeyDown and KeyUp that went into the file for it:
 /// <see cref="Show(IEnumerable{Message})"/> as plain text for the console,
@@ -83,9 +83,6 @@ public sealed class GhostRecording : IDisposable
     /// <summary>Frames written through this recording, the screen size included.</summary>
     public long FramesWritten => _writer.FramesWritten;
 
-    /// <summary>The ghost's attention moved: a mouse move to where it now sits.</summary>
-    public IReadOnlyList<Message> Move(GhostCursor cursor) => Write(new MouseMoveMessage(cursor.X, cursor.Y));
-
     /// <summary>
     /// The coach pressed a key: a down and an up, back to back. The format has
     /// no timing, so a tap is the only press there is; a held key would need
@@ -102,7 +99,7 @@ public sealed class GhostRecording : IDisposable
     /// player's model in the step's direction, then a right-click there -- a
     /// press and a release, as with a key. The click is a move order, which
     /// is how a step is taken in the game; the cursor is left where it was
-    /// clicked, as a player's would be, until attention moves it again.
+    /// clicked, as a player's would be, until the next step moves it.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
@@ -185,8 +182,8 @@ public sealed class GhostRecording : IDisposable
 
     /// <summary>
     /// Any input the coach would have made, in order; returns the frames so
-    /// the caller can show what went into the file. <see cref="Move"/>,
-    /// <see cref="Press"/> and <see cref="Step"/> are the callers.
+    /// the caller can show what went into the file. <see cref="Press"/> and
+    /// <see cref="Step"/> are the callers.
     /// </summary>
     public IReadOnlyList<Message> Write(params Message[] messages)
     {

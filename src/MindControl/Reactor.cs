@@ -22,14 +22,14 @@ public sealed record ReactorOptions
 /// <summary>
 /// The decision loop. Everything here is plumbing and safety; game sense lives
 /// in the policy. The tool observes and advises only — it consumes the feed and
-/// prints coaching feedback (and optionally records the ghost cursor for the
-/// viewer). It drives no device and sends nothing to the game. The one rule:
+/// prints coaching feedback (and optionally records the ghost's input, and
+/// when it happened for the viewer). It drives no device and sends nothing to the game. The one rule:
 /// any doubt about the feed — disconnect, gap, climbing lag, collapsing fps,
 /// silence — pauses coaching rather than advising off stale state.
-/// The optional <see cref="GhostRecording"/> keeps the ghost's input -- cursor
-/// moves, key presses and steps -- in the misdirection wire format; it is a
-/// file, and this loop never opens a device. What it wrote for a glance, a
-/// key or a step rides with that line of coaching -- plain text on the
+/// The optional <see cref="GhostRecording"/> keeps the ghost's input -- key
+/// presses and steps -- in the misdirection wire format; it is a file, and
+/// this loop never opens a device. What it wrote for a key or a step rides
+/// with that line of coaching -- plain text on the
 /// console, data on the stream and in the trace -- so the log reads as the
 /// demonstration and not only the advice.
 /// </summary>
@@ -121,7 +121,8 @@ public sealed class Reactor(
             return;
         }
 
-        Apply(policy.OnFrame(frame), frame.VideoTime, frame.GameTime);
+        policy.OnFrame(frame);
+        Apply(frame.GameTime);
     }
 
     /// <summary>
@@ -162,7 +163,10 @@ public sealed class Reactor(
                 // Events that arrive while blind predate the resync baseline;
                 // advising on them would mean advising on a past we cannot see.
                 if (!_blind)
-                    Apply(policy.OnEvent(evt), evt.VideoTime, evt.GameTime);
+                {
+                    policy.OnEvent(evt);
+                    Apply(evt.GameTime);
+                }
                 break;
             case GapNotice(var from, var to):
                 PauseBecause($"feed gap, lost ids {from}..{to}");
@@ -189,28 +193,10 @@ public sealed class Reactor(
         }
     }
 
-    private void Apply(GhostCursor? cursor, double videoTime, int? gameTime)
+    private void Apply(int? gameTime)
     {
-        IReadOnlyList<Message>? moved = null;
-        if (cursor is { } c)
-        {
-            trace?.WriteMove(videoTime, c);
-            coach?.PublishMove(videoTime, c, gameTime);
-            moved = recording?.Move(c);
-        }
-        foreach (var note in policy.DrainNotes())
-        {
-            // The cursor snaps to the glance that won this tick, so the move
-            // just recorded belongs to the note it landed on; a note that lost
-            // the snap to a higher priority moved nothing and shows nothing.
-            var input = cursor is { } at && at.X == note.X && at.Y == note.Y ? moved : null;
-            Coach($"glance[p{note.Priority}]: {note.Reason}", input);
-            trace?.WriteGlance(note);
-            coach?.PublishGlance(note, gameTime, input);
-        }
-        // Cues are not glances and do not reach the trace: the ghost viewer
-        // replays where attention went, and a cue is precisely the coaching
-        // that has nowhere for it to go.
+        // A cue reaches neither the recording nor the trace: it is coaching
+        // in words only, with nothing for the hands to do.
         foreach (var cue in policy.DrainCues())
         {
             Coach($"cue[p{cue.Priority}]: {cue.Reason}");
