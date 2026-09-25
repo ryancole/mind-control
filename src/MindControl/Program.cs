@@ -24,12 +24,14 @@ var servePort = 8724;
 HashSet<string>? kinds =
 [
     // Identity corrections and rosters are bookkeeping the policy and the
-    // dashboard keep; the rest are the coaching stages. Listed explicitly,
+    // dashboard keep; the rest are the coaching stages (level_up is kept for
+    // the log, where it explains the skill_point half a second behind it). Listed explicitly,
     // which means a kind spectral-sight adds later is dropped until it is
     // named here -- worth knowing, because the symptom is silence rather
     // than an error.
     EventKind.Identified, EventKind.Roster,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
+    EventKind.SkillPoint, EventKind.SkillSpent,
 ];
 
 for (var i = 0; i < args.Length; i++)
@@ -106,9 +108,10 @@ for (var i = 0; i < args.Length; i++)
                 Button presses need the ability HUD read; steps need the threat stage; aim
                 remarks need the skillshot stage. All three come from a spectral-sight run
                 made with --coach; walking a player who stands still to lane needs a
-                world-calibrated feed, and putting a point into an ability at a level-up
-                needs nameplates read. On a feed without them the coach says so once and
-                asks only about what it can see.
+                world-calibrated feed, and putting a point into an ability needs the
+                ability HUD too, whose level-up chevrons say when a point is waiting. On
+                a feed without them the coach says so once and asks only about what it
+                can see.
                 """);
             return 0;
         default:

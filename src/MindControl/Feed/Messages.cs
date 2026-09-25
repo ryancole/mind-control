@@ -88,6 +88,15 @@ public sealed record ChampionRow
     public AbilityUse[]? Abilities { get; init; }
     public Threat[]? Threats { get; init; }
     public Skillshot[]? Skillshots { get; init; }
+
+    /// <summary>
+    /// The slots ("Q"/"W"/"E"/"R") whose level-up chevron is lit: the
+    /// abilities an unspent point could go into. Unlike the arrays above this
+    /// is state, repeated on every self row while it holds. Empty means the
+    /// HUD was read and shows no point; null means nothing looked (no
+    /// calibration, not the game, or the player dead).
+    /// </summary>
+    public string[]? Learnable { get; init; }
 }
 
 /// <summary>One of the player's own casts, named to a button by the HUD.</summary>
@@ -207,6 +216,13 @@ public sealed record GameEvent
     // level_up
     public int? Level { get; init; }
 
+    // skill_point: the slots the waiting point could go into
+    public string[]? Slots { get; init; }
+
+    // skill_spent: seconds from the point's first reading to its spending;
+    // absent when the arrival was never seen
+    public double? HeldFor { get; init; }
+
     // death
     public int? AlliesDead { get; init; }
 
@@ -258,6 +274,12 @@ public static class EventKind
 {
     public const string Identified = "identified";
     public const string LevelUp = "level_up";
+
+    /// <summary>A skill point waiting on the player's HUD, and the slots it could go into. Always the player's own.</summary>
+    public const string SkillPoint = "skill_point";
+
+    /// <summary>The waiting point went into an ability; the HUD's chevrons cleared.</summary>
+    public const string SkillSpent = "skill_spent";
     public const string Death = "death";
     public const string Respawn = "respawn";
     public const string Vanished = "vanished";

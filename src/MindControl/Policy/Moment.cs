@@ -91,15 +91,19 @@ public sealed record BoltOccasion(
     double? WarningSeconds, double? PreviousLandingSecondsAgo, int? PreviousLandingDamage);
 
 /// <summary>
-/// The player reaching a new level, off their own HUD: a point to spend.
-/// <see cref="UltimateTakesAPoint"/> is the game's rule that the ultimate
-/// takes a point at levels 6, 11 and 16 and at no other.
-/// <see cref="CoachWatchingSinceLevel"/> is the first level-up the coach saw
-/// this game: the points placed before it, the level-one point among them,
-/// are in nobody's count. Which buttons have been seen cast, and so
-/// certainly hold a point already, is in <see cref="Moment.Abilities"/>.
+/// A skill point waiting on the player's own HUD: a point to spend.
+/// <see cref="Level"/> is off their nameplate, null when it was not read.
+/// <see cref="UltimateTakesAPoint"/> is whether the ultimate is among the
+/// buttons the HUD lights for it, which it does at levels 6, 11 and 16 and
+/// at no other. <see cref="CoachWatchingSinceLevel"/> is the level of the
+/// first point the coach saw this game: the points placed before it are in
+/// nobody's count. <see cref="HeldForSeconds"/> is how long the feed has
+/// shown the point waiting; zero when it has just appeared. Which buttons
+/// have been seen cast, and so certainly hold a point already, is in
+/// <see cref="Moment.Abilities"/>.
 /// </summary>
-public sealed record LevelOccasion(string Kind, int Level, bool UltimateTakesAPoint, int CoachWatchingSinceLevel);
+public sealed record LevelOccasion(
+    string Kind, int? Level, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds);
 
 /// <summary>A shot of the player's that was seen leaving them with an enemy in front of it.</summary>
 public sealed record ShotOccasion(
