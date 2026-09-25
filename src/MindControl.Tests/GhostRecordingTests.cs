@@ -96,6 +96,36 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void The_file_reads_by_path_while_a_run_is_still_recording_it()
+    {
+        using var recording = GhostRecording.Append(_path, 1920, 1080);
+        recording.Press(new KeyPress(10.0, "Q", 2, "first"));
+        recording.Press(new KeyPress(12.5, "W", 2, "second"));
+
+        // misdirection plays a recording by path, and may do so while a run
+        // is still appending to it. The recorder keeps the file open for the
+        // run, shared for reading, and the library's reader opens a file a
+        // writer still holds, so a read by path sees every frame flushed so
+        // far and a clean end of file.
+        CollectionAssert.AreEqual(
+            new Message[]
+            {
+                new ScreenSizeMessage(1920, 1080),
+                new KeyDownMessage(HidUsage.Q), new KeyUpMessage(HidUsage.Q),
+                new DelayMessage(2_500_000),
+                new KeyDownMessage(HidUsage.W), new KeyUpMessage(HidUsage.W),
+            },
+            ProtocolFile.Read(_path).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { 0.0, 0.0, 0.0, 2.5, 2.5 },
+            ProtocolFile.ReadTimed(_path).Select(t => t.At.TotalSeconds).ToArray());
+
+        // What the run writes after that read is there for the next one.
+        recording.Press(new KeyPress(14.0, "E", 2, "third"));
+        Assert.HasCount(9, ProtocolFile.Read(_path));
+    }
+
+    [TestMethod]
     public void A_press_reads_back_as_a_key_down_and_up_on_the_keycap_usage()
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
