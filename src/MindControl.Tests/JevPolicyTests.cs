@@ -271,6 +271,54 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
+    public void The_questions_on_the_wire_are_announced_as_they_go_and_come_back()
+    {
+        var (policy, jev) = Coach();
+        List<string[]> heard = [];
+        policy.AskingChanged += occasions => heard.Add(occasions.ToArray());
+        policy.OnEvent(Cast("Q", 10, 5));
+
+        jev.Hold = true;
+        policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
+        CollectionAssert.AreEqual(new[] { "now" }, heard[^1], "sent and not yet back");
+
+        jev.Release();
+        CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1],
+            "back as soon as the answer is, not when the next frame settles it");
+        Assert.HasCount(2, heard);
+    }
+
+    [TestMethod]
+    public void A_question_whose_answer_a_resync_will_drop_is_on_the_wire_until_it_is_back()
+    {
+        var (policy, jev) = Coach();
+        List<string[]> heard = [];
+        policy.AskingChanged += occasions => heard.Add(occasions.ToArray());
+        policy.OnEvent(Cast("Q", 10, 5));
+        jev.Hold = true;
+        policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
+
+        policy.Resync(null);
+        CollectionAssert.AreEqual(new[] { "now" }, heard[^1]);
+        jev.Release();
+        CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1]);
+    }
+
+    [TestMethod]
+    public void A_question_that_fails_comes_off_the_wire_too()
+    {
+        var (policy, jev) = Coach();
+        List<string[]> heard = [];
+        policy.AskingChanged += occasions => heard.Add(occasions.ToArray());
+        jev.Fault = new JevConnectionException("POST /v1/systemone failed: refused", "POST /v1/systemone");
+        policy.OnEvent(Cast("Q", 10, 5));
+        policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
+
+        CollectionAssert.AreEqual(new[] { "now" }, heard[0]);
+        CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1]);
+    }
+
+    [TestMethod]
     public void A_model_that_does_not_answer_is_said_once_and_coaching_goes_on()
     {
         var (policy, jev) = Coach();

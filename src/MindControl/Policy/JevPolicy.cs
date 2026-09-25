@@ -146,6 +146,22 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _lastIdleAskAt = double.NegativeInfinity;
     private bool _failing;
 
+    // Questions on the wire, by occasion, oldest first. Touched from the
+    // client's thread as well as the reactor's, so it has its own lock.
+    private readonly List<string> _onTheWire = [];
+    private readonly Lock _wireLock = new();
+
+    /// <summary>
+    /// The occasions ("now", "idle", "bolt", "shot") of the questions on their
+    /// way to the model, oldest first, raised each time that changes: when one
+    /// is sent and when its answer or failure comes back. It follows the
+    /// network, not <see cref="Settle"/>, so it is raised on whichever thread
+    /// the answer arrived on, and a question whose answer a resync will drop
+    /// is still counted until it is back. For a panel's "asking" light; it
+    /// decides nothing.
+    /// </summary>
+    public event Action<IReadOnlyList<string>>? AskingChanged;
+
     public void Configure(Meta meta)
     {
         // A false flag means the stage did not run, not that nothing happened.
@@ -540,6 +556,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         RequestOptions request, Action? released, Action<SystemOneResponse> answered)
     {
         var generation = _generation;
+        OnTheWire(occasion, sent: true);
         _ = RunAsync();
 
         async Task RunAsync()
@@ -556,6 +573,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 error = e.Message;
             }
             var elapsed = clock.ElapsedMilliseconds;
+            OnTheWire(occasion, sent: false);
             _arrivals.Enqueue(() =>
             {
                 if (generation == _generation)
@@ -578,6 +596,22 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     Fail(videoTime, $"the answer could not be read: {e.Message}");
                 }
             });
+        }
+    }
+
+    /// <summary>
+    /// Raised under the lock, so two threads' changes reach a listener in the
+    /// order they happened and the last one it hears is the truth.
+    /// </summary>
+    private void OnTheWire(string occasion, bool sent)
+    {
+        lock (_wireLock)
+        {
+            if (sent)
+                _onTheWire.Add(occasion);
+            else
+                _onTheWire.Remove(occasion);
+            AskingChanged?.Invoke(_onTheWire.ToArray());
         }
     }
 
