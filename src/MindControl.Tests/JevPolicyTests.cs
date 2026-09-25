@@ -402,7 +402,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_steps_toward_the_chosen_lane_and_again_while_they_still_stand()
+    public void A_yes_walks_to_the_chosen_lane_and_again_while_they_still_stand()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, q) => id switch
@@ -424,11 +424,15 @@ public sealed class JevPolicyTests
         Assert.AreEqual(1, Math.Round(double.Hypot(steps[0].Dx, steps[0].Dy), 6));
         Assert.AreEqual(2, steps[0].Priority);
         Assert.AreEqual(
-            "coach would have stepped up-right here: you have stood still for 3.0s in the fountain at 0:50; "
+            "coach would have walked up-right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
             + "a good player would be on the way to bot lane (2244 units up-right)",
             steps[0].Sentence);
+        // A walk, not a sidestep: it goes to the lane's nearest point (the
+        // near end of bot lane, just outside the base), which the recording
+        // clicks on the minimap so one order covers the whole trip.
+        Assert.AreEqual(new Destination("bot lane", 2200, 1800), steps[0].Destination);
         var reminded = jev.Last.State.Coach.Single();
-        Assert.AreEqual("stepped toward bot lane", reminded.Did);
+        Assert.AreEqual("walked toward bot lane", reminded.Did);
         Assert.AreEqual(3.0, reminded.SecondsAgo);
         Assert.IsEmpty(policy.DrainKeys());
         Assert.IsEmpty(policy.DrainCues());
@@ -567,6 +571,7 @@ public sealed class JevPolicyTests
         Assert.AreEqual(-0.425, step.Dy, 0.001);
         Assert.AreEqual(1.0, double.Hypot(step.Dx, step.Dy), 1e-9);
         Assert.AreEqual(3, step.Priority);
+        Assert.IsNull(step.Destination, "a dodge is a sidestep on the ground, not a walk");
         Assert.AreEqual(
             "coach would have stepped up-left here: a bolt from the upper right hit you for 12 "
             + "while you stood still, 0.33s after it came into view",

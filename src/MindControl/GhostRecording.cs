@@ -1,3 +1,4 @@
+using MindControl.Feed;
 using MindControl.Policy;
 using Misdirection.Client;
 
@@ -5,7 +6,7 @@ namespace MindControl;
 
 /// <summary>
 /// Records the ghost's input -- what the coach would have done with the mouse
-/// and keyboard: key presses and steps -- as a misdirection protocol
+/// and keyboard: key presses, steps and walks -- as a misdirection protocol
 /// file (<c>.msdr</c>), one frame per message, in the order the coaching
 /// produced them. The file opens with a
 /// <see cref="ScreenSizeMessage"/>, as a device session would, so the mouse
@@ -43,28 +44,37 @@ public sealed class GhostRecording : IDisposable
     /// pixels. Far enough to clear a bolt's line with a margin (the fixture's
     /// dodges moved 40–74px across it), near enough to still be a sidestep
     /// and not a retreat. Unmeasured beyond that: nothing has yet replayed a
-    /// recording into a game.
+    /// recording into a game. A walk across the map is not sized by this: it
+    /// is ordered from the minimap, however far it goes.
     /// </summary>
     public const int StepPx = 200;
 
     private readonly ProtocolFileWriter _writer;
     private readonly ushort _width, _height;
     private readonly (ushort X, ushort Y) _anchor;
+    // The world bounds the feed's positions are in, once its meta has said;
+    // until then a walk has nowhere on the minimap to land.
+    private WorldBounds? _bounds;
     // Video time of the last press or step, or null before a run's first:
     // the reference the next delay is measured from.
     private double? _lastVideoTime;
 
-    private GhostRecording(ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor)
+    private GhostRecording(
+        ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor, MinimapRect minimap)
     {
         _writer = writer;
         _width = width;
         _height = height;
         _anchor = anchor;
+        Minimap = minimap;
         Header = Show(new ScreenSizeMessage(width, height));
     }
 
     /// <summary>The <see cref="ScreenSizeMessage"/> this run opened with, as <see cref="Show(IEnumerable{Message})"/> prints it.</summary>
     public string Header { get; }
+
+    /// <summary>Where the minimap sits on the player's screen: where a walk's right-click lands.</summary>
+    public MinimapRect Minimap { get; }
 
     /// <summary>
     /// Opens <paramref name="path"/> for appending, creating it (and its
@@ -74,9 +84,14 @@ public sealed class GhostRecording : IDisposable
     /// <paramref name="playerAnchor"/> is where the player's model sits on
     /// their screen, which a step is taken from; the camera is locked, so it
     /// is one place, and the default is the screen's centre.
+    /// <paramref name="minimap"/> is where the minimap sits, which a walk is
+    /// ordered from; the default is the stock HUD's corner
+    /// (<see cref="MinimapRect.Default"/>), a placeholder until a screenshot
+    /// has been through the calibrator.
     /// </summary>
     public static GhostRecording Append(
-        string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null)
+        string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null,
+        MinimapRect? minimap = null)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
             Directory.CreateDirectory(dir);
@@ -92,8 +107,17 @@ public sealed class GhostRecording : IDisposable
             throw;
         }
         var anchor = playerAnchor ?? ((ushort)(screenWidth / 2), (ushort)(screenHeight / 2));
-        return new GhostRecording(writer, screenWidth, screenHeight, anchor);
+        return new GhostRecording(
+            writer, screenWidth, screenHeight, anchor, minimap ?? MinimapRect.Default(screenWidth, screenHeight));
     }
+
+    /// <summary>
+    /// The world bounds the feed's positions are in, from its meta: what a
+    /// walk's destination is placed on the minimap with. Before this is
+    /// called, or with null (an uncalibrated feed, which produces no walks),
+    /// a walk that does arrive is taken as a step on the ground its way.
+    /// </summary>
+    public void Calibrate(WorldBounds? bounds) => _bounds = bounds;
 
     /// <summary>Frames written through this recording, the screen size and any delays included.</summary>
     public long FramesWritten => _writer.FramesWritten;
@@ -128,17 +152,26 @@ public sealed class GhostRecording : IDisposable
     /// player's model in the step's direction, then a right-click there -- a
     /// press and a release, as with a key. The click is a move order, which
     /// is how a step is taken in the game; the cursor is left where it was
-    /// clicked, as a player's would be, until the next step moves it.
+    /// clicked, as a player's would be, until the next step moves it. A walk
+    /// (a step with a <see cref="MoveStep.Destination"/>) is the same click
+    /// on the minimap instead, at the place the coach is going: one order for
+    /// the whole trip, which is how a player sets off for lane, and as broad
+    /// as a move can be.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
-        var x = (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1);
-        var y = (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1);
+        var (x, y) = step.Destination is { } to && _bounds is { } bounds
+            ? Minimap.Place(bounds, to.X, to.Y)
+            : OnTheGround(step);
         return WriteAt(step.VideoTime,
             new MouseMoveMessage(x, y),
             new MouseButtonsMessage(MouseButtons.Right),
             new MouseButtonsMessage(MouseButtons.None));
     }
+
+    private (ushort X, ushort Y) OnTheGround(MoveStep step) => (
+        (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1),
+        (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1));
 
     /// <summary>
     /// The gap the file records before an input at <paramref name="videoTime"/>:

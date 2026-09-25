@@ -56,6 +56,9 @@ public sealed class Reactor(
             $"world={(meta.WorldBounds is not null ? "calibrated" : "none")}");
         policy.Configure(meta);
         trace?.WriteMeta(meta);
+        // A walk to a place on the map lands on the minimap, which shows the
+        // world the feed's bounds describe.
+        recording?.Calibrate(meta.WorldBounds);
 
         var feedTask = feed.RunAsync(ct);
 
@@ -213,7 +216,8 @@ public sealed class Reactor(
             coach?.PublishKey(key, gameTime, input);
         }
         // A step is the movement half: it reaches the recording as a
-        // right-click on the ground and the trace for its video time. It is
+        // right-click on the ground (on the minimap, for a walk to a place on
+        // the map) and the trace for its video time. A dodge is
         // stamped at the bolt's first sighting, which is before the event
         // that reports it, so in the trace it lands out of order and a
         // reader sorts by video_time; the recording, one sequence with no

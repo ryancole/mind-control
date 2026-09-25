@@ -84,7 +84,10 @@ function parseTrace(text) {
   inputs = lines.filter(l => l.t === "key" || l.t === "step")
     .map(l => ({
       vt: l.video_time, kind: l.t, icon: l.t === "key" ? "⌨" : "🖱",
-      text: l.t === "key" ? `pressed ${l.key}: ${l.reason}` : `stepped ${l.direction}: ${l.reason}`,
+      text: l.t === "key" ? `pressed ${l.key}: ${l.reason}`
+        : l.destination ? `walked ${l.direction} to ${l.destination.name}: ${l.reason}`
+        : `stepped ${l.direction}: ${l.reason}`,
+      destination: l.destination ?? null,   // a walk's place on the map; a sidestep has none
       frames: (l.input ?? []).map(describeFrame).join(", "),
     }))
     .sort((a, b) => a.vt - b.vt);
@@ -182,6 +185,20 @@ function draw() {
   const ii = latestIndex(inputs, simT, "vt");
   if (ii >= 0 && simT - inputs[ii].vt < 2.5) {
     const i = inputs[ii];
+    // A walk's destination: the place on the map its minimap click stands
+    // for, ringed, with the way there from where the player stood.
+    if (i.destination) {
+      const [dx, dy] = worldToCanvas(i.destination.x, i.destination.y);
+      const self = frame?.rows.find(r => r.is_self && r.world_x !== undefined);
+      ctx.strokeStyle = "#ffd166"; ctx.lineWidth = 2;
+      if (self) {
+        const [sx, sy] = worldToCanvas(self.world_x, self.world_y);
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(dx, dy); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI * 2); ctx.stroke();
+    }
     const head = `${i.icon} coach would have ${i.text}`;
     const bx = 8, by = canvas.height - 30, bw = canvas.width - 16;
     ctx.fillStyle = "rgba(16, 20, 24, 0.85)";

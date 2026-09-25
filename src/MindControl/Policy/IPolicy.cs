@@ -51,13 +51,25 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// (<see cref="Dx"/>, <see cref="Dy"/>) the same as a unit vector in their
 /// screen space, y down; the recording turns it into a click a fixed distance
 /// from the player's model, which sits at one place on their screen because
-/// the camera is locked.
+/// the camera is locked. A step with a <see cref="Destination"/> is a walk
+/// across the map rather than a sidestep: the ground in view is too small a
+/// canvas for a trip to lane, so the recording turns it into one right-click
+/// on the minimap at that point, the order a player gives to go somewhere
+/// far, and the direction then only says which way that is.
 /// </summary>
 public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
 {
+    /// <summary>Where the coach is going, when the move is a walk across the map; null for a sidestep on the ground.</summary>
+    public Destination? Destination { get; init; }
+
     /// <summary>The line as the player reads it, wherever it is shown.</summary>
-    public string Sentence => $"coach would have stepped {Direction} here: {Reason}";
+    public string Sentence => Destination is { } to
+        ? $"coach would have walked {Direction} to {to.Name} here: {Reason}"
+        : $"coach would have stepped {Direction} here: {Reason}";
 }
+
+/// <summary>A place on the map, in game units, named as the player knows it ("bot lane").</summary>
+public sealed record Destination(string Name, double X, double Y);
 
 public interface IPolicy
 {

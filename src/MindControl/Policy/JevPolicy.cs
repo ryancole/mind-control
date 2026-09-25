@@ -381,9 +381,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// when there is something to ask: alive, placed on the map, with a game
     /// clock running (before it the player cannot move). Whether standing
     /// there is idling, and which lane a good player would be walking to,
-    /// are the model's calls; a yes is a step toward that lane's nearest
-    /// point, and the ghost keeps stepping every interval until the player
-    /// moves.
+    /// are the model's calls; a yes is a walk to that lane's nearest point
+    /// (one right-click on the minimap, the recording's broadest move), and
+    /// the ghost orders it again every interval until the player moves.
     /// </summary>
     private void AskIdle(FrameEnvelope frame, ChampionRow self)
     {
@@ -430,8 +430,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             var clock = moment.GameClock is { } time ? $" at {time}" : "";
             var reason = $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}; "
                 + $"a good player would be on the way to {lane.Choice} lane ({toward.Distance:0} units {direction})";
-            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason));
-            Remember($"stepped toward {lane.Choice} lane", asked);
+            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+            {
+                Destination = new Destination($"{lane.Choice} lane", toward.X, toward.Y),
+            });
+            Remember($"walked toward {lane.Choice} lane", asked);
         });
     }
 

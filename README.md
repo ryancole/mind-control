@@ -3,7 +3,8 @@
 An observe-and-advise coaching reactor: it consumes the live game-state feed
 published by [spectral-sight](../spectral-sight) and prints real-time,
 fair-play coaching feedback — which button a good player would have pressed,
-which way they would have stepped, where a new level's point goes, and why.
+which way they would have stepped, where they would have walked to, where a
+new level's point goes, and why.
 It sends no input to the game or to any device; it only watches and explains.
 
 The coaching itself is [Jev](https://docs.typesafe.ai/concepts/system-one)'s,
@@ -129,12 +130,14 @@ Five questions, each asked when there is something to ask about:
   seconds with the game clock running, the coach is asked *would a good
   player be walking to a lane right now instead?* and *which lane?*, a choice
   among the three, each described by its distance and screen direction from
-  where they stand and the allies already in it. A yes is a step toward that
-  lane's nearest point, and the ghost steps again every three seconds until
-  the player moves:
+  where they stand and the allies already in it. A yes is a walk to that
+  lane's nearest point: one right-click on the minimap, the order a player
+  gives for a whole trip, because a step's 200px on the ground in front of
+  them is no way to cross the map. The ghost orders it again every three
+  seconds until the player moves:
 
   ```
-  step[p2]: coach would have stepped up-right here: you have stood still for 9.0s in the fountain at 0:52; a good player would be on the way to bot lane (2244 units up-right)  recorded: MouseMove 1120,421, MouseButtons Right, MouseButtons None
+  step[p2]: coach would have walked up-right to bot lane here: you have stood still for 9.0s in the fountain at 0:52; a good player would be on the way to bot lane (2244 units up-right)  recorded: MouseMove 1664,1044, MouseButtons Right, MouseButtons None
   ```
 
   Whether standing somewhere is idling (in the fountain after the clock has
@@ -226,7 +229,18 @@ ability rather than a cast), and every step as a
 direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
 place, the camera being locked; `--anchor <x,y>` names it (default: the
-screen's centre). It is a recording, not a connection: this tool never opens
+screen's centre). A walk — a step with a destination on the map, which is
+what going to lane is — is the same click on the minimap instead, at the
+place the coach is going: one order for the whole trip, which is how a
+player sets off for lane, and as broad as a move can be. `--minimap
+<x,y,w,h>` names the minimap's rectangle on the screen (default: the stock
+HUD's bottom-right corner, a 300px square at 1080p scaled with the screen's
+height, a placeholder); `etc/minimap-calibrator.html` turns a screenshot of
+the player's screen into the exact `--screen`/`--minimap` arguments — paste
+the screenshot (Ctrl+V), click the minimap's two corners, copy the line. The
+world bounds the click is placed with come from the feed's meta, so a walk
+on a feed without them (which asks no lane question anyway) would be taken
+as a step on the ground. It is a recording, not a connection: this tool never opens
 the device. The file stays open for the run, shared for reading, and the
 library's reader opens a file a writer still holds, so misdirection can play
 the recording by path while a run is still appending to it: a read sees every
@@ -255,12 +269,13 @@ decoration; the ghost viewer puts a ⌨ or 🖱 to a key or a step from the
 type, which is its own choice of dress, and a coaching panel can do the
 same. With `--record none` nothing is written, so nothing is shown. The trace
 below is the record of *when* in absolute terms (a `key` or `step` line per
-press or step, keyed by video_time; a step is stamped at the bolt's first
-sighting, which is earlier than the event that reports it, so the trace is
-not in time order there).
+press or step, keyed by video_time, a walk's carrying its `destination` on
+the map; a dodge is stamped at the bolt's first sighting, which is earlier
+than the event that reports it, so the trace is not in time order there).
 
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the coach's hands over the map: keys and steps sit on the tick strip as
 ⌨ and 🖱, jumpable, and while one is fresh a badge at the foot of the map
-names it and the frames it recorded.
+names it and the frames it recorded, and a walk's destination is ringed on
+the map with the way there from where the player stood.
