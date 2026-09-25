@@ -105,8 +105,9 @@ for (var i = 0; i < args.Length; i++)
 
                 Button presses need the ability HUD read; steps need the threat stage; aim
                 remarks need the skillshot stage. All three come from a spectral-sight run
-                made with --coach; on a feed without them the coach says so once and asks
-                only about what it can see.
+                made with --coach; walking a player who stands still to lane needs a
+                world-calibrated feed. On a feed without them the coach says so once and
+                asks only about what it can see.
                 """);
             return 0;
         default:

@@ -35,6 +35,23 @@ public sealed record JevOptions
     /// </summary>
     public double YesAt { get; init; } = 0.6;
 
+    /// <summary>
+    /// How often, in video seconds, a player who stands on one spot is asked
+    /// about: should they be walking to lane? It is also the least time on
+    /// the spot before the first such question, since a player who stopped a
+    /// moment ago is not yet standing still. One in flight at a time, apart
+    /// from the button questions.
+    /// </summary>
+    public double IdleAskEverySeconds { get; init; } = 3;
+
+    /// <summary>
+    /// How far, in game units, the player's model can drift and still be on
+    /// the same spot. The minimap read jitters by tens of units on a
+    /// champion that has not moved; a walking one covers this in a third of
+    /// a second.
+    /// </summary>
+    public double StillRadiusUnits { get; init; } = 100;
+
     /// <summary>How many of the player's recent seen shots the coach is shown when asked about aim.</summary>
     public int RecentShots { get; init; } = 10;
 
@@ -59,9 +76,11 @@ public sealed record Consultation(
 /// player (<c>--self</c> or the is_self majority, with the pipeline's identity
 /// corrections applied), how long each enemy has been in view, which buttons
 /// the HUD has shown a cooldown for and when they come back, the last few
-/// shots seen at a target, the last bolt that landed. Geometry: the two sides
-/// of a bolt's line, which way is toward home, which way on the screen an
-/// enemy is. Fair play: <see cref="Moment"/> is built from visible
+/// shots seen at a target, the last bolt that landed, how long the player
+/// has stood on one spot. Geometry: the two sides of a bolt's line, which way
+/// is toward home, which way on the screen an enemy is, where on the map the
+/// player stands and how far each lane is (<see cref="RiftMap"/>). Fair
+/// play: <see cref="Moment"/> is built from visible
 /// rows only, so the model is never shown a thing in fog. Each of those is a
 /// measurement or a mechanism, not a judgement; the judgements are in
 /// <see cref="CoachQuestions"/>.</para>
@@ -108,6 +127,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private (double Arrival, int? Damage)? _lastLanding;
     private readonly List<(string Did, double At)> _recent = [];
 
+    // Perception: the spot the player has stood on, and since when.
+    private (double X, double Y)? _restAt;
+    private double _stillSince;
+
     // What the coach said since the last drain.
     private readonly List<CoachCue> _cues = [];
     private readonly List<KeyPress> _keys = [];
@@ -119,6 +142,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private int _generation;
     private bool _asking;
     private double _lastAskAt = double.NegativeInfinity;
+    private bool _askingIdle;
+    private double _lastIdleAskAt = double.NegativeInfinity;
     private bool _failing;
 
     public void Configure(Meta meta)
@@ -133,6 +158,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             missing.Add("threats (no step will be taken)");
         if (!meta.HasSkillshots)
             missing.Add("skillshots (aim will not be remarked on)");
+        if (meta.WorldBounds is null)
+            missing.Add("world calibration (nobody will be walked to lane)");
         if (missing.Count > 0)
             _cues.Add(new CoachCue(0, 1,
                 $"this feed carries no {string.Join(", ", missing)}; spectral-sight needs a --coach run"));
@@ -160,6 +187,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _generation++;
         _asking = false;
         _lastAskAt = double.NegativeInfinity;
+        _askingIdle = false;
+        _lastIdleAskAt = double.NegativeInfinity;
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -175,9 +204,16 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _shots.Clear();
         _lastLanding = null;
         _recent.Clear();
+        _restAt = null;
         if (latest is not null)
+        {
             foreach (var row in latest.Champions.Where(c => c.Visible))
                 _visibleSince[row.TrackId] = latest.VideoTime;
+            // The spot restarts from the baseline too: standing still across
+            // a gap is a claim about frames we never saw.
+            if (Self() is { } self)
+                TrackStillness(latest, self);
+        }
         // _selfVotes survive: identity outlives a gap.
     }
 
@@ -194,7 +230,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             if (self.Health is { } health)
                 _health = health;
             TrackReach(frame, self);
+            TrackStillness(frame, self);
             AskNow(frame, self);
+            AskIdle(frame, self);
         }
         Settle();
     }
@@ -249,7 +287,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _asking = true;
         _lastAskAt = frame.VideoTime;
         var asked = frame.VideoTime;
-        Ask("now", moment, CoachQuestions.Press(slots), asked, NowRequest, now: true, answered: response =>
+        Ask("now", moment, CoachQuestions.Press(slots), asked, NowRequest, released: () => _asking = false, answered: response =>
         {
             var nearest = moment.VisibleEnemies[0];
             foreach (var slot in slots)
@@ -265,6 +303,67 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _keys.Add(new KeyPress(asked, slot, 2, reason));
                 Remember($"pressed {slot}", asked);
             }
+        });
+    }
+
+    // --- Standing still: would a good player be walking to lane? ---
+
+    /// <summary>
+    /// Asks about a player who has stood on one spot for the ask interval,
+    /// when there is something to ask: alive, placed on the map, with a game
+    /// clock running (before it the player cannot move). Whether standing
+    /// there is idling, and which lane a good player would be walking to,
+    /// are the model's calls; a yes is a step toward that lane's nearest
+    /// point, and the ghost keeps stepping every interval until the player
+    /// moves.
+    /// </summary>
+    private void AskIdle(FrameEnvelope frame, ChampionRow self)
+    {
+        if (_askingIdle || frame.VideoTime - _lastIdleAskAt < _options.IdleAskEverySeconds)
+            return;
+        if (self.Alive == false || _restAt is not { } rest || frame.GameTime is null)
+            return;
+        if (frame.VideoTime - _stillSince < _options.IdleAskEverySeconds)
+            return;
+        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
+        if (moment.Whereabouts is not { } whereabouts)
+            return;
+
+        var criteria = new ChoiceCriteria();
+        foreach (var lane in whereabouts.Lanes)
+        {
+            var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
+            criteria[lane.Lane] = lane.ScreenDirection is { } direction
+                ? $"{lane.Lane} lane: {lane.DistanceUnits:0} units away, {direction} on the screen; allies there: {allies}"
+                : $"{lane.Lane} lane: the player is standing in it; allies there: {allies}";
+        }
+        var questions = new Questions()
+            .Noul("walk", CoachQuestions.Walk,
+                yes: "they are idling off lane and a good player would be on the way to a lane by now",
+                no: "they are in a lane, held there by something on the screen, or have only just paused")
+            .Choice("lane", CoachQuestions.Lane, criteria);
+
+        _askingIdle = true;
+        _lastIdleAskAt = frame.VideoTime;
+        var asked = frame.VideoTime;
+        Ask("idle", moment, questions, asked, NowRequest, released: () => _askingIdle = false, answered: response =>
+        {
+            if (!response.TryGet<NoulAnswer>("walk", out var walk) || !walk!.IsYes(_options.YesAt))
+                return;
+            if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
+                return;
+            var toward = RiftMap.Toward(lane.Choice, rest.X, rest.Y);
+            // World y grows north, screen y grows down: flip for the step.
+            var (dx, dy) = (toward.X - rest.X, -(toward.Y - rest.Y));
+            var length = double.Hypot(dx, dy);
+            if (length == 0)
+                return;   // walking to the lane they stand in: nothing to demonstrate
+            var direction = ScreenDirections.Name(dx, dy);
+            var clock = moment.GameClock is { } time ? $" at {time}" : "";
+            var reason = $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}; "
+                + $"a good player would be on the way to {lane.Choice} lane ({toward.Distance:0} units {direction})";
+            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason));
+            Remember($"stepped toward {lane.Choice} lane", asked);
         });
     }
 
@@ -316,7 +415,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var sentence = BoltSentence(occasion);
         var stamp = evt.At ?? evt.VideoTime;
-        Ask("bolt", moment, questions, evt.VideoTime, OccasionRequest, now: false, answered: response =>
+        Ask("bolt", moment, questions, evt.VideoTime, OccasionRequest, released: null, answered: response =>
         {
             if (response.TryGet<NoulAnswer>("remark", out var remark) && remark!.IsYes(_options.YesAt))
             {
@@ -418,7 +517,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             + $"{wideCount} of the last {recent.Length} shots that were seen went wide";
 
         Ask("shot", moment, new Questions().Noul("remark", CoachQuestions.ShotRemark),
-            evt.VideoTime, OccasionRequest, now: false, answered: response =>
+            evt.VideoTime, OccasionRequest, released: null, answered: response =>
             {
                 if (!response.TryGet<NoulAnswer>("remark", out var remark) || !remark!.IsYes(_options.YesAt))
                     return;
@@ -433,9 +532,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// Sends one question set and collects the answer without waiting for it.
     /// The continuation only queues work; every touch of this policy's state
     /// happens in <see cref="Settle"/>, on the caller's thread.
+    /// <paramref name="released"/> clears the in-flight flag of a question
+    /// about the moment once its answer is in, good or bad; an event's
+    /// question has none.
     /// </summary>
     private void Ask(string occasion, Moment moment, Questions questions, double videoTime,
-        RequestOptions request, bool now, Action<SystemOneResponse> answered)
+        RequestOptions request, Action? released, Action<SystemOneResponse> answered)
     {
         var generation = _generation;
         _ = RunAsync();
@@ -456,8 +558,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             var elapsed = clock.ElapsedMilliseconds;
             _arrivals.Enqueue(() =>
             {
-                if (now && generation == _generation)
-                    _asking = false;
+                if (generation == _generation)
+                    released?.Invoke();
                 audit?.Invoke(new Consultation(videoTime, occasion, moment, questions, response, error, elapsed));
                 if (generation != _generation)
                     return;
@@ -530,8 +632,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         List<EnemyFacts> enemies = [];
         List<AllyFacts> allies = [];
+        WhereaboutsFacts? whereabouts = null;
         if (frame is not null && self is not null)
         {
+            whereabouts = Whereabouts(frame, self, now);
             foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
             {
                 var distance = Distance(self, row)!.Value;
@@ -557,9 +661,51 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Abilities = abilities,
             VisibleEnemies = enemies,
             Allies = allies,
+            Whereabouts = whereabouts,
             Coach = _recent.Select(r => new RecentAction(r.Did, Math.Round(now - r.At, 1))).ToArray(),
             Occasion = occasion,
         };
+    }
+
+    /// <summary>
+    /// Where the player stands and how far each lane is, off their own
+    /// minimap. The still time counts from the spot they stopped on; a player
+    /// without a place on the map has no whereabouts.
+    /// </summary>
+    private WhereaboutsFacts? Whereabouts(FrameEnvelope frame, ChampionRow self, double now)
+    {
+        if (self is not { WorldX: { } x, WorldY: { } y })
+            return null;
+        var placed = frame.Champions
+            .Where(c => c.Team == self.Team && c.TrackId != self.TrackId && c.Alive != false
+                && c is { WorldX: not null, WorldY: not null })
+            .ToArray();
+        var lanes = RiftMap.Lanes.Select(lane =>
+        {
+            var toward = RiftMap.Toward(lane, x, y);
+            var there = placed
+                .Where(c => RiftMap.Toward(lane, c.WorldX!.Value, c.WorldY!.Value).Distance <= RiftMap.LaneHalfWidth)
+                .Select(c => c.Champion ?? $"track {c.TrackId}")
+                .ToArray();
+            return new LaneFacts(lane, Math.Round(toward.Distance),
+                toward.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(toward.X - x, toward.Y - y), there);
+        }).ToArray();
+        var still = _restAt is null ? 0 : Math.Max(0, Math.Round(now - _stillSince, 1));
+        return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes);
+    }
+
+    /// <summary>The spot the player stands on: a new one once they have left the old by more than the jitter.</summary>
+    private void TrackStillness(FrameEnvelope frame, ChampionRow self)
+    {
+        if (self is not { WorldX: { } x, WorldY: { } y })
+        {
+            _restAt = null;
+            return;
+        }
+        if (_restAt is { } rest && double.Hypot(x - rest.X, y - rest.Y) <= _options.StillRadiusUnits)
+            return;
+        _restAt = (x, y);
+        _stillSince = frame.VideoTime;
     }
 
     /// <summary>The enemies the player can see, with a place on the map. Nothing in fog is ever listed.</summary>

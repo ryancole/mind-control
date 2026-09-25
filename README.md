@@ -38,7 +38,8 @@ own:
 - `src/MindControl/Policy` — `(state, event) → a coaching cue`. `JevPolicy`
   is the coach: it keeps the perception (who the player is, what has been
   seen for how long, which buttons the HUD has shown come back) and the
-  geometry (the two sides of a bolt's line, which way is toward home), builds a
+  geometry (the two sides of a bolt's line, which way is toward home, where on
+  the map the player stands and how far each lane is), builds a
   `Moment` — the fair-play state the model is shown — and asks the questions
   in `CoachQuestions`. The only I/O is the injected Jev client, so a replayed
   timeline with a scripted client exercises it exactly (`dotnet test` needs
@@ -94,7 +95,7 @@ go unmarked. The stream is output-only, like the console.
 
 ## Coaching by Jev
 
-Three questions, each asked when there is something to ask about:
+Four questions, each asked when there is something to ask about:
 
 - **Which button, now.** Whenever the player is alive, an enemy is on their
   screen, and a button the HUD has shown a cooldown for has counted down, the
@@ -119,13 +120,32 @@ Three questions, each asked when there is something to ask about:
 - **A shot of the player's** (`skillshot` events, only those seen leaving
   them with an enemy in front): *given the recent shots, is aim worth a word?*
   A yes is a cue naming where the bolt passed and the run it made.
+- **Standing still.** Whenever the player has stood on one spot for three
+  seconds with the game clock running, the coach is asked *would a good
+  player be walking to a lane right now instead?* and *which lane?*, a choice
+  among the three, each described by its distance and screen direction from
+  where they stand and the allies already in it. A yes is a step toward that
+  lane's nearest point, and the ghost steps again every three seconds until
+  the player moves:
+
+  ```
+  step[p2]: coach would have stepped up-right here: you have stood still for 9.0s in the fountain at 0:52; a good player would be on the way to bot lane (2244 units up-right)  recorded: MouseMove 1120,421, MouseButtons Right, MouseButtons None
+  ```
+
+  Whether standing somewhere is idling (in the fountain after the clock has
+  started, yes; in lane waiting for minions, no) is the rubric's call, not a
+  threshold in code. Needs a world-calibrated feed, since the map is read
+  in game units.
 
 What the model is told is the `Moment`: the player's champion, health, mana
 and level; each button's status with what it is and how far it reaches
 (`AbilityKits`, a fact table, not a gate); every visible enemy's distance,
 screen direction, time in view and time inside the player's reach; the
-player's own team; what the coach itself did in the last few seconds; and the
-event in question, with its measurements. Everything is a measurement the
+player's own team; where the player stands on the map and how long they have
+stood there, with each lane's distance, direction and allies (`RiftMap`, the
+lanes as the lines their turrets lie on -- geometry, not a gate); what the
+coach itself did in the last few seconds; and the event in question, with its
+measurements. Everything is a measurement the
 code made — the model is asked for judgement, never for arithmetic — and the
 fair-play boundary is that this state is built from visible rows only.
 
@@ -135,7 +155,10 @@ make a run) are sentences there now. The knobs that remain are plumbing: `YesAt`
 the probability below which a yes is a no (0.6 — a yes with a margin, and
 since the coach is told what it just did, a press drops the next answer to
 about 0.35, so a lower bar does not mean a spammed key); `AskEverySeconds`,
-the floor between questions about the moment (0.25); and `--model`, pinned to
+the floor between questions about the moment (0.25); `IdleAskEverySeconds`,
+the same for the standing-still question and the least time on one spot
+before it is first asked (3); `StillRadiusUnits`, how far the minimap read
+may jitter and still be the same spot (100); and `--model`, pinned to
 `jev-1.13.0` because a threshold tuned against one release's calibration
 should not move with `jev-latest`.
 
