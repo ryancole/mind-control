@@ -13,13 +13,25 @@ namespace MindControl;
 ///
 /// <para>This is a recording, not a connection. Nothing here opens a port or
 /// touches a device; the file is the demonstration, kept in the wire format so
-/// it needs no translation later. The format carries no timestamps -- a frame
-/// is only what to do, never when -- so the ghost trace (<see cref="GhostTrace"/>)
-/// remains the record of timing.</para>
+/// it needs no translation later.</para>
+///
+/// <para>Timing goes in the file too, as the format's <c>FILE_DELAY</c>
+/// records (<see cref="DelayMessage"/>): before each press or step, the
+/// video time that passed since the previous one, so the file replays at the
+/// pace the coach acted. The clock is the VOD's, not the wall's -- a replay at
+/// speed 4 records the same gaps as one at speed 1 -- and it starts at the
+/// first press or step of a run, since nothing before it is anchored to the
+/// video. A step is stamped at the bolt's first sighting, which can be
+/// earlier than the press written before it; the file is one sequence and a
+/// gap cannot be negative, so such a step follows at no gap and the clock
+/// does not move back. The ghost trace (<see cref="GhostTrace"/>) keeps the
+/// absolute video time of every press and step, out-of-order stamps included.
+/// </para>
 ///
 /// <para>Each of <see cref="Press"/> and <see cref="Step"/>
-/// hands back the frames it wrote, so the coaching output can show not just
-/// "pressed Q" but the KeyDown and KeyUp that went into the file for it:
+/// hands back the frames it wrote, the delay before them included, so the
+/// coaching output can show not just "pressed Q" but the KeyDown and KeyUp
+/// that went into the file for it:
 /// <see cref="Show(IEnumerable{Message})"/> as plain text for the console,
 /// <see cref="AsData(IEnumerable{Message})"/> as data for the stream and the
 /// trace. Neither decorates; an icon for the hand is a front end's choice.</para>
@@ -38,6 +50,9 @@ public sealed class GhostRecording : IDisposable
     private readonly ProtocolFileWriter _writer;
     private readonly ushort _width, _height;
     private readonly (ushort X, ushort Y) _anchor;
+    // Video time of the last press or step, or null before a run's first:
+    // the reference the next delay is measured from.
+    private double? _lastVideoTime;
 
     private GhostRecording(ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor)
     {
@@ -80,18 +95,24 @@ public sealed class GhostRecording : IDisposable
         return new GhostRecording(writer, screenWidth, screenHeight, anchor);
     }
 
-    /// <summary>Frames written through this recording, the screen size included.</summary>
+    /// <summary>Frames written through this recording, the screen size and any delays included.</summary>
     public long FramesWritten => _writer.FramesWritten;
 
     /// <summary>
-    /// The coach pressed a key: a down and an up, back to back. The format has
-    /// no timing, so a tap is the only press there is; a held key would need
-    /// the trace to say how long, and no policy holds one.
+    /// Video time of the last press or step, from which the next delay is
+    /// measured; null before a run's first. Never moves backwards.
+    /// </summary>
+    public double? LastVideoTime => _lastVideoTime;
+
+    /// <summary>
+    /// The coach pressed a key: a down and an up, back to back, after the gap
+    /// since the last press or step. A tap is the only press there is; a
+    /// held key would need a policy to say how long, and none holds one.
     /// </summary>
     public IReadOnlyList<Message> Press(KeyPress key)
     {
         var usage = UsageOf(key.Key);
-        return Write(new KeyDownMessage(usage), new KeyUpMessage(usage));
+        return WriteAt(key.VideoTime, new KeyDownMessage(usage), new KeyUpMessage(usage));
     }
 
     /// <summary>
@@ -105,11 +126,20 @@ public sealed class GhostRecording : IDisposable
     {
         var x = (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1);
         var y = (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1);
-        return Write(
+        return WriteAt(step.VideoTime,
             new MouseMoveMessage(x, y),
             new MouseButtonsMessage(MouseButtons.Right),
             new MouseButtonsMessage(MouseButtons.None));
     }
+
+    /// <summary>
+    /// The gap the file records before an input at <paramref name="videoTime"/>:
+    /// the video time since the last press or step; none before a run's
+    /// first, and none for a stamp earlier than the last (the clock does not
+    /// move back). What <see cref="WriteAt"/> writes ahead of the frames.
+    /// </summary>
+    public TimeSpan DelayBefore(double videoTime) =>
+        _lastVideoTime is { } last && videoTime > last ? TimeSpan.FromSeconds(videoTime - last) : TimeSpan.Zero;
 
     /// <summary>
     /// The keycap the coach names, as the HID usage the wire carries. Letters
@@ -166,6 +196,7 @@ public sealed class GhostRecording : IDisposable
         MouseButtonsMessage b => new { Type = "mouse_buttons", Buttons = b.Buttons.ToString() },
         MouseWheelMessage w => new { Type = "mouse_wheel", w.Vertical, w.Horizontal },
         ScreenSizeMessage s => new { Type = "screen_size", s.Width, s.Height },
+        DelayMessage d => new { Type = "delay", d.Microseconds },
         _ => new { Type = frame.Type.ToString().ToLowerInvariant(), Payload = Convert.ToHexString(frame.ToFrame().Payload) },
     };
 
@@ -177,13 +208,61 @@ public sealed class GhostRecording : IDisposable
         MouseButtonsMessage b => $"MouseButtons {b.Buttons}",
         MouseWheelMessage w => $"MouseWheel {w.Vertical},{w.Horizontal}",
         ScreenSizeMessage s => $"ScreenSize {s.Width}x{s.Height}",
+        // Seconds to the millisecond: gaps between inputs are tenths to tens
+        // of seconds, and a microsecond is below anything a hand can tell apart.
+        DelayMessage d => $"Delay {d.Duration.TotalSeconds:0.000}s",
         _ => frame.ToFrame().ToString(),
     };
 
     /// <summary>
-    /// Any input the coach would have made, in order; returns the frames so
-    /// the caller can show what went into the file. <see cref="Press"/> and
-    /// <see cref="Step"/> are the callers.
+    /// Input the coach made at <paramref name="videoTime"/>: the gap since the
+    /// last press or step as a <see cref="DelayMessage"/> when there is one
+    /// (see <see cref="DelayBefore"/>), then the frames, in order. Returns
+    /// everything written, delay first, so the caller can show what went into
+    /// the file. <see cref="Press"/> and <see cref="Step"/> are the callers.
+    /// </summary>
+    public IReadOnlyList<Message> WriteAt(double videoTime, params Message[] messages)
+    {
+        var delay = DelayBefore(videoTime);
+        var written = new List<Message>(messages.Length + 1);
+        if (delay > TimeSpan.Zero)
+        {
+            // One record in practice: the writer splits a gap only past 71
+            // minutes, and no two coached moments are that far apart. Read
+            // back what it split rather than guess, so the frames handed
+            // back are the frames in the file.
+            var before = _writer.FramesWritten;
+            _writer.WriteDelay(delay);
+            written.AddRange(DelaysWritten(delay, _writer.FramesWritten - before));
+        }
+        written.AddRange(Write(messages));
+        if (_lastVideoTime is null || videoTime > _lastVideoTime)
+            _lastVideoTime = videoTime;
+        return written;
+    }
+
+    /// <summary>
+    /// The <see cref="DelayMessage"/> records <see cref="ProtocolFileWriter.WriteDelay"/>
+    /// wrote for <paramref name="delay"/>: <paramref name="records"/> of them,
+    /// the maximum each but the last, rounded to the microsecond as it rounds.
+    /// </summary>
+    private static IEnumerable<Message> DelaysWritten(TimeSpan delay, long records)
+    {
+        var micros = Math.DivRem(delay.Ticks, TimeSpan.TicksPerMicrosecond, out var remainder);
+        if (remainder * 2 >= TimeSpan.TicksPerMicrosecond) micros++;
+        for (var i = 0; i < records; i++)
+        {
+            var chunk = (uint)Math.Min(micros, uint.MaxValue);
+            yield return new DelayMessage(chunk);
+            micros -= chunk;
+        }
+    }
+
+    /// <summary>
+    /// Frames as given, in order, with no delay before them; returns them so
+    /// the caller can show what went into the file. For input with no moment
+    /// of its own, and for tests; the coach's presses and steps go through
+    /// <see cref="WriteAt"/>.
     /// </summary>
     public IReadOnlyList<Message> Write(params Message[] messages)
     {

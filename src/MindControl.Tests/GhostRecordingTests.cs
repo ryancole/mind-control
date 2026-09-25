@@ -6,7 +6,8 @@ namespace MindControl.Tests;
 /// <summary>
 /// The recording is a misdirection protocol file, so the property that
 /// matters is that the library reads back exactly what the ghost did, in
-/// order, behind the screen size those coordinates were meant for.
+/// order and at the pace it did it, behind the screen size those
+/// coordinates were meant for.
 /// </summary>
 [TestClass]
 public sealed class GhostRecordingTests
@@ -168,7 +169,7 @@ public sealed class GhostRecordingTests
 
             stepped = recording.Step(new MoveStep(218.1, "left", -1, 0, 3, "a bolt from the right"));
             Assert.AreEqual(
-                "MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(stepped));
+                "Delay 200.600s, MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(stepped));
         }
 
         // The file holds exactly what was handed back, in order.
@@ -178,14 +179,122 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void Presses_and_steps_are_spaced_by_the_video_time_between_them()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            Assert.IsNull(recording.LastVideoTime);
+            // The first input of a run starts the clock: no delay before it.
+            var first = recording.Press(new KeyPress(10.0, "Q", 2, "first"));
+            Assert.AreEqual("KeyDown Q (0x14), KeyUp Q (0x14)", GhostRecording.Show(first));
+            Assert.AreEqual(10.0, recording.LastVideoTime);
+
+            var second = recording.Press(new KeyPress(12.5, "W", 2, "second"));
+            Assert.AreEqual("Delay 2.500s, KeyDown W (0x1A), KeyUp W (0x1A)", GhostRecording.Show(second));
+
+            var step = recording.Step(new MoveStep(13.0, "left", -1, 0, 3, "a bolt"));
+            Assert.AreEqual("Delay 0.500s, MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+            Assert.AreEqual(13.0, recording.LastVideoTime);
+            Assert.AreEqual(10, recording.FramesWritten);
+        }
+
+        CollectionAssert.AreEqual(
+            new Message[]
+            {
+                new ScreenSizeMessage(1920, 1080),
+                new KeyDownMessage(HidUsage.Q), new KeyUpMessage(HidUsage.Q),
+                new DelayMessage(2_500_000),
+                new KeyDownMessage(HidUsage.W), new KeyUpMessage(HidUsage.W),
+                new DelayMessage(500_000),
+                new MouseMoveMessage(760, 540),
+                new MouseButtonsMessage(MouseButtons.Right),
+                new MouseButtonsMessage(MouseButtons.None),
+            },
+            ProtocolFile.Read(_path).ToArray());
+
+        // The library's timed reader folds the delays into a schedule: the
+        // second press lands 2.5s after the first, the step 3s after.
+        var timed = ProtocolFile.ReadTimed(_path);
+        CollectionAssert.AreEqual(
+            new[] { 0.0, 0.0, 0.0, 2.5, 2.5, 3.0, 3.0, 3.0 },
+            timed.Select(t => t.At.TotalSeconds).ToArray());
+        Assert.IsTrue(timed.All(t => !t.Message.IsFileOnly));
+    }
+
+    [TestMethod]
+    public void A_step_stamped_before_the_last_press_follows_at_no_gap_and_leaves_the_clock_alone()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            recording.Press(new KeyPress(20.0, "Q", 2, "press"));
+            // Stamped at the bolt's first sighting, 2s before the press was
+            // decided: the file cannot go back, so no gap, and the clock
+            // stays at 20 rather than dropping to 18.
+            var step = recording.Step(new MoveStep(18.0, "left", -1, 0, 3, "a bolt seen earlier"));
+            Assert.AreEqual("MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+            Assert.AreEqual(20.0, recording.LastVideoTime);
+            Assert.AreEqual(TimeSpan.Zero, recording.DelayBefore(18.0));
+            Assert.AreEqual(TimeSpan.Zero, recording.DelayBefore(20.0));
+
+            var next = recording.Press(new KeyPress(21.0, "E", 2, "next"));
+            Assert.AreEqual("Delay 1.000s, KeyDown E (0x08), KeyUp E (0x08)", GhostRecording.Show(next));
+        }
+
+        var timed = ProtocolFile.ReadTimed(_path);
+        CollectionAssert.AreEqual(
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0 },
+            timed.Select(t => t.At.TotalSeconds).ToArray());
+    }
+
+    [TestMethod]
+    public void Each_run_starts_its_own_clock_so_no_gap_spans_two_runs()
+    {
+        using (var first = GhostRecording.Append(_path, 1920, 1080))
+            first.Press(new KeyPress(10.0, "Q", 2, "first run"));
+        using (var second = GhostRecording.Append(_path, 1920, 1080))
+        {
+            var pressed = second.Press(new KeyPress(500.0, "Q", 2, "second run, much later in the video"));
+            Assert.AreEqual("KeyDown Q (0x14), KeyUp Q (0x14)", GhostRecording.Show(pressed));
+        }
+
+        Assert.IsFalse(ProtocolFile.Read(_path).Any(m => m is DelayMessage));
+    }
+
+    [TestMethod]
+    public void Untimed_writes_do_not_move_the_clock()
+    {
+        using var recording = GhostRecording.Append(_path, 1920, 1080);
+        recording.Press(new KeyPress(10.0, "Q", 2, "press"));
+        recording.Write(new MouseMoveMessage(1, 2));
+        Assert.AreEqual(10.0, recording.LastVideoTime);
+        Assert.AreEqual(TimeSpan.FromSeconds(1.5), recording.DelayBefore(11.5));
+    }
+
+    [TestMethod]
+    public void A_delay_is_rounded_to_the_microsecond_the_file_holds()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+        {
+            recording.Press(new KeyPress(0.0, "Q", 2, "start"));
+            // 16.7ms is not a whole number of microseconds in binary; what is
+            // handed back must be the record the writer put in the file.
+            var pressed = recording.Press(new KeyPress(0.0167, "W", 2, "a frame later"));
+            Assert.AreEqual(new DelayMessage(16_700), pressed[0]);
+        }
+
+        Assert.AreEqual(new DelayMessage(16_700), ProtocolFile.Read(_path)[3]);
+    }
+
+    [TestMethod]
     public void Showing_frames_is_plain_text_with_nothing_added()
     {
         Assert.AreEqual(
-            "MouseMove 1,2, KeyDown D (0x07), KeyUp D (0x07), MouseButtons Right",
+            "MouseMove 1,2, KeyDown D (0x07), KeyUp D (0x07), MouseButtons Right, Delay 0.017s",
             GhostRecording.Show(
                 new MouseMoveMessage(1, 2),
                 new KeyDownMessage(HidUsage.D), new KeyUpMessage(HidUsage.D),
-                new MouseButtonsMessage(MouseButtons.Right)));
+                new MouseButtonsMessage(MouseButtons.Right),
+                new DelayMessage(16_700)));
         Assert.AreEqual("", GhostRecording.Show());
         // A frame this recording never writes still shows, as the library shows it.
         Assert.AreEqual("Ping []", GhostRecording.Show(new PingMessage()));
@@ -199,13 +308,14 @@ public sealed class GhostRecordingTests
             [
                 new KeyDownMessage(HidUsage.Q), new KeyUpMessage(HidUsage.Q),
                 new MouseMoveMessage(760, 540), new MouseButtonsMessage(MouseButtons.Right),
-                new ScreenSizeMessage(1920, 1080), new PongMessage(3),
+                new ScreenSizeMessage(1920, 1080), new DelayMessage(2_500_000), new PongMessage(3),
             ]),
             MindControl.Feed.FeedJson.Options);
         Assert.AreEqual(
             """[{"type":"key_down","key":"Q","usage":20},{"type":"key_up","key":"Q","usage":20},""" +
             """{"type":"mouse_move","x":760,"y":540},{"type":"mouse_buttons","buttons":"Right"},""" +
-            """{"type":"screen_size","width":1920,"height":1080},{"type":"pong","payload":"03"}]""",
+            """{"type":"screen_size","width":1920,"height":1080},{"type":"delay","microseconds":2500000},""" +
+            """{"type":"pong","payload":"03"}]""",
             json);
     }
 

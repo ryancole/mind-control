@@ -199,19 +199,30 @@ place, the camera being locked; `--anchor <x,y>` names it (default: the
 screen's centre). It is a recording, not a connection: this tool never opens
 the device.
 
+The file carries the timing too, as the format's `FILE_DELAY` records: before
+each press or step, the video time that passed since the previous one, so
+`ProtocolFile.ReadTimed` (or misdirection's timed playback) replays the
+ghost at the pace the coach acted. The clock is the VOD's, not the wall's — a
+`replay.py` run at speed 4 records the same gaps as one at speed 1 — and it
+starts at a run's first press or step, so a file holds the ghost's rhythm and
+the trace below holds where in the video it began. A step is stamped at the
+bolt's first sighting, which can be earlier than a press already written; the
+file is one sequence and a gap cannot be negative, so such a step follows at
+no gap and the clock does not move back.
+
 What went into the file is also shown on the coaching line it came from,
-after the advice and plainly: `recorded: KeyDown Q (0x14), KeyUp Q (0x14)`
-for a key (the keycap and the HID usage on the wire), `recorded: MouseMove
-819,399, MouseButtons Right, MouseButtons None` for a step, and the
-`ScreenSize` frame on the startup line. The same frames ride as data —
-`input`, a list of `{type, ...}` objects (`key_down`, `mouse_move`,
-`mouse_buttons`, ...) — on the SSE stream's key and step lines and on the
-trace's. The text and the data carry no
+after the advice and plainly: `recorded: Delay 3.400s, KeyDown Q (0x14), KeyUp
+Q (0x14)` for a key (the gap before it, then the keycap and the HID usage on
+the wire), `recorded: Delay 0.933s, MouseMove 819,399, MouseButtons Right,
+MouseButtons None` for a step, and the `ScreenSize` frame on the startup line.
+The same frames ride as data — `input`, a list of `{type, ...}` objects
+(`delay`, `key_down`, `mouse_move`, `mouse_buttons`, ...) — on the SSE stream's
+key and step lines and on the trace's. The text and the data carry no
 decoration; the ghost viewer puts a ⌨ or 🖱 to a key or a step from the
 type, which is its own choice of dress, and a coaching panel can do the
-same. With `--record none` nothing is written, so nothing is shown. The
-format carries no timing, so the trace below is the record of *when* (a `key`
-or `step` line per press or step; a step is stamped at the bolt's first
+same. With `--record none` nothing is written, so nothing is shown. The trace
+below is the record of *when* in absolute terms (a `key` or `step` line per
+press or step, keyed by video_time; a step is stamped at the bolt's first
 sighting, which is earlier than the event that reports it, so the trace is
 not in time order there).
 

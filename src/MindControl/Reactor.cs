@@ -203,8 +203,8 @@ public sealed class Reactor(
             coach?.PublishCue(cue, gameTime);
         }
         // A key press is the keyboard half of the demonstration, so unlike a
-        // cue it does reach the recording (as a tap) and the trace (for its
-        // timing, which the recording cannot hold).
+        // cue it does reach the recording (as a tap, after the gap since the
+        // last input) and the trace (for its absolute video time and reason).
         foreach (var key in policy.DrainKeys())
         {
             var input = recording?.Press(key);
@@ -213,10 +213,11 @@ public sealed class Reactor(
             coach?.PublishKey(key, gameTime, input);
         }
         // A step is the movement half: it reaches the recording as a
-        // right-click on the ground and the trace for its timing. It is
+        // right-click on the ground and the trace for its video time. It is
         // stamped at the bolt's first sighting, which is before the event
         // that reports it, so in the trace it lands out of order and a
-        // reader sorts by video_time.
+        // reader sorts by video_time; the recording, one sequence with no
+        // negative gaps, puts it right after whatever it wrote last.
         foreach (var step in policy.DrainMoves())
         {
             var input = recording?.Step(step);
