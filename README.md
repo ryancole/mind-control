@@ -141,30 +141,33 @@ Five questions, each asked when there is something to ask about:
   started, yes; in lane waiting for minions, no) is the rubric's call, not a
   threshold in code. Needs a world-calibrated feed, since the map is read
   in game units.
-- **A new level** (`level_up` events for the player's own champion): *would
-  a good player spend the point right now?* and *which ability takes it?*, a
-  choice among the buttons the game would accept a point in — Q, W and E,
-  plus R at 6, 11 and 16, less any the coach's own points have filled — each
-  described by what the ability is, its place in the champion's usual skill
-  order when `AbilityKits` has one, whether it has been seen cast this game
-  (one never seen cast may hold no point yet), and how many points the coach
-  has put in it since it began watching. A yes is the level-up chord, Ctrl
-  held around the slot:
+- **A skill point waiting** (`skill_point` events, off the level-up
+  chevrons the HUD draws above Q/W/E/R): *would a good player spend the
+  point right now?* and *which ability takes it?*, a choice among exactly
+  the buttons the HUD lights — the game's own answer to which abilities can
+  take a point, so the ultimate is offered at 6, 11 and 16 and a full
+  ability never — each described by what the ability is, its place in the
+  champion's usual skill order when `AbilityKits` has one, whether it has
+  been seen cast this game (one never seen cast may hold no point yet), and
+  how many points the coach has put in it since it began watching. A yes is
+  the level-up chord, Ctrl held around the slot:
 
   ```
   key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
   ```
 
-  Which ability takes the point is the rubric's call; the code keeps the
-  game's rules — which levels take an ultimate point, and that a basic
-  ability holds five points and the ultimate three, so a button the coach
-  has filled on its own line is not offered again, because the model does
-  not count — and the fact that a level only rises, so the same level
-  reported twice (the tracker's rows trading places under the name) is asked
-  about once. Needs nameplates read, since the level comes off the player's
-  own. The feed reports a level-up only as a level *rising*, so the first
-  point of a game — level 1, known as state rather than as an event — is not
-  demonstrated, and the coach's count of its own points misses it.
+  Which ability takes the point, and whether to hold it, are the rubric's
+  calls. A point the coach said to hold — the first of a game, at level one,
+  against an invade — is asked about again every few seconds
+  (`PointAskEverySeconds`) with how long it has waited, until the coach says
+  spend or the player spends it. The coach's own placement is counted only
+  when the HUD shows the point gone in (`skill_spent`, whose `held_for` is
+  logged as a cue); a point the player spends themselves is in nobody's
+  count, and an answer that arrives after the player has already spent the
+  point is dropped. The level is the self row's, off the nameplate, told to
+  the model when it was read; the point itself needs only the ability HUD.
+  The reader is off while the player is dead, so a point spent from the
+  death screen is reported on respawn.
 
 What the model is told is the `Moment`: the player's champion, health, mana
 and level; each button's status with what it is and how far it reaches
@@ -174,8 +177,8 @@ player's own team; where the player stands on the map and how long they have
 stood there, with each lane's distance, direction and allies (`RiftMap`, the
 lanes as the lines their turrets lie on -- geometry, not a gate); what the
 coach itself did in the last few seconds; and the event in question, with its
-measurements (for a level-up: the level reached, and whether it is one the
-ultimate takes a point at). Everything is a measurement the
+measurements (for a waiting point: the level, whether the ultimate is among
+the buttons the HUD lights, and how long it has waited). Everything is a measurement the
 code made — the model is asked for judgement, never for arithmetic — and the
 fair-play boundary is that this state is built from visible rows only.
 
