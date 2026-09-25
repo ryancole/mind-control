@@ -103,6 +103,7 @@ function describeFrame(f) {
     case "mouse_buttons": return `MouseButtons ${f.buttons}`;
     case "mouse_wheel": return `MouseWheel ${f.vertical},${f.horizontal}`;
     case "screen_size": return `ScreenSize ${f.width}x${f.height}`;
+    case "delay": return `Delay ${(f.microseconds / 1e6).toFixed(3)}s`;
     default: return f.type;
   }
 }
