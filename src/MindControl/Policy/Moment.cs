@@ -11,10 +11,8 @@ namespace MindControl.Policy;
 /// their own screen -- their HUD, the champions drawn in front of them, their
 /// own team on the minimap -- and nothing sensed through the fog of war: no
 /// enemy in fog appears here at all, not their position, not how long they
-/// have been gone. The one exception is the moment an enemy fades from the
-/// minimap, which the player watched happen (see <see cref="FadeOccasion"/>).
-/// Every number is a measurement the code made; the model is asked for
-/// judgement, never for arithmetic.
+/// have been gone. Every number is a measurement the code made; the model is
+/// asked for judgement, never for arithmetic.
 /// </summary>
 public sealed record Moment
 {
@@ -72,7 +70,7 @@ public sealed record EnemyFacts(
 /// <summary>An ally, always on the player's own minimap.</summary>
 public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);
 
-/// <summary>Something the coach already did: "pressed Q", "stepped up-left", "called Karma missing".</summary>
+/// <summary>Something the coach already did: "pressed Q", "stepped up-left", "remarked on aim".</summary>
 public sealed record RecentAction(string Did, double SecondsAgo);
 
 /// <summary>A bolt that came at the player, as their own screen showed it.</summary>
@@ -86,20 +84,3 @@ public sealed record ShotOccasion(
     IReadOnlyList<ShotFact> RecentShotsSeenAtATarget);
 
 public sealed record ShotFact(string Slot, double PassedPx, bool Wide);
-
-/// <summary>A visible enemy doing something: a cast, a level, a return to view.</summary>
-public sealed record EnemyOccasion(
-    string Kind, string Who, double DistanceUnits, string ScreenDirection, int? Level, double? GoneForSeconds);
-
-/// <summary>
-/// An enemy fading from the minimap. The player's own information -- the blip
-/// sat on their map until seconds ago and they watched it go, or should have
-/// -- so where it faded and how long it had been there are fair to say.
-/// Nothing after the fade is.
-/// </summary>
-public sealed record FadeOccasion(
-    string Kind, string Who, double SeenForSeconds, double FadedSecondsAgo,
-    double? DistanceUnits, string? ScreenDirection);
-
-/// <summary>An ally falling or returning, which the game announces.</summary>
-public sealed record AllyOccasion(string Kind, string Who, double? DistanceUnits, double? DownForSeconds);

@@ -35,15 +35,6 @@ public sealed record JevOptions
     /// </summary>
     public double YesAt { get; init; } = 0.6;
 
-    /// <summary>How long a glance holds before attention drifts home.</summary>
-    public double DwellSeconds { get; init; } = 1.2;
-
-    /// <summary>Per-frame fraction of the remaining distance covered gliding home.</summary>
-    public double ReturnEase { get; init; } = 0.45;
-
-    /// <summary>Cursor moves smaller than this are not worth recording.</summary>
-    public double MinMovePx { get; init; } = 2;
-
     /// <summary>How many of the player's recent seen shots the coach is shown when asked about aim.</summary>
     public int RecentShots { get; init; } = 10;
 
@@ -57,9 +48,9 @@ public sealed record Consultation(
     SystemOneResponse? Response, string? Error, long ElapsedMs);
 
 /// <summary>
-/// The coach: every coaching decision -- where to look, which button to
-/// press, whether and which way to step, whether a shot or a bolt is worth
-/// a word -- is a question put to Jev, TypeSafe's System One model, and
+/// The coach: every coaching decision -- which button to press, whether and
+/// which way to step, whether a shot or a bolt is worth a word -- is a
+/// question put to Jev, TypeSafe's System One model, and
 /// answered as a probability, a level or an option. Nothing here decides; it
 /// measures, asks, and turns the answer into the output the reactor already
 /// knows how to log, stream, trace and record.
@@ -68,10 +59,9 @@ public sealed record Consultation(
 /// player (<c>--self</c> or the is_self majority, with the pipeline's identity
 /// corrections applied), how long each enemy has been in view, which buttons
 /// the HUD has shown a cooldown for and when they come back, the last few
-/// shots seen at a target, the last bolt that landed. Geometry: world units to
-/// minimap pixels, the two sides of a bolt's line, which way is toward home.
-/// The cursor's motor: a glance holds for a dwell and then glides back to the
-/// player's own blip. Fair play: <see cref="Moment"/> is built from visible
+/// shots seen at a target, the last bolt that landed. Geometry: the two sides
+/// of a bolt's line, which way is toward home, which way on the screen an
+/// enemy is. Fair play: <see cref="Moment"/> is built from visible
 /// rows only, so the model is never shown a thing in fog. Each of those is a
 /// measurement or a mechanism, not a judgement; the judgements are in
 /// <see cref="CoachQuestions"/>.</para>
@@ -90,8 +80,7 @@ public sealed record Consultation(
 /// timeline with a scripted client exercises this exactly; with the real
 /// one, the same timeline is a real coaching run.</para>
 /// </summary>
-public sealed class JevPolicy(
-    IJevClient jev, MinimapRect minimap, JevOptions? options = null, Action<Consultation>? audit = null) : IPolicy
+public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action<Consultation>? audit = null) : IPolicy
 {
     /// <summary>A question about the moment itself is not retried: the next frame asks again.</summary>
     private static readonly RequestOptions NowRequest = new()
@@ -102,13 +91,7 @@ public sealed class JevPolicy(
     /// <summary>A question about an event is one-shot, so it gets the client's retries.</summary>
     private static readonly RequestOptions OccasionRequest = new() { Timeout = TimeSpan.FromSeconds(2) };
 
-    private sealed record Glance(ushort X, ushort Y, double UntilVideoTime, int Priority);
-
     private readonly JevOptions _options = options ?? new JevOptions();
-
-    // The feed's capabilities.
-    private ScreenMap? _map;
-    private bool _hasLiveness;
 
     // Perception: identity.
     private FrameEnvelope? _frame;
@@ -118,22 +101,14 @@ public sealed class JevPolicy(
 
     // Perception: what has been seen, and for how long.
     private readonly Dictionary<int, double> _visibleSince = [];
-    private readonly Dictionary<int, double> _seenFor = [];
     private readonly Dictionary<int, double> _withinReachSince = [];
     private readonly Dictionary<string, (double At, int? Countdown)> _casts = [];
     private double? _resource, _health;
     private readonly Queue<ShotFact> _shots = new();
     private (double Arrival, int? Damage)? _lastLanding;
-    private int? _alliesDead;
     private readonly List<(string Did, double At)> _recent = [];
 
-    // The cursor's motor.
-    private Glance? _glance;
-    private (double X, double Y)? _cursor;
-    private (ushort X, ushort Y)? _snap;
-
     // What the coach said since the last drain.
-    private readonly List<GlanceNote> _notes = [];
     private readonly List<CoachCue> _cues = [];
     private readonly List<KeyPress> _keys = [];
     private readonly List<MoveStep> _moves = [];
@@ -148,9 +123,6 @@ public sealed class JevPolicy(
 
     public void Configure(Meta meta)
     {
-        _map = ScreenMap.FromMeta(meta, minimap);
-        _hasLiveness = meta.HasLiveness;
-
         // A false flag means the stage did not run, not that nothing happened.
         // Without it the questions that need it are never asked, so say why,
         // once, rather than be a silent coach that looks broken.
@@ -165,8 +137,6 @@ public sealed class JevPolicy(
             _cues.Add(new CoachCue(0, 1,
                 $"this feed carries no {string.Join(", ", missing)}; spectral-sight needs a --coach run"));
     }
-
-    public IReadOnlyList<GlanceNote> DrainNotes() => Drain(_notes);
 
     public IReadOnlyList<CoachCue> DrainCues() => Drain(_cues);
 
@@ -192,16 +162,12 @@ public sealed class JevPolicy(
         _lastAskAt = double.NegativeInfinity;
 
         _frame = latest;
-        _glance = null;
-        _snap = null;
-        _alliesDead = latest?.AlliesDead;
         // Visible spells restart from the baseline: a span that straddles a
         // gap is a claim about frames we never saw. Cooldowns, shots, landings
         // and the coach's own memory go with them: a gap may be a new game,
         // and any of those straddling two games is wrong in the way that
         // matters. Re-learning a cooldown costs one cast per slot.
         _visibleSince.Clear();
-        _seenFor.Clear();
         _withinReachSince.Clear();
         _casts.Clear();
         _resource = null;
@@ -212,60 +178,28 @@ public sealed class JevPolicy(
         if (latest is not null)
             foreach (var row in latest.Champions.Where(c => c.Visible))
                 _visibleSince[row.TrackId] = latest.VideoTime;
-        // _cursor survives: the physical pointer is wherever we last put it.
-        // _selfVotes survive too: identity outlives a gap.
+        // _selfVotes survive: identity outlives a gap.
     }
 
-    public GhostCursor? OnFrame(FrameEnvelope frame)
+    public void OnFrame(FrameEnvelope frame)
     {
         Settle();
         _frame = frame;
         VoteSelf(frame);
         TrackVisibility(frame);
-        var self = Self();
-        if (self is not null)
+        if (Self() is { } self)
         {
             if (self.Resource is { } resource)
                 _resource = resource;
             if (self.Health is { } health)
                 _health = health;
             TrackReach(frame, self);
-        }
-
-        // The counter is the fallback for feeds that cannot corroborate
-        // liveness; with liveness, the death *event* names the casualty and
-        // carries the count, so the guess below would only double-announce.
-        if (_map is not null && !_hasLiveness && frame.AlliesDead is { } dead)
-        {
-            var rising = dead > (_alliesDead ?? dead);
-            _alliesDead = dead;
-            // An allied death is announced to the player (minimap indicator,
-            // death recap), so looking where it happened is fair play.
-            if (rising && self is not null && FallenAlly(self) is { } fallen)
-                AskLook(frame.VideoTime, self,
-                    new AllyOccasion("the HUD counted another ally death", fallen.Champion ?? "?",
-                        Distance(self, fallen), null),
-                    _map.WorldToScreen(fallen.WorldX!.Value, fallen.WorldY!.Value),
-                    $"ally down, likely {fallen.Champion ?? "?"}");
-        }
-
-        if (self is not null)
             AskNow(frame, self);
-
+        }
         Settle();
-        if (TakeSnap() is { } snap)
-            return snap;
-        if (_map is null)
-            return null;
-        if (_glance is { } glance && frame.VideoTime < glance.UntilVideoTime)
-            return null;   // holding the look
-        _glance = null;
-        if (self is { WorldX: { } wx, WorldY: { } wy })
-            return GlideToward(_map.WorldToScreen(wx, wy));
-        return null;
     }
 
-    public GhostCursor? OnEvent(GameEvent evt)
+    public void OnEvent(GameEvent evt)
     {
         Settle();
         switch (evt.Kind)
@@ -282,12 +216,8 @@ public sealed class JevPolicy(
             case EventKind.Skillshot:
                 OnSkillshot(evt);
                 break;
-            default:
-                OnLookEvent(evt);
-                break;
         }
         Settle();
-        return TakeSnap();
     }
 
     // --- The moment itself: which button a good player would press now ---
@@ -497,157 +427,6 @@ public sealed class JevPolicy(
             });
     }
 
-    // --- Attention: what on the screen deserves a look ---
-
-    private void OnLookEvent(GameEvent evt)
-    {
-        if (_map is null || Self() is not { } self || evt.Team is not { } team)
-            return;
-        if (team == self.Team)
-            OnAllyEvent(evt, self);
-        else if (evt.Kind == EventKind.Vanished)
-            OnEnemyVanished(evt, self);
-        else
-            OnEnemyEvent(evt, self, team);
-    }
-
-    /// <summary>
-    /// Own-team events. An ally's death and respawn are announced to the
-    /// player (kill banner, portrait timer), and own-team positions are
-    /// always on the player's own minimap, so unlike enemies no visibility
-    /// gate applies. The player's own death and respawn are nothing to look
-    /// at: they lived it.
-    /// </summary>
-    private void OnAllyEvent(GameEvent evt, ChampionRow self)
-    {
-        // Even without a place to look, the event's count supersedes the
-        // frame counter heuristic for this death: never announce it twice.
-        if (evt.Kind == EventKind.Death && evt.AlliesDead is { } counted)
-            _alliesDead = Math.Max(_alliesDead ?? counted, counted);
-
-        // By track first; by name when the track is gone -- a corpse's track
-        // is often dropped before the frame that reaches us (latest wins),
-        // and deaths are keyed by champion upstream for the same reason.
-        var row = _frame?.Champions.FirstOrDefault(c =>
-            c.Team == self.Team && c is { WorldX: not null, WorldY: not null }
-            && (c.TrackId == evt.TrackId || (evt.Champion is not null && c.Champion == evt.Champion)));
-        var who = evt.Champion ?? row?.Champion;
-        if (row is null || who == self.Champion)
-            return;
-
-        var point = _map!.WorldToScreen(row.WorldX!.Value, row.WorldY!.Value);
-        var distance = Distance(self, row);
-        switch (evt.Kind)
-        {
-            case EventKind.Death:
-                AskLook(evt.VideoTime, self, new AllyOccasion("an ally died", who ?? "?", distance, null),
-                    point, $"ally {who ?? "?"} down");
-                break;
-            case EventKind.Respawn:
-                AskLook(evt.VideoTime, self, new AllyOccasion("an ally respawned", who ?? "?", distance, evt.DownFor),
-                    point, evt.DownFor is { } downFor
-                        ? $"ally {who ?? "?"} back up after {downFor:0}s"
-                        : $"ally {who ?? "?"} back up");
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Fair play: an enemy is asked about only when the player can currently
-    /// see them. A champion in fog -- its last position, how long it has been
-    /// missing, a level or cast sensed through the fog -- is information the
-    /// player does not have, so it is resolved from the <em>current</em> row
-    /// and only when that row is visible. (Enemy death and respawn never
-    /// arrive: liveness is HUD-corroborated and only allies have HUD panels.)
-    /// </summary>
-    private void OnEnemyEvent(GameEvent evt, ChampionRow self, string team)
-    {
-        var row = _frame?.Champions.FirstOrDefault(c =>
-            c.TrackId == evt.TrackId && c.Team == team && c.Visible
-            && c is { WorldX: not null, WorldY: not null });
-        if (row is null || Distance(self, row) is not { } distance)
-            return;
-
-        var who = evt.Champion ?? row.Champion ?? $"track {evt.TrackId}";
-        var direction = Direction(self, row)!;
-        var point = _map!.WorldToScreen(row.WorldX!.Value, row.WorldY!.Value);
-        var (occasion, reason) = evt.Kind switch
-        {
-            EventKind.Cast => (
-                new EnemyOccasion("a visible enemy cast an ability", who, distance, direction, null, null),
-                $"{who} cast nearby"),
-            EventKind.LevelUp when evt.Level is { } level => (
-                new EnemyOccasion("a visible enemy levelled up", who, distance, direction, level, null),
-                $"{who} reached {level} nearby"),
-            EventKind.Reappeared => (
-                new EnemyOccasion("an enemy came back into your view", who, distance, direction, null, evt.GoneFor),
-                $"{who} back in your view"),
-            _ => (null, null),
-        };
-        if (occasion is not null)
-            AskLook(evt.VideoTime, self, occasion, point, reason!);
-    }
-
-    /// <summary>
-    /// The one exception to the visible-row rule, because the vanish
-    /// <em>moment</em> is the player's own information: the blip sat on
-    /// their minimap until seconds ago and they watched it fade -- or should
-    /// have, which is the coaching point. The event carries where that was.
-    /// Everything after the moment stays out of bounds: one look, then no
-    /// recheck and no drift back. Whether the fade is worth a look -- a solid
-    /// spell in view against a flicker at the vision edge, a fresh fade
-    /// against a stale one, a new call against a repeat -- is the model's
-    /// judgement, from the measurements here.
-    /// </summary>
-    private void OnEnemyVanished(GameEvent evt, ChampionRow self)
-    {
-        if (evt is not { WorldX: { } worldX, WorldY: { } worldY, TrackId: { } trackId })
-            return;
-        // The fade predates the event by the tracker's debounce, carried on
-        // the row as seconds_since_seen.
-        var row = _frame?.Champions.FirstOrDefault(c => c.TrackId == trackId);
-        var fadedAgo = row?.SecondsSinceSeen ?? 0;
-        var fadeAt = evt.VideoTime - fadedAgo;
-        // The spell may still be open here when this event outruns the frame
-        // that closes it, so measure from whichever record exists.
-        var seenFor = _visibleSince.TryGetValue(trackId, out var since)
-            ? fadeAt - since
-            : _seenFor.GetValueOrDefault(trackId);
-        var who = evt.Champion ?? row?.Champion ?? $"track {trackId}";
-        double? distance = self is { WorldX: { } sx, WorldY: { } sy }
-            ? Math.Round(double.Hypot(worldX - sx, worldY - sy))
-            : null;
-        var direction = self is { WorldX: { } x, WorldY: { } y }
-            ? ScreenDirections.NameOfWorldOffset(worldX - x, worldY - y)
-            : null;
-        var occasion = new FadeOccasion("an enemy faded from your minimap", who,
-            Math.Round(Math.Max(seenFor, 0), 1), Math.Round(fadedAgo, 1), distance, direction);
-        AskLook(evt.VideoTime, self, occasion, _map!.WorldToScreen(worldX, worldY), $"{who} missing",
-            looked: () => Remember($"called {who} missing", evt.VideoTime));
-    }
-
-    /// <summary>
-    /// Asks how much an event deserves a glance. The most likely level is the
-    /// glance's priority; level 0 is no glance. The most likely level and not
-    /// the probability-weighted score: a fade the model puts at "not worth a
-    /// look" with some weight on the levels above averages to half a level,
-    /// and rounding that up would send the ghost to every flicker at the
-    /// vision edge, which is the noise the rubric is there to keep it from.
-    /// </summary>
-    private void AskLook(double videoTime, ChampionRow self, object occasion, (ushort X, ushort Y) point,
-        string reason, Action? looked = null)
-    {
-        var moment = Describe(_frame, self, occasion, videoTime);
-        var questions = new Questions().Score("look", CoachQuestions.Look, CoachQuestions.LookLevels);
-        Ask("look", moment, questions, videoTime, OccasionRequest, now: false, answered: response =>
-        {
-            if (!response.TryGet<ScoreAnswer>("look", out var look) || look!.MostLikely.Index < 1)
-                return;
-            if (SnapTo(point, videoTime, Math.Min(3, look.MostLikely.Index), reason))
-                looked?.Invoke();
-        });
-    }
-
     // --- Asking, and collecting the answers ---
 
     /// <summary>
@@ -800,20 +579,15 @@ public sealed class JevPolicy(
 
     // --- Perception ---
 
-    /// <summary>
-    /// Visible-spell bookkeeping: when each track's current spell began, and
-    /// how long its last completed one ran. The spell closes at the last
-    /// sighting (frame time less <c>seconds_since_seen</c>), not at the
-    /// debounced frame that reports it.
-    /// </summary>
+    /// <summary>Visible-spell bookkeeping: when each track's current spell began.</summary>
     private void TrackVisibility(FrameEnvelope frame)
     {
         foreach (var row in frame.Champions)
         {
             if (row.Visible)
                 _visibleSince.TryAdd(row.TrackId, frame.VideoTime);
-            else if (_visibleSince.Remove(row.TrackId, out var since))
-                _seenFor[row.TrackId] = frame.VideoTime - row.SecondsSinceSeen - since;
+            else
+                _visibleSince.Remove(row.TrackId);
         }
     }
 
@@ -848,7 +622,7 @@ public sealed class JevPolicy(
     }
 
     /// <summary>
-    /// Identity bookkeeping, never a glance. When the pipeline renames a track
+    /// Identity bookkeeping, never coaching. When the pipeline renames a track
     /// it announces the correction with <c>replaces</c>; votes earned under the
     /// old name belong to the new one, or a corrected self would go
     /// unrecognized until the majority re-accumulated from scratch.
@@ -899,66 +673,4 @@ public sealed class JevPolicy(
     private ChampionRow? Self() => (_options.SelfChampion ?? _selfName) is { } name
         ? _frame?.Champions.FirstOrDefault(c => c.Champion == name)
         : _frame?.Champions.FirstOrDefault(c => c.IsSelf);
-
-    /// <summary>
-    /// The HUD counted a new ally death without naming the casualty (liveness
-    /// often cannot); the ally most recently lost from the minimap is the best
-    /// guess for where to look. This is own-team information the player already
-    /// has, paired with a death the game announces.
-    /// </summary>
-    private ChampionRow? FallenAlly(ChampionRow self) =>
-        _frame!.Champions
-            .Where(c => c.Champion != self.Champion && c.Team == self.Team
-                && c.Alive != true && !c.Visible
-                && c is { WorldX: not null, WorldY: not null })
-            .OrderBy(c => c.SecondsSinceSeen)
-            .FirstOrDefault();
-
-    // --- The cursor's motor ---
-
-    /// <summary>
-    /// Points the ghost at something, unless a look of higher priority is
-    /// still being held. The move itself is emitted by the next
-    /// <see cref="TakeSnap"/>, which is the end of whichever call settled the
-    /// answer.
-    /// </summary>
-    private bool SnapTo((ushort X, ushort Y) point, double videoTime, int priority, string reason)
-    {
-        if (_glance is { } held && videoTime < held.UntilVideoTime && priority < held.Priority)
-            return false;
-        _glance = new Glance(point.X, point.Y, videoTime + _options.DwellSeconds, priority);
-        _notes.Add(new GlanceNote(videoTime, point.X, point.Y, priority, reason));
-        _snap = point;
-        return true;
-    }
-
-    private GhostCursor? TakeSnap()
-    {
-        if (_snap is not { } point)
-            return null;
-        _snap = null;
-        return Emit(point.X, point.Y);
-    }
-
-    private GhostCursor? GlideToward((ushort X, ushort Y) home)
-    {
-        if (_cursor is not { } cursor)
-            return Emit(home.X, home.Y);
-        var stepX = (home.X - cursor.X) * _options.ReturnEase;
-        var stepY = (home.Y - cursor.Y) * _options.ReturnEase;
-        if (Math.Abs(stepX) + Math.Abs(stepY) < _options.MinMovePx)
-        {
-            // Easing from here would dribble sub-pixel moves: finish the glide.
-            if (Math.Abs(home.X - cursor.X) + Math.Abs(home.Y - cursor.Y) >= 1)
-                return Emit(home.X, home.Y);
-            return null;
-        }
-        return Emit(cursor.X + stepX, cursor.Y + stepY);
-    }
-
-    private GhostCursor Emit(double x, double y)
-    {
-        _cursor = (x, y);
-        return new GhostCursor((ushort)Math.Round(x), (ushort)Math.Round(y));
-    }
 }

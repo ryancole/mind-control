@@ -25,12 +25,12 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
-    public void Moves_read_back_as_mouse_moves_behind_the_screen_size()
+    public void Frames_read_back_in_order_behind_the_screen_size()
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
-            recording.Move(new GhostCursor(1700, 900));
-            recording.Move(new GhostCursor(1650, 850));
+            recording.Write(new MouseMoveMessage(1700, 900));
+            recording.Write(new MouseMoveMessage(1650, 850));
             Assert.AreEqual(3, recording.FramesWritten);
         }
 
@@ -49,9 +49,9 @@ public sealed class GhostRecordingTests
     public void A_second_run_appends_after_the_first_and_restates_its_screen()
     {
         using (var first = GhostRecording.Append(_path, 1920, 1080))
-            first.Move(new GhostCursor(1, 2));
+            first.Write(new MouseMoveMessage(1, 2));
         using (var second = GhostRecording.Append(_path, 2560, 1440))
-            second.Move(new GhostCursor(3, 4));
+            second.Write(new MouseMoveMessage(3, 4));
 
         var messages = ProtocolFile.Read(_path);
         CollectionAssert.AreEqual(
@@ -84,7 +84,7 @@ public sealed class GhostRecordingTests
     public void Every_frame_is_on_disk_before_the_recording_is_disposed()
     {
         using var recording = GhostRecording.Append(_path, 1920, 1080);
-        recording.Move(new GhostCursor(5, 6));
+        recording.Write(new MouseMoveMessage(5, 6));
 
         // Read through a separate handle while the writer is still open: a
         // run ends with Ctrl-C, and the last move must not be sitting in a buffer.
@@ -99,7 +99,7 @@ public sealed class GhostRecordingTests
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
-            recording.Move(new GhostCursor(1700, 900));
+            recording.Write(new MouseMoveMessage(1700, 900));
             recording.Press(new KeyPress(17.5, "Q", 2, "Karma in range"));
             Assert.AreEqual(4, recording.FramesWritten);
         }
@@ -157,7 +157,7 @@ public sealed class GhostRecordingTests
         {
             Assert.AreEqual("ScreenSize 1920x1080", recording.Header);
 
-            moved = recording.Move(new GhostCursor(1700, 900));
+            moved = recording.Write(new MouseMoveMessage(1700, 900));
             CollectionAssert.AreEqual(new Message[] { new MouseMoveMessage(1700, 900) }, moved.ToArray());
             Assert.AreEqual("MouseMove 1700,900", GhostRecording.Show(moved));
 

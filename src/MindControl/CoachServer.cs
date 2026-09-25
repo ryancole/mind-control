@@ -11,12 +11,10 @@ namespace MindControl;
 /// browser — e.g. the spectral-sight dashboard's coaching panel — can show it
 /// live. Strictly output: it serves what the reactor already decided and
 /// accepts nothing back; the observe-and-advise boundary is unchanged.
-/// Positions go out normalized to the minimap rect (0..1, y down), which is
-/// the same space the dashboard draws its map in. Every line that is advice
-/// (a glance, a cue, a key, a step) carries <c>model</c>, the Jev model whose
-/// answer it is, so a panel can mark what the model said apart from what the
-/// code reports (status, roster, the cursor's motion home). A glance, a key
-/// or a step also carries <c>input</c>: the misdirection frames the ghost
+/// Every line that is advice (a cue, a key, a step) carries <c>model</c>, the
+/// Jev model whose answer it is, so a panel can mark what the model said
+/// apart from what the code reports (status, roster). A key or a step also
+/// carries <c>input</c>: the misdirection frames the ghost
 /// recording wrote for it, as data (<see cref="GhostRecording.AsData(IEnumerable{Message})"/>),
 /// or null when nothing was recorded. Any icon for the hand is the panel's.
 /// </summary>
@@ -24,16 +22,14 @@ public sealed class CoachServer : IDisposable
 {
     private const int ReplayCount = 32;
 
-    private readonly MinimapRect _minimap;
     private readonly string _model;
     private readonly HttpListener _listener = new();
     private readonly List<StreamWriter> _clients = [];
     private readonly Queue<string> _replay = new();
     private readonly Lock _lock = new();
 
-    public CoachServer(int port, MinimapRect minimap, string model)
+    public CoachServer(int port, string model)
     {
-        _minimap = minimap;
         _model = model;
         // localhost (not 127.0.0.1): the one prefix http.sys grants without
         // elevation or a urlacl reservation.
@@ -42,27 +38,9 @@ public sealed class CoachServer : IDisposable
         _ = AcceptLoopAsync();
     }
 
-    public void PublishGlance(GlanceNote note, int? gameTime, IReadOnlyList<Message>? input = null)
-    {
-        var (nx, ny) = Normalize(note.X, note.Y);
-        Publish(new
-        {
-            T = "glance", VideoTime = note.VideoTime, GameTime = gameTime,
-            Nx = nx, Ny = ny, Priority = note.Priority, Reason = note.Reason, Model = _model,
-            Input = Data(input),
-        });
-    }
-
-    public void PublishMove(double videoTime, GhostCursor cursor, int? gameTime)
-    {
-        var (nx, ny) = Normalize(cursor.X, cursor.Y);
-        Publish(new { T = "move", VideoTime = videoTime, GameTime = gameTime, Nx = nx, Ny = ny });
-    }
-
     /// <summary>
-    /// Coaching that moves no crosshair -- see <see cref="Policy.CoachCue"/>.
-    /// Deliberately carries no position: the dashboard writes it to the log and
-    /// leaves the ghost where it is.
+    /// Coaching in words only -- see <see cref="Policy.CoachCue"/>. The
+    /// dashboard writes it to the log.
     /// </summary>
     public void PublishCue(CoachCue cue, int? gameTime) =>
         Publish(new
@@ -87,8 +65,8 @@ public sealed class CoachServer : IDisposable
     /// <summary>
     /// A step the coach would have taken. Like a key it carries the full
     /// sentence as <c>reason</c>; the direction rides alongside as a name and
-    /// a screen-space unit vector, and no minimap position, because a step
-    /// is on the ground in front of the player and not on the map.
+    /// a screen-space unit vector; a step is on the ground in front of the
+    /// player, so it carries no place on the map.
     /// </summary>
     public void PublishStep(MoveStep step, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
@@ -112,9 +90,6 @@ public sealed class CoachServer : IDisposable
             T = "roster", VideoTime = evt.VideoTime, GameTime = evt.GameTime,
             Team = evt.Team, Champions = evt.Champions,
         });
-
-    private (double, double) Normalize(ushort x, ushort y) =>
-        ((x - _minimap.X) / _minimap.Width, (y - _minimap.Y) / _minimap.Height);
 
     private void Publish<TLine>(TLine line)
     {

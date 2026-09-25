@@ -62,22 +62,4 @@ public static class CoachQuestions
         + "really someone else's, so a single wide shot among near ones is what a stray looks like, and a "
         + "couple of shots is too few to judge by. A run of wide shots among the recent seen ones is "
         + "worth a word, on the shot that made it a run. A near shot needs no praise.";
-
-    public const string Look =
-        "Something happened on the player's screen; `occasion` says what. How much does it deserve a "
-        + "glance at the minimap from a good player right now? An enemy casting or levelling close by is "
-        + "worth a look as it happens, one far away is routine. An enemy fading from the map after a solid "
-        + "spell in view is the classic missing call; one who only flickered at the edge of vision for a "
-        + "moment was never really seen and is not missing, a fade that happened many seconds ago is old "
-        + "news, and a champion the coach already called missing moments ago is the same fact again. An "
-        + "ally falling is a look whatever else is happening; an ally returning is a small fact to file.";
-
-    /// <summary>The look question's levels, lowest first; the most likely level's index is the glance's priority.</summary>
-    public static readonly string[] LookLevels =
-    [
-        "not worth a look: routine, far away, old news, or already said",
-        "worth a look when free: a small fact to file, such as a respawn timer",
-        "worth a look now: something a good player clocks as it happens",
-        "look now whatever else is happening: an ally falling, or a spike right beside you",
-    ];
 }

@@ -2,29 +2,27 @@
 
 An observe-and-advise coaching reactor: it consumes the live game-state feed
 published by [spectral-sight](../spectral-sight) and prints real-time,
-fair-play coaching feedback — where a good player's attention would be, which
-button they would have pressed, which way they would have stepped, and why.
+fair-play coaching feedback — which button a good player would have pressed,
+which way they would have stepped, and why.
 It sends no input to the game or to any device; it only watches and explains.
 
 The coaching itself is [Jev](https://docs.typesafe.ai/concepts/system-one)'s,
 TypeSafe's System One model. Every decision is a question put to it about
 the moment — *would a good player press Q now? was that bolt worth a step,
-and which way? does this fade deserve a look?* — and answered as a
-probability, a level or an option. This tool measures, asks, and turns the
+and which way? is this aim worth a word?* — and answered as a probability
+or an option. This tool measures, asks, and turns the
 answer into a demonstrated input; it decides nothing itself.
 
 Two rules keep it fair:
 
-- **Advises, never acts.** The output is coaching notes (and, optionally, a
-  recorded ghost-cursor path for the viewer and the ghost's input as a
-  protocol file). Nothing is ever sent back into the game.
+- **Advises, never acts.** The output is coaching notes (and, optionally,
+  the ghost's input as a protocol file, with a trace of when for the viewer).
+  Nothing is ever sent back into the game.
 - **Uses only what the player can see.** The model is shown enemies that are
   currently visible on the player's own screen, the player's own HUD, and
   allied deaths (which the game announces). It is never shown fog-of-war
   information — no enemy positions in fog, no "seconds since seen", no
-  last-known spots, no level or cast sensed through the fog. The one
-  exception is the moment an enemy fades from the minimap, which the player
-  watched happen.
+  last-known spots, no level or cast sensed through the fog.
 
 Input boundary: SSE feed at `http://127.0.0.1:8723`, wire format in
 `spectral-sight/docs/output-format.md` (schema 1).
@@ -39,9 +37,8 @@ own:
   queued); events, gaps, and connection changes in an ordered notice queue.
 - `src/MindControl/Policy` — `(state, event) → a coaching cue`. `JevPolicy`
   is the coach: it keeps the perception (who the player is, what has been
-  seen for how long, which buttons the HUD has shown come back), the
-  geometry (world units to minimap pixels, the two sides of a bolt's line)
-  and the cursor's motor (a glance dwells, then glides home), builds a
+  seen for how long, which buttons the HUD has shown come back) and the
+  geometry (the two sides of a bolt's line, which way is toward home), builds a
   `Moment` — the fair-play state the model is shown — and asks the questions
   in `CoachQuestions`. The only I/O is the injected Jev client, so a replayed
   timeline with a scripted client exercises it exactly (`dotnet test` needs
@@ -90,15 +87,14 @@ requests a minute. A run at `--speed 4` sits around a third of that.
 While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
 turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
-open `http://127.0.0.1:8723/` and the cues appear next to the event log, with
-the ghost's attention drawn as a gold crosshair on the map. Every line
+open `http://127.0.0.1:8723/` and the cues appear next to the event log. Every line
 that is advice carries `model`, the Jev release whose answer it is, and the
 panel marks those with a ✦; status and roster lines are the code's own and
 go unmarked. The stream is output-only, like the console.
 
 ## Coaching by Jev
 
-Five questions, each asked when there is something to ask about:
+Three questions, each asked when there is something to ask about:
 
 - **Which button, now.** Whenever the player is alive, an enemy is on their
   screen, and a button the HUD has shown a cooldown for has counted down, the
@@ -123,11 +119,6 @@ Five questions, each asked when there is something to ask about:
 - **A shot of the player's** (`skillshot` events, only those seen leaving
   them with an enemy in front): *given the recent shots, is aim worth a word?*
   A yes is a cue naming where the bolt passed and the run it made.
-- **Something to look at** (an enemy casting, levelling or reappearing in
-  view; an enemy fading from the minimap; an ally falling or returning): *how
-  much does it deserve a glance?* on a four-level scale. The most likely
-  level is the glance's priority; level 0 is no glance. A glance moves the
-  ghost's cursor to the spot on the minimap, holds, and glides home.
 
 What the model is told is the `Moment`: the player's champion, health, mana
 and level; each button's status with what it is and how far it reaches
@@ -140,8 +131,7 @@ fair-play boundary is that this state is built from visible rows only.
 
 The rubrics are the text in `CoachQuestions`; the thresholds that used to be
 code (how long an enemy sits in range before a throw, how many wide shots
-make a run, how long a blip must have been seen before its fade is a missing
-call) are sentences there now. The knobs that remain are plumbing: `YesAt`,
+make a run) are sentences there now. The knobs that remain are plumbing: `YesAt`,
 the probability below which a yes is a no (0.6 — a yes with a margin, and
 since the coach is told what it just did, a press drops the next answer to
 about 0.35, so a lower bar does not mean a spammed key); `AskEverySeconds`,
@@ -151,7 +141,7 @@ should not move with `jev-latest`.
 
 `--audit <file>` records every question and its answer as JSONL: the state
 the model saw, the questions as asked, and the answers exactly as returned.
-A press or a glance in the log traces back to a probability there, and a
+A press or a step in the log traces back to a probability there, and a
 silence to the one that fell short; it is also the record of what the model
 was shown, which is the fair-play boundary made inspectable. The model's
 latency is about a tenth of a second, and the ghost runs that far behind the
@@ -172,8 +162,8 @@ made -- is also appended to `data/ghost.msdr` in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file
 (`--record <file>` to move it, `--record none` to turn it off). Each run opens
-with a `ScreenSize` frame; every cursor move follows as a `MouseMove`, every
-key the coach presses as a `KeyDown` and `KeyUp` pair, and every step as a
+with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
+and `KeyUp` pair, and every step as a
 `MouseMove` to the ground 200px from the player's model in the step's
 direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
@@ -185,26 +175,20 @@ What went into the file is also shown on the coaching line it came from,
 after the advice and plainly: `recorded: KeyDown Q (0x14), KeyUp Q (0x14)`
 for a key (the keycap and the HID usage on the wire), `recorded: MouseMove
 819,399, MouseButtons Right, MouseButtons None` for a step, and the
-`ScreenSize` frame on the startup line. A glance shows the `MouseMove` that
-snapped the cursor to it; the glide home afterwards is recorded but not
-printed, being a move per frame with nothing to say. The same frames ride as
-data — `input`, a list of `{type, ...}` objects (`key_down`, `mouse_move`,
-`mouse_buttons`, ...) — on the SSE stream's glance, key and step lines and
-on the trace's key and step lines. The text and the data carry no
+`ScreenSize` frame on the startup line. The same frames ride as data —
+`input`, a list of `{type, ...}` objects (`key_down`, `mouse_move`,
+`mouse_buttons`, ...) — on the SSE stream's key and step lines and on the
+trace's. The text and the data carry no
 decoration; the ghost viewer puts a ⌨ or 🖱 to a key or a step from the
 type, which is its own choice of dress, and a coaching panel can do the
-same. With `--record none` nothing is written, so nothing is shown. The format carries no timing, so the trace below remains the
-record of *when* (key presses and steps land there too, as `key` and `step`
-lines; a step is stamped at the bolt's first sighting, which is earlier than
-the event that reports it, so the trace is not in time order there).
+same. With `--record none` nothing is written, so nothing is shown. The
+format carries no timing, so the trace below is the record of *when* (a `key`
+or `step` line per press or step; a step is stamped at the bolt's first
+sighting, which is earlier than the event that reports it, so the trace is
+not in time order there).
 
 Add `--trace data/ghost-trace.jsonl --self <champion>` and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
-watch the ghost's cursor over the map, with every glance labeled with its
-reason and jumpable from the tick strip. Keys and steps sit on the strip as
-⌨ and 🖱, and while one is fresh a badge at the foot of the map names it and
-the frames it recorded.
-
-`etc/minimap-calibrator.html` turns a screenshot of the player's screen into
-the exact `--screen`/`--minimap` arguments: paste the screenshot (Ctrl+V),
-click the minimap's two corners, copy the line.
+watch the coach's hands over the map: keys and steps sit on the tick strip as
+⌨ and 🖱, jumpable, and while one is fresh a badge at the foot of the map
+names it and the frames it recorded.
