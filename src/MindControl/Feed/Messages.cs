@@ -51,6 +51,11 @@ public sealed record Meta
 
     /// <summary>Gates both <c>cs</c> and <c>last_hits</c>.</summary>
     public bool HasLastHits { get; init; }
+
+    /// <summary>Gates <c>turrets</c> and the turret events. Needs the world
+    /// calibration and a minimap panel of 400px or more, like
+    /// <see cref="HasMinionDots"/>.</summary>
+    public bool HasTurrets { get; init; }
     public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
 }
@@ -134,6 +139,47 @@ public sealed record ChampionRow
     /// creep score. A moment, not state: only on the frame an entry resolved,
     /// about 1.5s after the death.</summary>
     public LastHit[]? LastHits { get; init; }
+
+    /// <summary>
+    /// Every turret on the map, off the minimap icons: always all 22, in a
+    /// fixed order, once the minimap has been read. State, like
+    /// <see cref="Learnable"/>; null means nothing looked.
+    /// </summary>
+    public Turret[]? Turrets { get; init; }
+}
+
+/// <summary>
+/// One turret, as the minimap shows it. <see cref="Team"/> is its owner, in
+/// <see cref="MinionTeam"/>'s terms (blue is the player's own).
+/// </summary>
+public sealed record Turret
+{
+    public string Team { get; init; } = "";
+
+    /// <summary>"top", "mid", "bot", or "base" for the two nexus turrets.</summary>
+    public string Lane { get; init; } = "";
+
+    /// <summary>One of <see cref="TurretTier"/>.</summary>
+    public string Tier { get; init; } = "";
+
+    /// <summary>
+    /// Null means not yet called: its spot has not been seen clearly either
+    /// way. Not standing and not fallen. A fall is adopted about 5 s after it
+    /// happens, later if something sits on the spot. A lane turret never
+    /// stands again; a nexus turret is rebuilt by the game.
+    /// </summary>
+    public bool? Standing { get; init; }
+
+    /// <summary>"top" or "bot", on the two nexus turrets only: the one thing telling them apart.</summary>
+    public string? Side { get; init; }
+}
+
+public static class TurretTier
+{
+    public const string Outer = "outer";
+    public const string Inner = "inner";
+    public const string Inhibitor = "inhibitor";
+    public const string Nexus = "nexus";
 }
 
 public static class MinionTeam
@@ -378,6 +424,12 @@ public sealed record GameEvent
 
     // last_hit and missed_cs: the minion bar's last legible fill
     public double? Health { get; init; }
+
+    // turret_destroyed and turret_rebuilt: Team is the turret's owner, and
+    // Side is set on a nexus turret only
+    public string? Lane { get; init; }
+    public string? Tier { get; init; }
+    public string? Side { get; init; }
 }
 
 public static class EventKind
@@ -411,4 +463,10 @@ public static class EventKind
 
     /// <summary>A low enemy minion died on the player's screen and someone or something else got it.</summary>
     public const string MissedCs = "missed_cs";
+
+    /// <summary>A turret fell, about 5 s ago. The event's team is the turret's owner.</summary>
+    public const string TurretDestroyed = "turret_destroyed";
+
+    /// <summary>A fallen nexus turret stands again. Lane turrets never do.</summary>
+    public const string TurretRebuilt = "turret_rebuilt";
 }

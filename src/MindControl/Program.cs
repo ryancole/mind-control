@@ -38,8 +38,9 @@ HashSet<string>? kinds =
     EventKind.Identified, EventKind.Roster,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
     EventKind.SkillPoint, EventKind.SkillSpent,
-    // Logged only for now: no question is asked of them yet.
-    EventKind.LastHit, EventKind.MissedCs,
+    // Logged only for now: no question is asked of them yet. The turrets'
+    // state rides the self row, which is what the questions are told.
+    EventKind.LastHit, EventKind.MissedCs, EventKind.TurretDestroyed, EventKind.TurretRebuilt,
 ];
 
 for (var i = 0; i < args.Length; i++)

@@ -164,6 +164,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // has: one minimap click is the whole walk, and the next question is told.
     private string? _sentTo;
 
+    // Perception: the turrets the minimap last showed, all 22, or null when it
+    // has not been read for them since the last resync.
+    private Turret[]? _turrets;
+
     // Perception: the skill point the HUD shows waiting, when one is -- since
     // when the feed has shown it, which slots it lights, and a number that
     // tells an answer whether it is still the point that was asked about --
@@ -236,6 +240,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (!meta.HasMinionDots)
             missing.Add("minimap minions (walks go to where a lane is played, not to its wave; "
                 + "they need the minimap scale at 400px or more)");
+        if (!meta.HasTurrets)
+            missing.Add("minimap turrets (a wave is placed by the turret spots, whether or not the turret there has fallen)");
         if (missing.Count > 0)
             _cues.Add(new CoachCue(0, 1,
                 $"this feed carries no {string.Join(", ", missing)}; spectral-sight needs a --coach run"));
@@ -288,12 +294,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _recent.Clear();
         _restAt = null;
         _sentTo = null;
+        _turrets = null;
         _point = null;
         _pressedFor.Clear();
         _firstLevelAsked = null;
         _pointsPlaced.Clear();
         if (latest is not null)
         {
+            _turrets = Carried(latest, r => r.Turrets);
             foreach (var row in latest.Champions.Where(c => c.Visible))
                 _visibleSince[row.TrackId] = latest.VideoTime;
             if (Self() is { } self)
@@ -319,6 +327,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _frame = frame;
         VoteSelf(frame);
         TrackVisibility(frame);
+        if (Carried(frame, r => r.Turrets) is { } turrets)
+            _turrets = turrets;
         if (Self() is { } self)
         {
             if (self.Resource is { } resource)
@@ -358,6 +368,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 break;
             case EventKind.SkillSpent:
                 OnSkillSpent(evt);
+                break;
+            case EventKind.TurretDestroyed:
+            case EventKind.TurretRebuilt:
+                OnTurret(evt);
                 break;
         }
         Settle();
@@ -946,6 +960,24 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _point = null;
     }
 
+    // --- Turrets: state for the facts, the events only logged ---
+
+    /// <summary>
+    /// A turret falling or standing again, said in the log. No question is
+    /// asked of it: the frames carry the same change as state, which every
+    /// question's lanes are told, and the event arrives about five seconds
+    /// after the fact.
+    /// </summary>
+    private void OnTurret(GameEvent evt)
+    {
+        var whose = evt.Team == MinionTeam.Blue ? "your" : "their";
+        var which = evt.Tier == TurretTier.Nexus
+            ? $"{(evt.Side is { } side ? side + " " : "")}nexus turret"
+            : $"{evt.Lane} {evt.Tier} turret";
+        var what = evt.Kind == EventKind.TurretRebuilt ? "stands again" : "fell";
+        _cues.Add(new CoachCue(evt.VideoTime, 1, $"{whose} {which} {what}"));
+    }
+
     // --- Asking, and collecting the answers ---
 
     /// <summary>
@@ -1132,11 +1164,36 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             return new LaneFacts(lane, Math.Round(toward.Distance),
                 toward.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(toward.X - x, toward.Y - y), there)
             {
-                Wave = Wave(lane, dots, x, y),
+                // Without the turrets read, a wave is placed by their spots alone.
+                Wave = Wave(lane, dots, x, y, _turrets is null ? null : tier => Standing(MinionTeam.Blue, lane, tier)),
+                YourTurrets = LaneTurrets(MinionTeam.Blue, lane),
+                TheirTurrets = LaneTurrets(MinionTeam.Red, lane),
             };
         }).ToArray();
         var still = _restAt is null ? 0 : Math.Max(0, Math.Round(now - _stillSince, 1));
         return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes) { CoachSentThemTo = _restAt is null ? null : _sentTo };
+    }
+
+    /// <summary>
+    /// Whether one side's turret of a tier in a lane stands, off the minimap:
+    /// null when it has not been called, or the minimap has not been read for
+    /// turrets at all.
+    /// </summary>
+    private bool? Standing(string team, string lane, string tier) =>
+        _turrets?.FirstOrDefault(t => t.Team == team && t.Lane == lane && t.Tier == tier)?.Standing;
+
+    /// <summary>One side's three turrets in a lane, as the facts say them; null when the minimap was not read for turrets.</summary>
+    private LaneTurretFacts? LaneTurrets(string team, string lane)
+    {
+        if (_turrets is null)
+            return null;
+        string Say(string tier) => Standing(team, lane, tier) switch
+        {
+            true => "standing",
+            false => "fallen",
+            null => "not seen",
+        };
+        return new LaneTurretFacts(Say(TurretTier.Outer), Say(TurretTier.Inner), Say(TurretTier.Inhibitor));
     }
 
     /// <summary>A caster minion's attack range, in game units: how near an enemy minion is to be in reach of the player.</summary>
@@ -1158,7 +1215,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// its dot furthest toward the other side. Null when the minimap was not
     /// read for minions, or its dots could not be placed on the map.
     /// </summary>
-    private static WaveFacts? Wave(string lane, MinionDot[]? dots, double x, double y)
+    private static WaveFacts? Wave(string lane, MinionDot[]? dots, double x, double y, Func<string, bool?>? standing)
     {
         if (dots is null || (dots.Length > 0 && dots.All(d => d.WorldX is null || d.WorldY is null)))
             return null;
@@ -1178,7 +1235,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             var toTheirs = double.Hypot(tx - x, ty - y);
             facts = facts with
             {
-                TheirFrontPlace = RiftMap.EnemyFrontPlace(lane, theirs.Min()),
+                TheirFrontPlace = RiftMap.EnemyFrontPlace(lane, theirs.Min(), standing),
                 TheirFrontUnitsAway = Math.Round(toTheirs),
                 TheirFrontScreenDirection = toTheirs < 1 ? null : ScreenDirections.NameOfWorldOffset(tx - x, ty - y),
             };

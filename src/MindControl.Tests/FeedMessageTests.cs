@@ -183,6 +183,46 @@ public sealed class FeedMessageTests
     }
 
     [TestMethod]
+    public void Turrets_on_the_self_row_and_their_events_parse()
+    {
+        const string meta = """{"t":"meta","schema":1,"has_turrets":true}""";
+        Assert.IsTrue(JsonSerializer.Deserialize<Meta>(meta, FeedJson.Options)!.HasTurrets);
+
+        const string row = """
+            {"video_time":410.0,"track_id":3,"team":"blue","champion":"Ezreal","x":40.0,"y":60.0,
+             "visible":true,"seconds_since_seen":0.0,"is_self":true,
+             "turrets":[
+               {"team":"blue","lane":"bot","tier":"outer","standing":false},
+               {"team":"blue","lane":"mid","tier":"inner","standing":null},
+               {"team":"red","lane":"base","tier":"nexus","standing":true,"side":"top"}]}
+            """;
+        var turrets = JsonSerializer.Deserialize<ChampionRow>(row, FeedJson.Options)!.Turrets!;
+        Assert.AreEqual(new Turret { Team = "blue", Lane = "bot", Tier = TurretTier.Outer, Standing = false }, turrets[0]);
+        Assert.IsNull(turrets[1].Standing, "null is not called yet: neither standing nor fallen");
+        Assert.AreEqual("top", turrets[2].Side);
+        Assert.IsNull(turrets[0].Side, "only the nexus turrets carry a side");
+
+        const string fell = """
+            {"t":"event","kind":"turret_destroyed","seq":900,"video_time":512.0,"game_time":432,
+             "team":"blue","champion":null,"track_id":null,"lane":"bot","tier":"outer"}
+            """;
+        var evt = JsonSerializer.Deserialize<GameEvent>(fell, FeedJson.Options)!;
+        Assert.AreEqual(EventKind.TurretDestroyed, evt.Kind);
+        Assert.AreEqual("blue", evt.Team, "the owner: we lost one");
+        Assert.IsNull(evt.TrackId);
+        Assert.AreEqual("bot", evt.Lane);
+        Assert.AreEqual(TurretTier.Outer, evt.Tier);
+
+        const string rebuilt = """
+            {"t":"event","kind":"turret_rebuilt","seq":950,"video_time":800.0,
+             "team":"red","champion":null,"track_id":null,"lane":"base","tier":"nexus","side":"bot"}
+            """;
+        evt = JsonSerializer.Deserialize<GameEvent>(rebuilt, FeedJson.Options)!;
+        Assert.AreEqual(EventKind.TurretRebuilt, evt.Kind);
+        Assert.AreEqual("bot", evt.Side);
+    }
+
+    [TestMethod]
     public void Last_hit_and_missed_cs_events_parse_with_their_fields()
     {
         const string hit = """
