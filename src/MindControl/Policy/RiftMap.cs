@@ -98,6 +98,40 @@ public static class RiftMap
     /// <summary>A turret's attack range, in game units: a wave this near one is fighting it.</summary>
     public const double TurretRange = 750;
 
+    /// <summary>One of the enemy's turrets: its lane ("base" for the two nexus turrets), tier, nexus side, and spot.</summary>
+    public sealed record TurretSpot(string Lane, string Tier, string? Side, double X, double Y)
+    {
+        /// <summary>As a coach names it: "their bot outer turret", "their top nexus turret".</summary>
+        public string Name => Tier == "nexus" ? $"their {Side} nexus turret" : $"their {Lane} {Tier} turret";
+    }
+
+    /// <summary>The enemy's eleven turrets where Riot's map data puts them, lanes outer to inhibitor, then the nexus pair.</summary>
+    public static readonly TurretSpot[] TheirTurrets =
+    [
+        new("top", "outer", null, 4318, 13875), new("top", "inner", null, 7943, 13411), new("top", "inhibitor", null, 10481, 13650),
+        new("mid", "outer", null, 8955, 8510), new("mid", "inner", null, 9767, 10113), new("mid", "inhibitor", null, 11134, 11207),
+        new("bot", "outer", null, 13866, 4505), new("bot", "inner", null, 13327, 8226), new("bot", "inhibitor", null, 13624, 10572),
+        new("base", "nexus", "top", 12611, 13084), new("base", "nexus", "bot", 13052, 12612),
+    ];
+
+    /// <summary>
+    /// The enemy turret whose range (<see cref="TurretRange"/>) covers a
+    /// point, the nearest when two do, and how far from it the point is; null
+    /// when none does. <paramref name="standing"/> says whether one stands
+    /// (null: not known); a turret known to have fallen covers nothing, and
+    /// one not known either way is taken to stand, since walking under a
+    /// turret that is there is the costly mistake.
+    /// </summary>
+    public static (TurretSpot Turret, double Distance)? TheirTurretCovering(
+        double x, double y, Func<TurretSpot, bool?>? standing = null) =>
+        TheirTurrets
+            .Where(t => standing?.Invoke(t) != false)
+            .Select(t => (Turret: t, Distance: double.Hypot(x - t.X, y - t.Y)))
+            .Where(p => p.Distance <= TurretRange)
+            .OrderBy(p => p.Distance)
+            .Select(p => ((TurretSpot, double)?)p)
+            .FirstOrDefault();
+
     /// <summary>
     /// Where an enemy wave's front is in a lane, named as a coach says it,
     /// by the player's own turrets: in the enemy's half, in the player's half

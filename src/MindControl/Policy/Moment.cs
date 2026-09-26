@@ -75,6 +75,12 @@ public sealed record EnemyFacts(
 {
     /// <summary>Whether the player's basic attack reaches them; null when the player's attack range is not on file.</summary>
     public bool? InAttackRange { get; init; }
+
+    /// <summary>
+    /// The enemy turret whose range they stand in, and how far from it
+    /// ("their bot outer turret, 520 units from it"); null when none covers them.
+    /// </summary>
+    public string? UnderTheirTurret { get; init; }
 }
 
 /// <summary>
@@ -83,7 +89,18 @@ public sealed record EnemyFacts(
 /// lowest bars first. Only minions whose bar could be read are listed, since
 /// a last hit is about how much bar is left.
 /// </summary>
-public sealed record AttackFacts(double? AttackRangeUnits, IReadOnlyList<MinionTarget> EnemyMinionsNear);
+public sealed record AttackFacts(double? AttackRangeUnits, IReadOnlyList<MinionTarget> EnemyMinionsNear)
+{
+    /// <summary>
+    /// The enemy turret whose range the player stands in, and how far from
+    /// it; null when none covers them. A turret known to have fallen covers
+    /// nothing; one the minimap has not called is taken to stand.
+    /// </summary>
+    public string? YouUnderTheirTurret { get; init; }
+
+    /// <summary>How many of the player's own minions on the screen stand in that turret's range too; null when no turret covers the player.</summary>
+    public int? YourMinionsUnderThatTurret { get; init; }
+}
 
 /// <summary>
 /// An enemy minion on the player's screen, by the name the attack question's
@@ -91,7 +108,18 @@ public sealed record AttackFacts(double? AttackRangeUnits, IReadOnlyList<MinionT
 /// distance is from the player's model in game units, good to about a
 /// hundred. <see cref="InAttackRange"/> is null when the range is not on file.
 /// </summary>
-public sealed record MinionTarget(string Name, double Health, double DistanceUnits, string? ScreenDirection, bool? InAttackRange);
+public sealed record MinionTarget(string Name, double Health, double DistanceUnits, string? ScreenDirection, bool? InAttackRange)
+{
+    /// <summary>
+    /// How fast its bar has been falling, in bar per second over the last
+    /// second and a half (0 when it holds); null when the minion has not been
+    /// followed long enough to tell (<see cref="MinionTracker"/>).
+    /// </summary>
+    public double? FallingPerSecond { get; init; }
+
+    /// <summary>Seconds until its bar is empty at that rate; null when it is not falling or not yet known.</summary>
+    public double? SecondsToEmpty { get; init; }
+}
 
 /// <summary>An ally, always on the player's own minimap.</summary>
 public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);

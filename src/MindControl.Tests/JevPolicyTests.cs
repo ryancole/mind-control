@@ -1055,6 +1055,61 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEqual(new[] { 200.0, 202.1, 203.1 }, Attacks(jev).Select(a => a.State.VideoTime).ToArray());
     }
 
+    [TestMethod]
+    public void A_bar_followed_across_frames_tells_its_fall_to_the_attack_question()
+    {
+        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Ezreal", AttackAskEverySeconds = 0.5 });
+        for (var i = 0; i <= 5; i++)
+            policy.OnFrame(Clocked(200 + 0.1 * i, 300, InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.6 - 0.05 * i))));
+
+        var ask = Attacks(jev)[^1];
+        Assert.AreEqual(200.5, ask.State.VideoTime);
+        var minion = ask.State.Attack!.EnemyMinionsNear.Single();
+        Assert.AreEqual((0.5, 0.7), (minion.FallingPerSecond!.Value, minion.SecondsToEmpty!.Value), $"{minion}");
+        Assert.IsNull(Attacks(jev)[0].State.Attack!.EnemyMinionsNear.Single().FallingPerSecond, "one reading is no rate");
+    }
+
+    /// <summary>Near their bot outer turret (13866, 4505): the player outside its range, Karma inside it.</summary>
+    private static ChampionRow ByTheirTurret() => Self(x: 13300, y: 3800);
+
+    private static ChampionRow KarmaUnderTurret() => Enemy() with { WorldX = 13600, WorldY = 4200, Health = 0.3 };
+
+    [TestMethod]
+    public void An_enemy_under_their_turret_is_said_to_be()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Frame(10, ByTheirTurret(), KarmaUnderTurret()));
+        var ask = Attacks(jev).Single();
+        Assert.AreEqual("their bot outer turret, 405 units from it", ask.State.VisibleEnemies.Single().UnderTheirTurret);
+        Assert.IsNull(ask.State.Attack!.YouUnderTheirTurret);
+        Assert.IsNull(ask.State.Attack.YourMinionsUnderThatTurret);
+    }
+
+    [TestMethod]
+    public void A_player_under_their_turret_is_told_so_with_their_own_minions_there()
+    {
+        var (policy, jev) = Coach();
+        var self = Self(x: 13500, y: 4000) with
+        {
+            Minions = [Bar(MinionTeam.Blue, 13700, 4300), Bar(MinionTeam.Blue, 12000, 3000), Bar(MinionTeam.Red, 13600, 4200, health: 0.2)],
+        };
+        policy.OnFrame(Frame(10, self));
+        var attack = Attacks(jev).Single().State.Attack!;
+        Assert.AreEqual("their bot outer turret, 624 units from it", attack.YouUnderTheirTurret);
+        Assert.AreEqual(1, attack.YourMinionsUnderThatTurret);
+    }
+
+    [TestMethod]
+    public void A_turret_the_minimap_shows_fallen_covers_nothing()
+    {
+        var (policy, jev) = Coach();
+        Turret[] turrets = RiftMap.TheirTurrets
+            .Select(t => new Turret { Team = MinionTeam.Red, Lane = t.Lane, Tier = t.Tier, Side = t.Side, Standing = !(t.Lane == "bot" && t.Tier == "outer") })
+            .ToArray();
+        policy.OnFrame(Frame(10, ByTheirTurret() with { Turrets = turrets }, KarmaUnderTurret()));
+        Assert.IsNull(Attacks(jev).Single().State.VisibleEnemies.Single().UnderTheirTurret);
+    }
+
     // --- A bolt at the player ---
 
     [TestMethod]

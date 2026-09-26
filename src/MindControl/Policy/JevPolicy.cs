@@ -175,6 +175,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // has: one minimap click is the whole walk, and the next question is told.
     private string? _sentTo;
 
+    // Perception: the minions on the screen, followed from frame to frame so
+    // each bar has a fall rate.
+    private readonly MinionTracker _minionTracks = new();
+
     // Perception: the turrets the minimap last showed, all 22, or null when it
     // has not been read for them since the last resync.
     private Turret[]? _turrets;
@@ -310,6 +314,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _restAt = null;
         _sentTo = null;
         _turrets = null;
+        _minionTracks.Clear();
         _point = null;
         _pressedFor.Clear();
         _firstLevelAsked = null;
@@ -317,6 +322,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (latest is not null)
         {
             _turrets = Carried(latest, r => r.Turrets);
+            _minionTracks.Update(latest.VideoTime, Carried(latest, r => r.Minions));
             foreach (var row in latest.Champions.Where(c => c.Visible))
                 _visibleSince[row.TrackId] = latest.VideoTime;
             if (Self() is { } self)
@@ -344,6 +350,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         TrackVisibility(frame);
         if (Carried(frame, r => r.Turrets) is { } turrets)
             _turrets = turrets;
+        _minionTracks.Update(frame.VideoTime, Carried(frame, r => r.Minions));
         if (Self() is { } self)
         {
             if (self.Resource is { } resource)
@@ -717,7 +724,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         {
             var name = $"the enemy minion at {minion.Health:0%} health";
             var where = minion.ScreenDirection is { } way ? $"{minion.DistanceUnits:0} units {way}" : "where the player stands";
-            criteria[minion.Name] = $"{minion.Name}: an enemy minion with {minion.Health:0%} of its health bar left, "
+            var fall = minion switch
+            {
+                { SecondsToEmpty: { } empty } => $", its bar falling {minion.FallingPerSecond:0.00} a second (empty in {empty:0.0}s at that rate)",
+                { FallingPerSecond: 0 } => ", its bar holding",
+                _ => "",
+            };
+            criteria[minion.Name] = $"{minion.Name}: an enemy minion with {minion.Health:0%} of its health bar left{fall}, "
                 + $"{where}, {InReach(minion.InAttackRange)}";
             targets[minion.Name] = (new AttackTarget(name, minion.DistanceUnits), mx, my,
                 $"it is {where} with {minion.Health:0%} of its bar left, {InReach(minion.InAttackRange)}; a good player would attack it now");
@@ -730,7 +743,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 continue;
             bool? inRange = range is { } r ? distance <= r : null;
             var health = row.Health is { } h ? $"{h:0%} health" : "health not read";
-            criteria[champion] = $"{champion}: the enemy champion, {health}, {distance:0} units {Direction(self, row)}, {InReach(inRange)}";
+            var covered = TurretCover(row.WorldX!.Value, row.WorldY!.Value) is { } turret ? $", standing under {turret.Said}" : "";
+            criteria[champion] = $"{champion}: the enemy champion, {health}, {distance:0} units {Direction(self, row)}, {InReach(inRange)}{covered}";
             targets[champion] = (new AttackTarget(champion, distance), row.WorldX!.Value, row.WorldY!.Value,
                 $"{champion} is {distance:0} units {Direction(self, row)} with {health}, {InReach(inRange)}; a good player would attack them now");
         }
@@ -778,7 +792,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// where each stands in world units. Named "minion 1" and on in that
     /// order: the names the attack question's options and the state share.
     /// </summary>
-    private static (MinionTarget Fact, double X, double Y)[] NearMinions(FrameEnvelope frame, ChampionRow self)
+    private (MinionTarget Fact, double X, double Y)[] NearMinions(FrameEnvelope frame, ChampionRow self)
     {
         if (Carried(frame, r => r.Minions) is not { } minions || self is not { WorldX: { } x, WorldY: { } y })
             return [];
@@ -790,12 +804,35 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             .Where(p => p.Distance <= reach)
             .OrderBy(p => p.Minion.Health).ThenBy(p => p.Distance)
             .Take(MinionTargets)
-            .Select((p, i) => (new MinionTarget(
-                    $"minion {i + 1}", Math.Round(p.Minion.Health!.Value, 2), Math.Round(p.Distance),
-                    p.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(p.Minion.WorldX!.Value - x, p.Minion.WorldY!.Value - y),
-                    range is { } r ? p.Distance <= r : null),
-                p.Minion.WorldX!.Value, p.Minion.WorldY!.Value))
+            .Select((p, i) =>
+            {
+                var (falling, empty) = _minionTracks.Trend(p.Minion);
+                return (new MinionTarget(
+                        $"minion {i + 1}", Math.Round(p.Minion.Health!.Value, 2), Math.Round(p.Distance),
+                        p.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(p.Minion.WorldX!.Value - x, p.Minion.WorldY!.Value - y),
+                        range is { } r ? p.Distance <= r : null)
+                    {
+                        FallingPerSecond = falling, SecondsToEmpty = empty,
+                    },
+                    p.Minion.WorldX!.Value, p.Minion.WorldY!.Value);
+            })
             .ToArray();
+    }
+
+    /// <summary>
+    /// The enemy turret covering a spot, as the facts say it ("their bot outer
+    /// turret, 520 units from it"), with the turret's own spot; null when none
+    /// does. A turret the minimap shows fallen covers nothing; without the
+    /// turrets read, every turret is taken to stand.
+    /// </summary>
+    private (string Said, double X, double Y)? TurretCover(double x, double y)
+    {
+        Func<RiftMap.TurretSpot, bool?>? standing = _turrets is null ? null
+            : spot => _turrets.FirstOrDefault(t => t.Team == MinionTeam.Red && t.Lane == spot.Lane && t.Tier == spot.Tier
+                && (spot.Side is null || t.Side == spot.Side))?.Standing;
+        return RiftMap.TheirTurretCovering(x, y, standing) is { } cover
+            ? ($"{cover.Turret.Name}, {cover.Distance:0} units from it", cover.Turret.X, cover.Turret.Y)
+            : null;
     }
 
     /// <summary>
@@ -1248,8 +1285,18 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             whereabouts = Whereabouts(frame, self, now);
             minions = MinionsOnScreen(frame, self);
             var attackRange = AbilityKits.AttackRange(champion);
-            if (self is { WorldX: not null, WorldY: not null })
-                attack = new AttackFacts(attackRange, NearMinions(frame, self).Select(m => m.Fact).ToArray());
+            if (self is { WorldX: { } sx, WorldY: { } sy })
+            {
+                var cover = TurretCover(sx, sy);
+                attack = new AttackFacts(attackRange, NearMinions(frame, self).Select(m => m.Fact).ToArray())
+                {
+                    YouUnderTheirTurret = cover?.Said,
+                    YourMinionsUnderThatTurret = cover is { } c
+                        ? (Carried(frame, r => r.Minions) ?? []).Count(m => m.Team == MinionTeam.Blue
+                            && m is { WorldX: { } mx, WorldY: { } my } && double.Hypot(mx - c.X, my - c.Y) <= RiftMap.TurretRange)
+                        : null,
+                };
+            }
             foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
             {
                 var distance = Distance(self, row)!.Value;
@@ -1263,6 +1310,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     _withinReachSince.TryGetValue(row.TrackId, out var since) ? Math.Round(now - since, 1) : null)
                 {
                     InAttackRange = attackRange is { } r ? distance <= r : null,
+                    UnderTheirTurret = TurretCover(row.WorldX!.Value, row.WorldY!.Value)?.Said,
                 });
             }
             foreach (var row in frame.Champions.Where(c => c.Team == self.Team && c.TrackId != self.TrackId))
