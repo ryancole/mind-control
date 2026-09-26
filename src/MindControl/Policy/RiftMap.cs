@@ -43,6 +43,9 @@ public static class RiftMap
 
     private const double FountainX = 450, FountainY = 450, FountainRadius = 1000;
 
+    /// <summary>The middle of the player's own fountain, where they respawn: home.</summary>
+    public static (double X, double Y) Fountain => (FountainX, FountainY);
+
     /// <summary>The base is the square behind the inhibitors; the far corner mirrors it.</summary>
     private const double BaseEdge = 3800, EnemyBaseEdge = 11100;
 

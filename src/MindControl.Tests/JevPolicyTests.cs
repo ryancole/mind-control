@@ -488,10 +488,11 @@ public sealed class JevPolicyTests
         };
         for (var t = 200.0; t <= 203.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 150, Self(x: 12400, y: 1900)));
-        var where = jev.Last.State.Whereabouts!;
+        var asked = jev.Asks.Last(a => a.Questions.ContainsKey("lane"));
+        var where = asked.State.Whereabouts!;
         Assert.AreEqual("bot lane", where.Place);
         Assert.IsNull(where.Lanes.Single(l => l.Lane == "bot").ScreenDirection);
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["lane"]).Criteria["bot"]!, "standing in it");
+        StringAssert.Contains((string)((ChoiceQuestion)asked.Questions["lane"]).Criteria["bot"]!, "standing in it");
         Assert.IsEmpty(policy.DrainMoves());
     }
 
@@ -611,7 +612,7 @@ public sealed class JevPolicyTests
         var roaming = Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret };
         policy.OnFrame(Clocked(300, 400, roaming));
 
-        var ask = jev.Asks.Single();
+        var ask = jev.Asks.Single(a => a.Questions.ContainsKey("tend"));
         CollectionAssert.AreEqual(new[] { "tend" }, ask.Questions.Keys.ToArray(), "one lane crashing: no choice to make");
         var bot = ask.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!;
         Assert.AreEqual("at your outer turret", bot.TheirFrontPlace);
@@ -652,7 +653,7 @@ public sealed class JevPolicyTests
         var dots = BotWaveAtOurTurret.Append(Dot(MinionTeam.Red, 5846, 6396)).ToArray();
         policy.OnFrame(Clocked(300, 400, Self(x: 1300, y: 12000) with { MinionDots = dots }, InBotLane()));
 
-        var choice = (ChoiceQuestion)jev.Last.Questions["tend_lane"];
+        var choice = (ChoiceQuestion)jev.Asks.Single(a => a.Questions.ContainsKey("tend")).Questions["tend_lane"];
         CollectionAssert.AreEquivalent(new[] { "mid", "bot" }, choice.Options.ToArray());
         StringAssert.Contains((string)choice.Criteria["bot"]!, "the enemy wave is at your outer turret");
         StringAssert.Contains((string)choice.Criteria["bot"]!, "allies there: champ3");
@@ -1651,7 +1652,7 @@ public sealed class JevPolicyTests
         policy.Configure(Coaching with { WorldBounds = null });
         var cues = policy.DrainCues();
         Assert.HasCount(1, cues);
-        StringAssert.Contains(cues[0].Reason, "world calibration (nobody will be walked to lane)");
+        StringAssert.Contains(cues[0].Reason, "world calibration (nobody will be walked to lane or into brush)");
         Assert.DoesNotContain("no button will be pressed", cues[0].Reason);
     }
 
@@ -1680,5 +1681,133 @@ public sealed class JevPolicyTests
         var policy = new JevPolicy(new FakeJev());
         policy.Configure(Coaching);
         Assert.IsEmpty(policy.DrainCues());
+    }
+
+    // --- Brush: out of sight ---
+
+    private static FakeJev.Ask[] Hides(FakeJev jev) => jev.Asks.Where(a => a.Questions.ContainsKey("hide")).ToArray();
+
+    /// <summary>
+    /// In bot lane between our turrets, about 550 units above the lane's
+    /// outer-edge patch at (7807, 804), the only one within reach.
+    /// </summary>
+    private static ChampionRow ByTheLaneBrush(params Minion[] minions) => Self(x: 7807, y: 1400) with { Minions = minions };
+
+    [TestMethod]
+    public void A_player_outside_the_brush_with_a_patch_near_is_asked_whether_to_walk_in()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(200, 300, ByTheLaneBrush()));
+
+        var ask = Hides(jev).Single();
+        CollectionAssert.AreEqual(new[] { "hide" }, ask.Questions.Keys.ToArray(), "one patch near: no choice to make");
+        var brush = ask.State.Brush!;
+        Assert.IsNull(brush.YouStandIn);
+        var near = brush.Near.Single();
+        Assert.AreEqual("brush 1", near.Name);
+        Assert.AreEqual("the bot lane brush", near.Kind);
+        Assert.AreEqual("bot lane", near.Place);
+        Assert.AreEqual("down", near.ScreenDirection);
+        Assert.IsLessThan(600, near.DistanceUnits);
+        Assert.IsTrue(near.TowardYourBase);
+        Assert.IsNull(near.AheadOfYourMinionsUnits, "no minion of theirs on the screen");
+        Assert.AreEqual(0, ask.Options!.Retry!.MaxRetries, "a question about the moment is not retried");
+    }
+
+    [TestMethod]
+    public void A_yes_walks_into_the_patch_in_one_order_and_the_next_question_is_told()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, _) => id == "hide" ? FakeJev.Yes : null;
+        policy.OnFrame(Clocked(200, 300, ByTheLaneBrush(), Enemy(1500) with { WorldX = 8600, WorldY = 1500 }));
+        policy.OnFrame(Clocked(200.1, 300, ByTheLaneBrush()));
+
+        var walk = policy.DrainMoves().Single(m => m.Destination is not null);
+        Assert.AreEqual(200.0, walk.VideoTime);
+        Assert.AreEqual("the bot lane brush", walk.Destination!.Name);
+        Assert.AreEqual("the bot lane brush", RiftBrush.At(walk.Destination.X, walk.Destination.Y)!.Name, "the click lands in the grass");
+        Assert.AreEqual("down", walk.Direction);
+        StringAssert.StartsWith(walk.Sentence, "coach would have walked down to the bot lane brush here: the bot lane brush is ");
+        StringAssert.EndsWith(walk.Reason,
+            " units down and Karma can see you out here; a good player would stand in the brush, where no enemy outside it can see them");
+
+        policy.OnFrame(Clocked(203.1, 303, ByTheLaneBrush()));
+        Assert.AreEqual("walked into the bot lane brush", Hides(jev)[^1].State.Coach.Single().Did);
+    }
+
+    [TestMethod]
+    public void Several_patches_near_are_a_choice_between_them()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "hide" => FakeJev.Yes,
+            "brush" => FakeJev.Pick(q, "brush 2"),
+            _ => null,
+        };
+        policy.OnFrame(Clocked(200, 300, Self(x: 12400, y: 2400)));
+
+        var ask = Hides(jev).Single();
+        var near = ask.State.Brush!.Near;
+        Assert.IsGreaterThan(1, near.Count);
+        var criteria = ((ChoiceQuestion)ask.Questions["brush"]).Criteria;
+        CollectionAssert.AreEqual(near.Select(n => n.Name).ToArray(), criteria.Keys.ToArray());
+        StringAssert.StartsWith((string)criteria["brush 1"]!, $"brush 1: {near[0].Kind}, {near[0].DistanceUnits:0} units ");
+        var walk = policy.DrainMoves().Single();
+        var second = RiftBrush.Near(12400, 2400, 1200).ElementAt(1).Patch;
+        Assert.AreSame(second, RiftBrush.At(walk.Destination!.X, walk.Destination.Y));
+    }
+
+    [TestMethod]
+    public void A_patch_in_front_of_their_own_minions_is_told_as_such()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(200, 300, ByTheLaneBrush(Bar(MinionTeam.Blue, 7000, 1450), Bar(MinionTeam.Red, 8000, 1400))));
+
+        var near = Hides(jev).Single().State.Brush!.Near.Single();
+        Assert.IsGreaterThan(0, near.AheadOfYourMinionsUnits!.Value, "the patch lies up the lane from their foremost minion");
+        Assert.IsNotNull(near.NearestEnemyMinionUnits);
+        Assert.AreEqual($"{near.AheadOfYourMinionsUnits:0} units in front of your minions", near.FaceCheck);
+    }
+
+    [TestMethod]
+    public void Standing_in_brush_dead_unplaced_without_a_clock_or_far_from_any_is_no_brush_question()
+    {
+        var (policy, jev) = Coach();
+        var inside = RiftBrush.All.Single(p => p.Name == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
+        policy.OnFrame(Clocked(200, 300, Self(x: inside.X, y: inside.Y)));
+        policy.OnFrame(Clocked(204, 304, Self(alive: false, x: 7807, y: 1400)));
+        policy.OnFrame(Clocked(208, 308, Self(x: 7807, y: 1400) with { WorldX = null }));
+        policy.OnFrame(Frame(212, Self(x: 7807, y: 1400)));
+        policy.OnFrame(Clocked(216, 316, Self(x: 400, y: 460)));
+        Assert.IsEmpty(Hides(jev));
+    }
+
+    [TestMethod]
+    public void The_patch_they_stand_in_is_on_every_question()
+    {
+        var (policy, jev) = Coach();
+        var inside = RiftBrush.All.Single(p => p.Name == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
+        policy.OnFrame(Clocked(200, 300, Self(x: inside.X, y: inside.Y), Enemy(500) with { WorldX = inside.X + 400, WorldY = inside.Y }));
+        var ask = jev.Asks.First();
+        Assert.AreEqual("the bot lane brush", ask.State.Brush!.YouStandIn);
+        CollectionAssert.DoesNotContain(ask.State.Brush.Near.Select(n => n.Kind).ToArray(), "the bot lane brush",
+            "the patch they stand in is not somewhere to walk to");
+    }
+
+    [TestMethod]
+    public void The_brush_question_is_one_in_flight_and_no_more_often_than_its_interval()
+    {
+        var (policy, jev) = Coach();
+        jev.Hold = true;
+        for (var t = 200.0; t <= 204.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, ByTheLaneBrush()));
+        Assert.HasCount(1, Hides(jev), "one in flight");
+
+        jev.Hold = false;
+        jev.Release();
+        for (var t = 204.1; t <= 207.5 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 304, ByTheLaneBrush()));
+        CollectionAssert.AreEqual(new[] { 200.0, 204.1, 207.1 }, Hides(jev).Select(a => a.State.VideoTime).ToArray());
     }
 }

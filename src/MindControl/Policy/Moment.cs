@@ -25,7 +25,9 @@ public sealed record Moment
         + "the minimap, themselves included (`whereabouts` is where they stand on it, how long they "
         + "have stood there, and how far each lane is, with the minions and turrets the minimap shows in it), and the minions "
         + "on their screen (`minions`, and in `attack` the enemy ones their basic attack could reach, with how much "
-        + "of each one's health bar is left). Enemies hidden in fog of war are not listed, because the player cannot "
+        + "of each one's health bar is left), and the brush near them (`brush`: the patches of tall grass that hide whoever "
+        + "stands in them from enemies outside; brush is part of the map, so where it lies is known, but whether an unseen "
+        + "enemy is standing in it is not). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself.";
@@ -48,6 +50,7 @@ public sealed record Moment
     public WhereaboutsFacts? Whereabouts { get; init; }
     public MinionFacts? Minions { get; init; }
     public AttackFacts? Attack { get; init; }
+    public BrushFacts? Brush { get; init; }
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
@@ -194,6 +197,39 @@ public sealed record WaveFacts(
 /// </summary>
 public sealed record MinionFacts(
     int Ours, int Theirs, double? NearestTheirsUnits, int TheirsWithinCasterRange, double? AheadOfOurFrontUnits);
+
+/// <summary>
+/// The brush around the player: the patch they stand in, if any
+/// (<see cref="RiftBrush.Patch.Name"/>), and the patches near them, nearest
+/// first, named "brush 1" and on as the brush question's options are.
+/// </summary>
+public sealed record BrushFacts(string? YouStandIn, IReadOnlyList<BrushNear> Near);
+
+/// <summary>
+/// A patch of brush near the player, measured from where they stand to its
+/// nearest cell. <see cref="Place"/> is where it lies ("bot lane", "the
+/// river, bot side", "their jungle, top side"). The rest is what makes a patch
+/// safe to walk into or not, each null when it does not apply:
+/// <see cref="AheadOfYourMinionsUnits"/> is how far along its lane the patch
+/// lies in front of the player's own foremost minion on the screen, toward the
+/// enemy (negative is behind it); <see cref="UnderTheirTurret"/> the enemy
+/// turret whose range covers it; <see cref="NearestVisibleEnemyUnits"/> and
+/// <see cref="NearestEnemyMinionUnits"/> how far the nearest enemy champion
+/// and enemy minion on the screen stand from it; <see cref="AlliesInIt"/> the
+/// allies the minimap shows in it. <see cref="TowardYourBase"/> is whether it
+/// lies nearer the player's own fountain than they do. <see cref="FaceCheck"/>
+/// names what makes walking in blind: in front of their minions, under an
+/// enemy turret, or in the enemy's jungle; null when none does.
+/// </summary>
+public sealed record BrushNear(string Name, string Kind, string Place, double DistanceUnits, string? ScreenDirection, bool TowardYourBase)
+{
+    public double? AheadOfYourMinionsUnits { get; init; }
+    public string? UnderTheirTurret { get; init; }
+    public double? NearestVisibleEnemyUnits { get; init; }
+    public double? NearestEnemyMinionUnits { get; init; }
+    public IReadOnlyList<string>? AlliesInIt { get; init; }
+    public string? FaceCheck { get; init; }
+}
 
 /// <summary>Something the coach already did: "pressed Q", "stepped up-left", "remarked on aim".</summary>
 public sealed record RecentAction(string Did, double SecondsAgo);

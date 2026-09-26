@@ -79,6 +79,14 @@ public sealed record JevOptions
     public double AttackAskEverySeconds { get; init; } = 1;
 
     /// <summary>
+    /// How often, in video seconds, a player standing outside the brush with
+    /// a patch near them is asked about: should they walk into it? Asked
+    /// whether they stand or walk. One in flight at a time, apart from the
+    /// other questions.
+    /// </summary>
+    public double BrushAskEverySeconds { get; init; } = 3;
+
+    /// <summary>
     /// How far, in game units, the player's model can drift and still be on
     /// the same spot. The minimap read jitters by tens of units on a
     /// champion that has not moved; a walking one covers this in a third of
@@ -102,7 +110,7 @@ public sealed record Consultation(
 /// The coach: every coaching decision -- which button to press, whether and
 /// which way to step, whether a shot or a bolt is worth a word, which
 /// ability a new level's point goes into, whether and what to right-click
-/// to attack -- is a
+/// to attack, whether to walk into the brush -- is a
 /// question put to Jev, TypeSafe's System One model, and
 /// answered as a probability, a level or an option. Nothing here decides; it
 /// measures, asks, and turns the answer into the output the reactor already
@@ -120,7 +128,8 @@ public sealed record Consultation(
 /// each minimap minion is in and how far each side's wave has pushed, and
 /// how near the minions on the screen are and whether the player stands in
 /// front of their own, and which enemy minions and champions the player's
-/// basic attack reaches. Fair
+/// basic attack reaches, and which patches of brush are near and what lies
+/// around each (<see cref="RiftBrush"/>). Fair
 /// play: <see cref="Moment"/> is built from visible
 /// rows only, so the model is never shown a thing in fog. Each of those is a
 /// measurement or a mechanism, not a judgement; the judgements are in
@@ -220,6 +229,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _lastTendAskAt = double.NegativeInfinity;
     private bool _askingAttack;
     private double _lastAttackAskAt = double.NegativeInfinity;
+    private bool _askingBrush;
+    private double _lastBrushAskAt = double.NegativeInfinity;
     private bool _failing;
 
     // Questions on the wire, by occasion, oldest first. Touched from the
@@ -228,7 +239,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly Lock _wireLock = new();
 
     /// <summary>
-    /// The occasions ("now", "idle", "wave", "tend", "attack", "bolt", "shot", "level") of the questions
+    /// The occasions ("now", "idle", "wave", "tend", "attack", "brush", "bolt", "shot", "level") of the questions
     /// on their way to the model, oldest first, raised each time that changes: when one
     /// is sent and when its answer or failure comes back. It follows the
     /// network, not <see cref="Settle"/>, so it is raised on whichever thread
@@ -251,7 +262,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (!meta.HasSkillshots)
             missing.Add("skillshots (aim will not be remarked on)");
         if (meta.WorldBounds is null)
-            missing.Add("world calibration (nobody will be walked to lane)");
+            missing.Add("world calibration (nobody will be walked to lane or into brush)");
         if (!meta.HasMinions)
             missing.Add("minion bars (nobody will be stepped back out of an enemy wave or shown a last hit)");
         if (!meta.HasMinionDots)
@@ -296,6 +307,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastTendAskAt = double.NegativeInfinity;
         _askingAttack = false;
         _lastAttackAskAt = double.NegativeInfinity;
+        _askingBrush = false;
+        _lastBrushAskAt = double.NegativeInfinity;
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -364,6 +377,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             AskWave(frame, self);
             AskTend(frame, self);
             AskAttack(frame, self);
+            AskBrush(frame, self);
             AskHeldPoint(frame, self);
         }
         Settle();
@@ -817,6 +831,166 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     p.Minion.WorldX!.Value, p.Minion.WorldY!.Value);
             })
             .ToArray();
+    }
+
+    // --- Brush: out of sight ---
+
+    /// <summary>
+    /// How far from the player a patch of brush is near: a few seconds' walk,
+    /// about half a screen's width. Farther than this, walking to it is a trip,
+    /// not stepping into cover.
+    /// </summary>
+    private const double BrushNearUnits = 1200;
+
+    /// <summary>How many patches near the player, nearest first, are offered.</summary>
+    private const int BrushOptions = 3;
+
+    /// <summary>
+    /// Asks about a player outside the brush, when there is something to ask:
+    /// alive, placed on the map, with a game clock running, standing in no
+    /// patch, and one within <see cref="BrushNearUnits"/>. Asked whether they
+    /// stand or walk. Whether hiding is worth it -- out of an enemy laner's
+    /// sight, breaking a chase, waiting out of the open -- and which patch are
+    /// the model's calls, from <see cref="Moment.Brush"/>; a yes is one walk
+    /// into the patch, ordered on the minimap like any walk, to the nearest
+    /// point well inside the grass. One in flight at a time, and no more often
+    /// than <see cref="JevOptions.BrushAskEverySeconds"/>.
+    /// </summary>
+    private void AskBrush(FrameEnvelope frame, ChampionRow self)
+    {
+        if (_askingBrush || frame.VideoTime - _lastBrushAskAt < _options.BrushAskEverySeconds)
+            return;
+        if (self.Alive == false || frame.GameTime is null || self is not { WorldX: { } x, WorldY: { } y })
+            return;
+        if (RiftBrush.At(x, y) is not null)
+            return;
+        var near = NearBrushes(frame, self);
+        if (near.Length == 0)
+            return;
+
+        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
+        var questions = new Questions().Noul("hide", CoachQuestions.Hide,
+            yes: "a good player would be standing in that brush now, out of the enemy's sight, at no cost",
+            no: "every patch near is a face-check, they are on their way somewhere, nobody is there to hide from, or the coach just sent them");
+        if (near.Length > 1)
+        {
+            var criteria = new ChoiceCriteria();
+            foreach (var (fact, _) in near)
+                criteria[fact.Name] = DescribeBrush(fact);
+            questions.Choice("brush", CoachQuestions.WhichBrush, criteria);
+        }
+
+        _askingBrush = true;
+        _lastBrushAskAt = frame.VideoTime;
+        var asked = frame.VideoTime;
+        Ask("brush", moment, questions, asked, NowRequest, released: () => _askingBrush = false, answered: response =>
+        {
+            if (!response.TryGet<NoulAnswer>("hide", out var hide) || !hide!.IsYes(_options.YesAt))
+                return;
+            var chosen = near.Length == 1 ? near[0].Fact.Name
+                : response.TryGet<ChoiceAnswer>("brush", out var pick) ? pick!.Choice : null;
+            if (near.FirstOrDefault(n => n.Fact.Name == chosen) is not { Patch: { } patch } brush)
+                return;
+            var spot = patch.Inside(x, y);
+            // World y grows north, screen y grows down: flip for the step.
+            var (dx, dy) = (spot.X - x, -(spot.Y - y));
+            var length = double.Hypot(dx, dy);
+            if (length < 1)
+                return;
+            var direction = ScreenDirections.Name(dx, dy);
+            var seen = moment.VisibleEnemies.Count switch
+            {
+                0 => "",
+                1 => $" and {moment.VisibleEnemies[0].Champion} can see you out here",
+                _ => $" and {string.Join(", ", moment.VisibleEnemies.Select(e => e.Champion))} can see you out here",
+            };
+            if (seen.Length == 0 && moment.Whereabouts is { StoodStillForSeconds: >= 2 and var still })
+                seen = $" and you have stood in the open for {still:0.0}s";
+            var reason = $"{patch.Name} is {brush.Fact.DistanceUnits:0} units {direction}{seen}; "
+                + "a good player would stand in the brush, where no enemy outside it can see them";
+            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+            {
+                Destination = new Destination(patch.Name, spot.X, spot.Y),
+            });
+            Remember($"walked into {patch.Name}", asked);
+        });
+    }
+
+    /// <summary>A patch near the player, as an option of the brush question says it.</summary>
+    private static string DescribeBrush(BrushNear brush)
+    {
+        var said = $"{brush.Name}: "
+            + (brush.FaceCheck is { } why ? $"a face-check ({why}), " : "")
+            + $"{brush.Kind}, {brush.DistanceUnits:0} units {brush.ScreenDirection ?? "away"}";
+        if (brush.NearestEnemyMinionUnits is { } minion)
+            said += $", {minion:0} units from the nearest enemy minion";
+        said += brush.TowardYourBase ? ", toward your base" : ", away from your base";
+        if (brush.AheadOfYourMinionsUnits is < 0 and var behind)
+            said += $", {-behind:0} units behind your minions' front";
+        if (brush.NearestVisibleEnemyUnits is { } enemy)
+            said += $", the nearest enemy champion {enemy:0} units from it";
+        if (brush.AlliesInIt is { Count: > 0 } allies)
+            said += $", {string.Join(", ", allies)} in it";
+        return said;
+    }
+
+    /// <summary>
+    /// The patches of brush within <see cref="BrushNearUnits"/> of the player,
+    /// nearest first, with what lies around each: named "brush 1" and on in
+    /// that order, the names the brush question's options and the state share.
+    /// The patch the player stands in is not among them.
+    /// </summary>
+    private (BrushNear Fact, RiftBrush.Patch Patch)[] NearBrushes(FrameEnvelope frame, ChampionRow self)
+    {
+        if (self is not { WorldX: { } x, WorldY: { } y })
+            return [];
+        var standingIn = RiftBrush.At(x, y);
+        var enemies = Visible(frame, self).Select(e => (X: e.WorldX!.Value, Y: e.WorldY!.Value)).ToArray();
+        var minions = (Carried(frame, r => r.Minions) ?? [])
+            .Where(m => m.Team != MinionTeam.Blue && m is { WorldX: not null, WorldY: not null })
+            .Select(m => (X: m.WorldX!.Value, Y: m.WorldY!.Value))
+            .ToArray();
+        var allies = frame.Champions
+            .Where(c => c.Team == self.Team && c.TrackId != self.TrackId && c.Alive != false && c is { WorldX: not null, WorldY: not null })
+            .ToArray();
+        var home = double.Hypot(x - RiftMap.Fountain.X, y - RiftMap.Fountain.Y);
+        return RiftBrush.Near(x, y, BrushNearUnits)
+            .Where(n => n.Patch != standingIn)
+            .Take(BrushOptions)
+            .Select((n, i) =>
+            {
+                var patch = n.Patch;
+                var (_, cx, cy) = patch.Nearest(x, y);
+                double? ahead = patch.Lane is { } lane && OurFront(frame, lane) is { } front
+                    ? Math.Round((RiftMap.Along(lane, patch.X, patch.Y).Progress - front) * RiftMap.Length(lane))
+                    : null;
+                var inIt = allies
+                    .Where(a => patch.Nearest(a.WorldX!.Value, a.WorldY!.Value).Distance <= RiftBrush.InBrushUnits)
+                    .Select(a => a.Champion ?? $"track {a.TrackId}")
+                    .ToArray();
+                var cover = TurretCover(patch.X, patch.Y)?.Said;
+                var faceCheck = ahead > 0 ? $"{ahead:0} units in front of your minions"
+                    : cover is not null ? $"under {cover}"
+                    : patch.Place.StartsWith("their jungle") ? "in the enemy's jungle"
+                    : null;
+                var fact = new BrushNear(
+                    $"brush {i + 1}", patch.Name, patch.Place, Math.Round(n.Distance),
+                    n.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(cx - x, cy - y),
+                    double.Hypot(patch.X - RiftMap.Fountain.X, patch.Y - RiftMap.Fountain.Y) < home)
+                {
+                    AheadOfYourMinionsUnits = ahead,
+                    UnderTheirTurret = cover,
+                    NearestVisibleEnemyUnits = Nearest(patch, enemies),
+                    NearestEnemyMinionUnits = Nearest(patch, minions),
+                    AlliesInIt = inIt.Length > 0 ? inIt : null,
+                    FaceCheck = faceCheck,
+                };
+                return (fact, patch);
+            })
+            .ToArray();
+
+        static double? Nearest(RiftBrush.Patch patch, (double X, double Y)[] points) =>
+            points.Length == 0 ? null : Math.Round(points.Min(p => patch.Nearest(p.X, p.Y).Distance));
     }
 
     /// <summary>
@@ -1280,9 +1454,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         WhereaboutsFacts? whereabouts = null;
         MinionFacts? minions = null;
         AttackFacts? attack = null;
+        BrushFacts? brush = null;
         if (frame is not null && self is not null)
         {
             whereabouts = Whereabouts(frame, self, now);
+            if (self is { WorldX: { } bx, WorldY: { } by })
+                brush = new BrushFacts(RiftBrush.At(bx, by)?.Name, NearBrushes(frame, self).Select(n => n.Fact).ToArray());
             minions = MinionsOnScreen(frame, self);
             var attackRange = AbilityKits.AttackRange(champion);
             if (self is { WorldX: { } sx, WorldY: { } sy })
@@ -1329,6 +1506,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Whereabouts = whereabouts,
             Minions = minions,
             Attack = attack,
+            Brush = brush,
             Coach = _recent.Select(r => new RecentAction(r.Did, Math.Round(now - r.At, 1))).ToArray(),
             Occasion = occasion,
         };
@@ -1462,20 +1640,27 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             .Where(m => m is { WorldX: not null, WorldY: not null })
             .Select(m => double.Hypot(m.WorldX!.Value - x, m.WorldY!.Value - y))
             .ToArray();
-        double? ahead = null;
-        if (RiftMap.LaneOf(x, y) is { } lane)
-        {
-            var fronts = ours
-                .Where(m => m is { WorldX: not null, WorldY: not null })
-                .Select(m => RiftMap.Along(lane, m.WorldX!.Value, m.WorldY!.Value))
-                .Where(a => a.Distance <= RiftMap.LaneHalfWidth)
-                .Select(a => a.Progress)
-                .ToArray();
-            if (fronts.Length > 0)
-                ahead = Math.Round((RiftMap.Along(lane, x, y).Progress - fronts.Max()) * RiftMap.Length(lane));
-        }
+        double? ahead = RiftMap.LaneOf(x, y) is { } lane && OurFront(frame, lane) is { } front
+            ? Math.Round((RiftMap.Along(lane, x, y).Progress - front) * RiftMap.Length(lane))
+            : null;
         return new MinionFacts(ours.Length, theirs.Length,
             reach.Length == 0 ? null : Math.Round(reach.Min()), reach.Count(d => d <= CasterMinionRange), ahead);
+    }
+
+    /// <summary>
+    /// How far along a lane the player's own foremost minion on the screen
+    /// has pushed (<see cref="RiftMap.Along"/>); null when none of theirs is
+    /// on the screen in that lane, or the bars were not read.
+    /// </summary>
+    private static double? OurFront(FrameEnvelope frame, string lane)
+    {
+        var fronts = (Carried(frame, r => r.Minions) ?? [])
+            .Where(m => m.Team == MinionTeam.Blue && m is { WorldX: not null, WorldY: not null })
+            .Select(m => RiftMap.Along(lane, m.WorldX!.Value, m.WorldY!.Value))
+            .Where(a => a.Distance <= RiftMap.LaneHalfWidth)
+            .Select(a => a.Progress)
+            .ToArray();
+        return fronts.Length > 0 ? fronts.Max() : null;
     }
 
     /// <summary>The spot the player stands on: a new one once they have left the old by more than the jitter.</summary>
