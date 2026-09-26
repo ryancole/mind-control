@@ -176,6 +176,53 @@ public static class CoachQuestions
         + "champion in range whose trade is the player's and who does not stand under their turret; never one "
         + "who does. Then, with no enemy champion on the screen, the lowest minion in range, to clear the wave.";
 
+    /// <summary>
+    /// Asked while the player stands outside the brush with a patch near
+    /// them: should they walk into it? Where each patch is, and what makes it
+    /// safe or not, is in `brush`; when brush is worth standing in is decided
+    /// here.
+    /// </summary>
+    public const string Hide =
+        "The player stands outside the brush with brush near them: `brush.near` lists the patches within a few "
+        + "seconds' walk, nearest first, each with how far and which way it is, where it lies (`place`), how far "
+        + "along its lane it lies in front of the player's own foremost minion (`ahead_of_your_minions_units`, "
+        + "negative is behind it), the enemy turret covering it (`under_their_turret`), how far the nearest enemy "
+        + "champion and enemy minion on the screen stand from it, the allies in it, whether it lies toward the "
+        + "player's own base (`toward_your_base`), and `face_check`, set when walking into it would be blind: in "
+        + "front of their minions, under an enemy turret, or in the enemy's jungle. Would a good player walk into the brush right now? Brush hides "
+        + "whoever stands in it from every enemy outside it, while they still see out: an enemy cannot target, poke "
+        + "or track a champion they cannot see, and does not know where they will come from. So a good player "
+        + "stands in brush whenever it costs them nothing, and treats the open ground beside a patch as wasted "
+        + "cover. But brush hides enemies too, and an enemy the player cannot see may be standing in any patch. "
+        + "Go by these rules in order; the first that applies decides. "
+        + "First: `coach` has an entry that begins \"walked into\" with `seconds_ago` under 6: no, whatever else "
+        + "holds, since that order is still being carried out and one click is the whole demonstration. "
+        + "Second: every patch in `brush.near` has `face_check` set: no, since walking blind into brush where an "
+        + "enemy may wait is how a player is caught. "
+        + "Third: the player's own health is about 0.35 or less and an enemy champion is on the screen: yes, into "
+        + "a patch with `toward_your_base` true, which breaks the enemy's sight of them and any chase. "
+        + "Fourth: an enemy champion in `visible_enemies` has `distance_units` under about 600: no, the two are "
+        + "already trading blows and the fight decides where the player stands, not the brush. "
+        + "Fifth: `whereabouts.place` names a lane, an enemy champion is on the screen, and a patch of that lane "
+        + "without `face_check` has `nearest_enemy_minion_units` under about 700, or no enemy minion is on the "
+        + "screen: yes. Standing in the lane's brush beside the wave hides them from the enemy laner, who cannot "
+        + "poke what they cannot see, while they still last-hit from its edge. "
+        + "Sixth: `whereabouts.place` names a lane, `whereabouts.stood_still_for_seconds` is 2 or more, and a patch "
+        + "of that lane is without `face_check`: yes. A laner standing still in their "
+        + "lane, for the first wave or for the next, waits in the lane's brush rather than out in the open, so the "
+        + "enemy laner arrives not knowing where they are. "
+        + "Otherwise no: standing still in the river or a jungle is not waiting but idling, which is not answered by "
+        + "hiding; a player walking somewhere with a purpose (to lane, to a wave, to a fight) does not detour for "
+        + "brush; and one farming a lane with no enemy champion on the screen has nobody to hide from.";
+
+    public const string WhichBrush =
+        "Which patch would a good player walk into? Each option gives the patch's distance, direction, where it "
+        + "lies and what makes it safe or not. Go by these rules in order. Never an option that says it is a "
+        + "face-check, whatever else it offers. Retreating on low health "
+        + "with an enemy on the screen: the one toward their own base. In a lane with an enemy champion on the "
+        + "screen: the lane's patch whose nearest enemy minion is closest to it, since that is the one they can "
+        + "still last-hit from; whether it lies toward their base does not matter here. Otherwise the nearest.";
+
     public const string BoltRemark =
         "A bolt has just come at the player; `occasion` says where from, what came of it, how far they "
         + "moved across its line between first seeing it and its arrival, and how much warning there was. "
