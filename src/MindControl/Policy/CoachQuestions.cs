@@ -41,7 +41,11 @@ public static class CoachQuestions
         + "player is always near the action: first at the minion wave, where the gold is farmed, and "
         + "otherwise where their team is; standing anywhere else is gold and experience left on the table. "
         + "From about 1:05 the minions march down every lane, a new wave each half minute, so a lane always "
-        + "has a wave to farm; the minions themselves are not in the state, so read a lane as its wave. Yes when "
+        + "has a wave to farm. When a lane carries a `wave`, that is the minions the minimap shows in it: how "
+        + "many of each side's, how far each side's front has pushed (0 is the player's own nexus, 1 the "
+        + "enemy's, the middle of the lane about 0.5) and where the two waves meet, and how far that is from "
+        + "the player; an empty one is a lane the minimap shows no minions in. When the lanes carry no `wave`, "
+        + "the minions were not read, so read a lane as its wave. Yes when "
         + "they are idling in the fountain or their own base and nothing keeps them there. At the start of "
         + "the game a good player spends the first half minute or so buying and is on the way to lane by "
         + "about 0:45, well before the first minions meet around 1:30: standing in the fountain before then, "
@@ -49,7 +53,9 @@ public static class CoachQuestions
         + "respawn later in the game they buy in a few seconds and walk straight back out. Yes when "
         + "they stand in the jungle or river with no enemy on the screen and nothing to do there. No when "
         + "they are already in a lane: standing in lane, waiting for the minions or holding ground against a "
-        + "visible enemy, is laning, not idling. No when an enemy is on the screen near them, because then "
+        + "visible enemy, is laning, not idling. The one exception is a lane whose `wave` meets far up it from "
+        + "where they stand, thousands of units off with no enemy on the screen: that is waiting at the "
+        + "wrong end of the lane, and yes. No when an enemy is on the screen near them, because then "
         + "the moment is about that enemy. No when the still time is only a couple of seconds: a pause is not "
         + "idling. A good player moves with the broadest order that gets them there: one right-click on the "
         + "minimap sends the champion the whole way to the lane, and that is the walk the coach demonstrates, "
@@ -64,7 +70,29 @@ public static class CoachQuestions
         + "farm for gold is the one in their own lane, so go by the champion's role first (a marksman or a "
         + "support belongs in bot lane, a mid champion in mid, a top champion in top), then by the allies: "
         + "the lane their partner or their team is in, and not a lane that already has the allies it needs. "
-        + "Distance decides only between lanes that are otherwise equally theirs.";
+        + "Where an option says where its minions meet, that is where the walk goes; it does not change which "
+        + "lane is theirs. Distance decides only between lanes that are otherwise equally theirs.";
+
+    /// <summary>
+    /// Asked while the player stands in a lane with enemy minions on their
+    /// screen: should they step back behind their own? The counts and
+    /// distances are in `minions`; where a laner stands is decided here.
+    /// </summary>
+    public const string Back =
+        "The player is in a lane with enemy minions on the screen; `minions` says how many of each side's "
+        + "are on the screen (a floor: bars in a clump hide each other), how far away the nearest enemy "
+        + "minion is, how many enemy minions are within 550 units of the player (a caster minion's attack "
+        + "range), and how far along the lane the player stands in front of their own foremost minion, toward "
+        + "the enemy (negative is behind it; absent when none of their minions is on the screen). Would a good "
+        + "player step back toward their own side of the lane right now? Minions attack an enemy champion "
+        + "standing among them, so every enemy minion in reach is damage taken for nothing. A good player "
+        + "stands behind the front of their own minions, where the enemy wave hits those minions and not "
+        + "them, and steps forward only to last-hit and back out again. Yes when they stand in front of their "
+        + "own minions with enemy minions in reach, or among enemy minions with none of their own on the "
+        + "screen to take the hits. No when they are behind their own front, or no enemy minion is in reach. "
+        + "No when an enemy champion is close on the screen and the moment is a fight with them: the fight "
+        + "decides where they stand, not the minions. No when the coach stepped them back a moment ago "
+        + "(`coach`) and they have not walked back in since.";
 
     public const string BoltRemark =
         "A bolt has just come at the player; `occasion` says where from, what came of it, how far they "
