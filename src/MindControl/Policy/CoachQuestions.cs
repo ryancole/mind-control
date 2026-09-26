@@ -37,7 +37,11 @@ public static class CoachQuestions
     /// </summary>
     public const string Walk =
         "The player has been standing on one spot; `whereabouts` says where, for how long, and how far "
-        + "each lane is. Would a good player in this seat be walking to a lane right now instead? Yes when "
+        + "each lane is. Would a good player in this seat be walking to a lane right now instead? A good "
+        + "player is always near the action: first at the minion wave, where the gold is farmed, and "
+        + "otherwise where their team is; standing anywhere else is gold and experience left on the table. "
+        + "From about 1:05 the minions march down every lane, a new wave each half minute, so a lane always "
+        + "has a wave to farm; the minions themselves are not in the state, so read a lane as its wave. Yes when "
         + "they are idling in the fountain or their own base and nothing keeps them there. At the start of "
         + "the game a good player spends the first half minute or so buying and is on the way to lane by "
         + "about 0:45, well before the first minions meet around 1:30: standing in the fountain before then, "
@@ -55,10 +59,12 @@ public static class CoachQuestions
 
     public const string Lane =
         "Which lane would a good player in this seat be walking to? Each option gives its distance and "
-        + "direction from where the player stands and which allies are already in it. Go by the champion's "
-        + "role first (a marksman or a support belongs in bot lane, a mid champion in mid, a top champion in "
-        + "top), then by the allies: the lane their partner is in, and not a lane that already has the allies "
-        + "it needs. Distance decides only between lanes that are otherwise equally theirs.";
+        + "direction from where the player stands and which allies are already in it. A good player goes "
+        + "where the action is, the minion wave first and their team second: the wave they are there to "
+        + "farm for gold is the one in their own lane, so go by the champion's role first (a marksman or a "
+        + "support belongs in bot lane, a mid champion in mid, a top champion in top), then by the allies: "
+        + "the lane their partner or their team is in, and not a lane that already has the allies it needs. "
+        + "Distance decides only between lanes that are otherwise equally theirs.";
 
     public const string BoltRemark =
         "A bolt has just come at the player; `occasion` says where from, what came of it, how far they "

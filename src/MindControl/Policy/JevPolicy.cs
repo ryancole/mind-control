@@ -413,7 +413,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         }
         var questions = new Questions()
             .Noul("walk", CoachQuestions.Walk,
-                yes: "they are idling off lane and a good player would be on the way to a lane by now",
+                yes: "they are idling away from the action and a good player would be on the way to a lane's minion wave, or to their team, by now",
                 no: "they are in a lane, held there by something on the screen, or have only just paused")
             .Choice("lane", CoachQuestions.Lane, criteria);
 
