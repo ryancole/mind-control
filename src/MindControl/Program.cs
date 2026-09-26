@@ -38,6 +38,8 @@ HashSet<string>? kinds =
     EventKind.Identified, EventKind.Roster,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
     EventKind.SkillPoint, EventKind.SkillSpent,
+    // Logged only for now: no question is asked of them yet.
+    EventKind.LastHit, EventKind.MissedCs,
 ];
 
 for (var i = 0; i < args.Length; i++)

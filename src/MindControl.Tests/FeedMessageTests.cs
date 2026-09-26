@@ -128,6 +128,88 @@ public sealed class FeedMessageTests
     }
 
     [TestMethod]
+    public void Minions_cs_and_last_hits_on_the_self_row_parse()
+    {
+        const string json = """
+            {"t":"frame","seq":800,"video_time":410.0,"captured_at":null,
+             "game_time":330,"game_time_observed":true,"allies_dead":0,
+             "fps":7.1,"dropped":0,"lag":0.04,
+             "champions":[
+               {"video_time":410.0,"game_time":330,"game_time_observed":true,
+                "track_id":3,"team":"blue","champion":"Ezreal","x":40.0,"y":60.0,
+                "visible":true,"seconds_since_seen":0.0,"is_self":true,"alive":true,
+                "allies_dead":0,"cs":27,
+                "minions":[
+                  {"team":"red","x":1210.5,"y":640.0,"health":0.22,"world_x":9800.0,"world_y":4100.0},
+                  {"team":"blue","x":980.0,"y":700.0}],
+                "minion_dots":[{"team":"red","x":201.0,"y":188.0,"world_x":9750.0,"world_y":4150.0}],
+                "last_hits":[
+                  {"at":408.4,"outcome":"last_hit","health":0.08,"x":1190.0,"y":655.0},
+                  {"at":408.9,"outcome":"missed","health":0.12,"x":1260.0,"y":610.0}]},
+               {"video_time":410.0,"game_time":330,"game_time_observed":true,
+                "track_id":3,"team":"blue","champion":"Ezreal","x":40.0,"y":60.0,
+                "visible":true,"seconds_since_seen":0.0,"is_self":true,"alive":true,
+                "allies_dead":0,"minions":[],"minion_dots":[]},
+               {"video_time":410.0,"game_time":330,"game_time_observed":true,
+                "track_id":12,"team":"red","champion":"Xerath","x":88.0,"y":41.0,
+                "visible":true,"seconds_since_seen":0.0,"is_self":false,"alive":null,
+                "allies_dead":0}
+             ]}
+            """;
+
+        var frame = JsonSerializer.Deserialize<FrameEnvelope>(json, FeedJson.Options)!;
+        var self = frame.Champions[0];
+        Assert.AreEqual(27, self.Cs);
+        Assert.HasCount(2, self.Minions!);
+        Assert.AreEqual(MinionTeam.Red, self.Minions![0].Team);
+        Assert.AreEqual(0.22, self.Minions[0].Health);
+        Assert.AreEqual(9800.0, self.Minions[0].WorldX);
+        Assert.IsNull(self.Minions[1].Health, "omitted when the bar was covered or cut");
+        Assert.IsNull(self.Minions[1].WorldX);
+        Assert.AreEqual(201.0, self.MinionDots!.Single().X);
+        Assert.AreEqual(LastHitOutcome.LastHit, self.LastHits![0].Outcome);
+        Assert.AreEqual(408.9, self.LastHits[1].At);
+        Assert.AreEqual(LastHitOutcome.Missed, self.LastHits[1].Outcome);
+
+        var empty = frame.Champions[1];
+        Assert.IsEmpty(empty.Minions!, "an empty array is a reading: no minions on screen");
+        Assert.IsEmpty(empty.MinionDots!);
+        Assert.IsNull(empty.Cs, "absent until read");
+        Assert.IsNull(empty.LastHits);
+
+        var enemy = frame.Champions[2];
+        Assert.IsNull(enemy.Minions, "absent means nothing looked");
+        Assert.IsNull(enemy.MinionDots);
+    }
+
+    [TestMethod]
+    public void Last_hit_and_missed_cs_events_parse_with_their_fields()
+    {
+        const string hit = """
+            {"t":"event","kind":"last_hit","seq":820,"video_time":409.9,"game_time":330,
+             "team":"blue","champion":"Ezreal","track_id":3,"is_self":true,
+             "at":408.4,"health":0.08,"x":1190.0,"y":655.0}
+            """;
+        var evt = JsonSerializer.Deserialize<GameEvent>(hit, FeedJson.Options)!;
+        Assert.AreEqual(EventKind.LastHit, evt.Kind);
+        Assert.IsTrue(evt.IsSelf);
+        Assert.AreEqual(408.4, evt.At);
+        Assert.AreEqual(0.08, evt.Health);
+        Assert.AreEqual(1190.0, evt.X);
+        Assert.AreEqual(655.0, evt.Y);
+
+        const string missed = """
+            {"t":"event","kind":"missed_cs","seq":821,"video_time":410.4,"game_time":331,
+             "team":"blue","champion":"Ezreal","track_id":3,"is_self":true,
+             "at":408.9,"health":0.12,"x":1260.0,"y":610.0}
+            """;
+        evt = JsonSerializer.Deserialize<GameEvent>(missed, FeedJson.Options)!;
+        Assert.AreEqual(EventKind.MissedCs, evt.Kind);
+        Assert.AreEqual(0.12, evt.Health);
+        Assert.AreEqual(610.0, evt.Y);
+    }
+
+    [TestMethod]
     public void Unknown_keys_are_ignored_not_fatal()
     {
         const string json = """
@@ -154,5 +236,24 @@ public sealed class FeedMessageTests
         Assert.IsTrue(meta.HasLiveness);
         Assert.IsFalse(meta.HasNameplates);
         Assert.IsNull(meta.WorldUnitsPerPixel);
+        Assert.IsFalse(meta.HasMinions, "a feed from before the lane stages reads as not measured");
+        Assert.IsFalse(meta.HasLastHits);
+    }
+
+    [TestMethod]
+    public void Lane_stage_flags_parse()
+    {
+        const string json = """
+            {"t":"meta","schema":1,"source":"live","width":2560,"height":1440,
+             "stride":1,"created":"2026-09-25T20:30:00Z","has_game_time":true,
+             "has_liveness":true,"has_nameplates":true,
+             "has_minions":true,"has_minion_dots":false,"has_last_hits":true,
+             "world_bounds":null,"world_units_per_pixel":null}
+            """;
+
+        var meta = JsonSerializer.Deserialize<Meta>(json, FeedJson.Options)!;
+        Assert.IsTrue(meta.HasMinions);
+        Assert.IsFalse(meta.HasMinionDots);
+        Assert.IsTrue(meta.HasLastHits);
     }
 }

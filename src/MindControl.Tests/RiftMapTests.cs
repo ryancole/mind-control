@@ -42,6 +42,37 @@ public sealed class RiftMapTests
     }
 
     [TestMethod]
+    public void A_point_is_in_a_lane_only_outside_both_bases()
+    {
+        Assert.AreEqual("bot", RiftMap.LaneOf(13064, 2051));
+        Assert.AreEqual("mid", RiftMap.LaneOf(7400, 7400));
+        Assert.IsNull(RiftMap.LaneOf(2500, 1500), "the lanes meet in the base");
+        Assert.IsNull(RiftMap.LaneOf(400, 460));
+        Assert.IsNull(RiftMap.LaneOf(13500, 13500));
+        Assert.IsNull(RiftMap.LaneOf(7000, 3000), "the jungle");
+    }
+
+    [TestMethod]
+    public void How_far_along_a_lane_runs_from_our_nexus_to_theirs()
+    {
+        foreach (var lane in RiftMap.Lanes)
+        {
+            Assert.AreEqual(0, RiftMap.Along(lane, 1000, 1000).Progress, 1e-9, $"{lane}: behind our end is its start");
+            Assert.AreEqual(1, RiftMap.Along(lane, 14000, 14000).Progress, 1e-9, $"{lane}: past theirs is its end");
+            foreach (var progress in new[] { 0.1, 0.37, 0.5, 0.82 })
+            {
+                var (x, y) = RiftMap.At(lane, progress);
+                var along = RiftMap.Along(lane, x, y);
+                Assert.AreEqual(0, along.Distance, 1e-6);
+                Assert.AreEqual(progress, along.Progress, 1e-9, $"{lane} at {progress} and back");
+            }
+        }
+        Assert.AreEqual(0.5, RiftMap.Along("mid", 7400, 7400).Progress, 0.01, "the map's centre is the middle of mid");
+        var (behind, ahead) = (RiftMap.Along("bot", 8600, 1400).Progress, RiftMap.Along("bot", 9300, 1400).Progress);
+        Assert.IsLessThan(ahead, behind, "further east on bot's straight is further toward the enemy");
+    }
+
+    [TestMethod]
     public void Each_lane_is_played_at_a_spot_on_it_far_from_the_base()
     {
         foreach (var lane in RiftMap.Lanes)

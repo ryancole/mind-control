@@ -63,8 +63,109 @@ public static class RiftMap
             return "their own base";
         if (x > EnemyBaseEdge && y > EnemyBaseEdge)
             return "the enemy base";
+        return LaneOf(x, y) is { } lane ? $"{lane} lane" : "the jungle or river";
+    }
+
+    /// <summary>
+    /// The lane a point stands in, or null when it is in the fountain, either
+    /// base, or off every lane: the lanes meet at each base, so a point there
+    /// belongs to none of them.
+    /// </summary>
+    public static string? LaneOf(double x, double y)
+    {
+        if (double.Hypot(x - FountainX, y - FountainY) <= FountainRadius
+            || (x < BaseEdge && y < BaseEdge) || (x > EnemyBaseEdge && y > EnemyBaseEdge))
+            return null;
         var nearest = Lanes.MinBy(lane => Toward(lane, x, y).Distance)!;
-        return Toward(nearest, x, y).Distance <= LaneHalfWidth ? $"{nearest} lane" : "the jungle or river";
+        return Toward(nearest, x, y).Distance <= LaneHalfWidth ? nearest : null;
+    }
+
+    /// <summary>
+    /// The player's own outer and inner turrets in each lane, as the points of
+    /// its path they stand beside. Whether one still stands is not in the feed.
+    /// </summary>
+    private static readonly Dictionary<string, ((double X, double Y) Outer, (double X, double Y) Inner)> OurTurrets = new()
+    {
+        ["top"] = ((1250, 10504), (1483, 6919)),
+        ["mid"] = ((5846, 6396), (5048, 4812)),
+        ["bot"] = ((10504, 1250), (6919, 1483)),
+    };
+
+    /// <summary>A turret's attack range, in game units: a wave this near one is fighting it.</summary>
+    public const double TurretRange = 750;
+
+    /// <summary>
+    /// Where an enemy wave's front is in a lane, named as a coach says it,
+    /// by the player's own turrets: in the enemy's half, in the player's half
+    /// short of their outer turret, at their outer turret, or at or past their
+    /// inner turret. "At" is within a turret's range of it, along the lane.
+    /// </summary>
+    public static string EnemyFrontPlace(string lane, double progress)
+    {
+        if (progress <= TurretReach(lane, inner: true))
+            return "at or past your inner turret";
+        if (progress <= TurretReach(lane, inner: false))
+            return "at your outer turret";
+        return progress < 0.5 ? "in your half of the lane, short of your outer turret" : "in their half of the lane";
+    }
+
+    /// <summary>Whether an enemy wave's front is at one of the player's own turrets.</summary>
+    public static bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, inner: false);
+
+    /// <summary>How far along the lane a turret's range reaches toward the enemy.</summary>
+    private static double TurretReach(string lane, bool inner)
+    {
+        var turret = inner ? OurTurrets[lane].Inner : OurTurrets[lane].Outer;
+        return Along(lane, turret.X, turret.Y).Progress + TurretRange / Length(lane);
+    }
+
+    /// <summary>A lane's length along its centre line, nexus to nexus.</summary>
+    public static double Length(string lane)
+    {
+        var path = Paths[lane];
+        var length = 0.0;
+        for (var i = 1; i < path.Length; i++)
+            length += double.Hypot(path[i].X - path[i - 1].X, path[i].Y - path[i - 1].Y);
+        return length;
+    }
+
+    /// <summary>
+    /// How far along a lane a point is: the fraction of the lane's length
+    /// from the player's nexus (0) to the enemy's (1) at the point's nearest
+    /// place on it, and how far off the centre line it lies. How far a wave
+    /// has pushed is this, for its front minion.
+    /// </summary>
+    public static (double Distance, double Progress) Along(string lane, double x, double y)
+    {
+        var path = Paths[lane];
+        var best = (Distance: double.PositiveInfinity, Units: 0.0);
+        var walked = 0.0;
+        for (var i = 1; i < path.Length; i++)
+        {
+            var candidate = ToSegment(path[i - 1], path[i], x, y);
+            if (candidate.Distance < best.Distance)
+                best = (candidate.Distance, walked + double.Hypot(candidate.X - path[i - 1].X, candidate.Y - path[i - 1].Y));
+            walked += double.Hypot(path[i].X - path[i - 1].X, path[i].Y - path[i - 1].Y);
+        }
+        return (best.Distance, best.Units / walked);
+    }
+
+    /// <summary>The point on a lane's centre line <paramref name="progress"/> of the way from the player's nexus to the enemy's.</summary>
+    public static (double X, double Y) At(string lane, double progress)
+    {
+        var path = Paths[lane];
+        var remaining = Math.Clamp(progress, 0, 1) * Length(lane);
+        for (var i = 1; i < path.Length; i++)
+        {
+            var segment = double.Hypot(path[i].X - path[i - 1].X, path[i].Y - path[i - 1].Y);
+            if (remaining <= segment)
+            {
+                var t = segment == 0 ? 0 : remaining / segment;
+                return (path[i - 1].X + t * (path[i].X - path[i - 1].X), path[i - 1].Y + t * (path[i].Y - path[i - 1].Y));
+            }
+            remaining -= segment;
+        }
+        return path[^1];
     }
 
     /// <summary>

@@ -23,7 +23,8 @@ public sealed record Moment
         + "in their place at this exact moment. Everything below is what the player can see: "
         + "their own HUD, champions drawn on the screen in front of them, and their own team on "
         + "the minimap, themselves included (`whereabouts` is where they stand on it, how long they "
-        + "have stood there, and how far each lane is). Enemies hidden in fog of war are not listed, because the player cannot "
+        + "have stood there, and how far each lane is, with the minions the minimap shows in it), and the minions "
+        + "on their screen (`minions`). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself.";
@@ -44,6 +45,7 @@ public sealed record Moment
     public IReadOnlyList<EnemyFacts> VisibleEnemies { get; init; } = [];
     public IReadOnlyList<AllyFacts> Allies { get; init; } = [];
     public WhereaboutsFacts? Whereabouts { get; init; }
+    public MinionFacts? Minions { get; init; }
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
@@ -86,7 +88,48 @@ public sealed record WhereaboutsFacts(string Place, double StoodStillForSeconds,
 }
 
 /// <summary>A lane as seen from where the player stands. No direction when they are standing in it.</summary>
-public sealed record LaneFacts(string Lane, double DistanceUnits, string? ScreenDirection, IReadOnlyList<string> AlliesThere);
+public sealed record LaneFacts(string Lane, double DistanceUnits, string? ScreenDirection, IReadOnlyList<string> AlliesThere)
+{
+    /// <summary>The minions the minimap shows in the lane; null when the minimap was not read for them.</summary>
+    public WaveFacts? Wave { get; init; }
+}
+
+/// <summary>
+/// A lane's minions off the player's own minimap. The counts are a floor (a
+/// dot under a champion's icon is not seen). A front is how far that side's
+/// foremost minion has pushed, as a fraction of the lane from the player's
+/// nexus (0) to the enemy's (1); <see cref="MeetAt"/> is halfway between the
+/// two fronts, where the waves meet or are closing, with its distance and
+/// screen direction from the player. Null fronts when that side shows none.
+/// </summary>
+public sealed record WaveFacts(
+    int OurMinions, int TheirMinions, double? OurFront, double? TheirFront,
+    double? MeetAt, double? MeetUnitsAway, string? MeetScreenDirection)
+{
+    /// <summary>
+    /// Where the enemy's front is, by the player's own turrets
+    /// (<see cref="RiftMap.EnemyFrontPlace"/>): "at your outer turret" and the
+    /// like. Null when the minimap shows none of theirs in the lane.
+    /// </summary>
+    public string? TheirFrontPlace { get; init; }
+
+    /// <summary>How far the enemy's front is from the player, and which way on the screen.</summary>
+    public double? TheirFrontUnitsAway { get; init; }
+    public string? TheirFrontScreenDirection { get; init; }
+}
+
+/// <summary>
+/// The minions on the player's own screen, off their health bars. The counts
+/// are a floor (bars in a clump hide each other). The distances are from the
+/// player's model in game units, good to about a hundred:
+/// <see cref="TheirsWithinCasterRange"/> counts the enemy minions within 550
+/// units, a caster minion's attack range. <see cref="AheadOfOurFrontUnits"/>
+/// is how far along the lane the player stands in front of their own
+/// foremost minion on the screen, toward the enemy; negative is behind it,
+/// null when no minion of theirs is on the screen in the lane.
+/// </summary>
+public sealed record MinionFacts(
+    int Ours, int Theirs, double? NearestTheirsUnits, int TheirsWithinCasterRange, double? AheadOfOurFrontUnits);
 
 /// <summary>Something the coach already did: "pressed Q", "stepped up-left", "remarked on aim".</summary>
 public sealed record RecentAction(string Did, double SecondsAgo);

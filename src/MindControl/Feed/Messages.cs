@@ -39,6 +39,18 @@ public sealed record Meta
     public bool HasAbilities { get; init; }
     public bool HasThreats { get; init; }
     public bool HasSkillshots { get; init; }
+
+    // The lane stages. Unlike the three above these run live too. Each flag
+    // gates its own fields the same way: false means nothing looked, never
+    // that there were no minions or no creep score.
+    public bool HasMinions { get; init; }
+
+    /// <summary>Needs a minimap panel of 400px or more (the in-game minimap
+    /// scale turned up); the small default panel leaves this false.</summary>
+    public bool HasMinionDots { get; init; }
+
+    /// <summary>Gates both <c>cs</c> and <c>last_hits</c>.</summary>
+    public bool HasLastHits { get; init; }
     public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
 }
@@ -97,6 +109,99 @@ public sealed record ChampionRow
     /// calibration, not the game, or the player dead).
     /// </summary>
     public string[]? Learnable { get; init; }
+
+    /// <summary>
+    /// Minions on the player's own screen, read from their health bars. State,
+    /// like <see cref="Learnable"/>: empty means the view was read and shows
+    /// none, null means nothing looked. A floor on the count (bars in a clump
+    /// overlap); the positions are the useful part.
+    /// </summary>
+    public Minion[]? Minions { get; init; }
+
+    /// <summary>
+    /// Minions anywhere on the map, from the minimap. Positions are
+    /// minimap-crop pixels like the row's own X/Y. Empty and null mean what
+    /// they do for <see cref="Minions"/>; a dot under a champion marker is not
+    /// seen, so this too is a floor.
+    /// </summary>
+    public MinionDot[]? MinionDots { get; init; }
+
+    /// <summary>The player's creep score. Filtered upstream so it never falls,
+    /// and a rise can lag the HUD by a reading or two. Null until first read.</summary>
+    public int? Cs { get; init; }
+
+    /// <summary>Enemy minion deaths on the player's screen, judged against the
+    /// creep score. A moment, not state: only on the frame an entry resolved,
+    /// about 1.5s after the death.</summary>
+    public LastHit[]? LastHits { get; init; }
+}
+
+public static class MinionTeam
+{
+    /// <summary>The player's own side.</summary>
+    public const string Blue = "blue";
+    public const string Red = "red";
+}
+
+/// <summary>One minion on the world view.</summary>
+public sealed record Minion
+{
+    public string Team { get; init; } = "";
+
+    /// <summary>World-view pixels (the space <see cref="Threat"/> uses) of the
+    /// minion's body, estimated below its bar.</summary>
+    public double X { get; init; }
+    public double Y { get; init; }
+
+    /// <summary>Bar fill in [0, 1]. Null when another bar covered this one or
+    /// the frame edge cut it: the minion is there, its health is not legible.</summary>
+    public double? Health { get; init; }
+
+    /// <summary>Projected from the screen; expect roughly a hundred units of error.</summary>
+    public double? WorldX { get; init; }
+    public double? WorldY { get; init; }
+}
+
+/// <summary>One minion dot on the minimap. No health.</summary>
+public sealed record MinionDot
+{
+    public string Team { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double? WorldX { get; init; }
+    public double? WorldY { get; init; }
+}
+
+/// <summary>
+/// An enemy minion that died on the player's screen, and whether their creep
+/// score rose for it. A "missed" says only that the player did not get the
+/// kill -- not that they were in range to; that is this side's judgement.
+/// Judged only while the player is alive.
+/// </summary>
+public sealed record LastHit
+{
+    /// <summary>The video_time the minion's bar was last seen.</summary>
+    public double At { get; init; }
+
+    /// <summary>One of <see cref="LastHitOutcome"/>.</summary>
+    public string Outcome { get; init; } = "";
+
+    /// <summary>The bar's last legible fill. A last hit well above ~0.35 was
+    /// an ability kill rather than an auto-attack.</summary>
+    public double Health { get; init; }
+
+    /// <summary>World-view pixels where it died.</summary>
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+public static class LastHitOutcome
+{
+    public const string LastHit = "last_hit";
+    public const string Missed = "missed";
+
+    /// <summary>The score was unreadable around the death. Makes no event.</summary>
+    public const string Unknown = "unknown";
 }
 
 /// <summary>One of the player's own casts, named to a button by the HUD.</summary>
@@ -230,7 +335,7 @@ public sealed record GameEvent
     public double? DownFor { get; init; }
     public double? GoneFor { get; init; }
 
-    // vanished
+    // vanished; last_hit and missed_cs (world-view pixels there)
     public double? X { get; init; }
     public double? Y { get; init; }
     public double? WorldX { get; init; }
@@ -238,6 +343,8 @@ public sealed record GameEvent
 
     // cast
     public double? Drop { get; init; }
+
+    // shared by cast, ability, last_hit and missed_cs
     public double? At { get; init; }
     public double? Span { get; init; }
     public bool? Continuous { get; init; }
@@ -268,6 +375,9 @@ public sealed record GameEvent
     public double? Flight { get; init; }
     public double? Fall { get; init; }
     public double? Lead { get; init; }
+
+    // last_hit and missed_cs: the minion bar's last legible fill
+    public double? Health { get; init; }
 }
 
 public static class EventKind
@@ -295,4 +405,10 @@ public static class EventKind
 
     /// <summary>A bolt the player threw, and how near it passed.</summary>
     public const string Skillshot = "skillshot";
+
+    /// <summary>An enemy minion died on the player's screen and their creep score rose for it.</summary>
+    public const string LastHit = "last_hit";
+
+    /// <summary>A low enemy minion died on the player's screen and someone or something else got it.</summary>
+    public const string MissedCs = "missed_cs";
 }
