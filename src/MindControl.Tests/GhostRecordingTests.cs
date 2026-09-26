@@ -29,7 +29,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void Frames_read_back_in_order_behind_the_screen_size()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Write(new MouseMoveMessage(1700, 900));
             recording.Write(new MouseMoveMessage(1650, 850));
@@ -48,17 +48,19 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
-    public void A_second_run_starts_the_file_afresh()
+    public void A_second_run_appends_after_the_first_and_restates_its_screen()
     {
-        using (var first = GhostRecording.Create(_path, 1920, 1080))
+        using (var first = GhostRecording.Append(_path, 1920, 1080))
             first.Write(new MouseMoveMessage(1, 2));
-        using (var second = GhostRecording.Create(_path, 2560, 1440))
+        using (var second = GhostRecording.Append(_path, 2560, 1440))
             second.Write(new MouseMoveMessage(3, 4));
 
         var messages = ProtocolFile.Read(_path);
         CollectionAssert.AreEqual(
             new Message[]
             {
+                new ScreenSizeMessage(1920, 1080),
+                new MouseMoveMessage(1, 2),
                 new ScreenSizeMessage(2560, 1440),
                 new MouseMoveMessage(3, 4),
             },
@@ -68,7 +70,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void Any_message_can_be_recorded_so_keys_have_somewhere_to_go()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Write(new KeyDownMessage(HidUsage.F));
             recording.Write(new KeyUpMessage(HidUsage.F));
@@ -83,7 +85,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void Every_frame_is_on_disk_before_the_recording_is_disposed()
     {
-        using var recording = GhostRecording.Create(_path, 1920, 1080);
+        using var recording = GhostRecording.Append(_path, 1920, 1080);
         recording.Write(new MouseMoveMessage(5, 6));
 
         // Read through a separate handle while the writer is still open: a
@@ -97,7 +99,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void The_file_reads_by_path_while_a_run_is_still_recording_it()
     {
-        using var recording = GhostRecording.Create(_path, 1920, 1080);
+        using var recording = GhostRecording.Append(_path, 1920, 1080);
         recording.Press(new KeyPress(10.0, "Q", 2, "first"));
         recording.Press(new KeyPress(12.5, "W", 2, "second"));
 
@@ -127,7 +129,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void A_press_reads_back_as_a_key_down_and_up_on_the_keycap_usage()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Write(new MouseMoveMessage(1700, 900));
             recording.Press(new KeyPress(17.5, "Q", 2, "Karma in range"));
@@ -149,7 +151,7 @@ public sealed class GhostRecordingTests
     public void A_press_with_Ctrl_held_reads_back_as_the_chord()
     {
         IReadOnlyList<Message> pressed;
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             pressed = recording.Press(new KeyPress(452.1, "Q", 2, "the point goes in Q") { WithControl = true });
             Assert.AreEqual(5, recording.FramesWritten);
@@ -170,7 +172,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void A_step_reads_back_as_a_right_click_a_step_from_the_players_model()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Step(new MoveStep(218.1, "left", -1, 0, 3, "a bolt from the right"));
             Assert.AreEqual(4, recording.FramesWritten);
@@ -192,7 +194,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void A_step_is_taken_from_the_anchor_given_and_stays_on_the_screen()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080, playerAnchor: (100, 540)))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080, playerAnchor: (100, 540)))
             recording.Step(new MoveStep(1, "up-left", -0.70710678, -0.70710678, 3, "diagonal"));
 
         // 100 - 141 is off the left edge, so the click is clamped to it; the
@@ -205,7 +207,7 @@ public sealed class GhostRecordingTests
     public void A_walk_to_a_place_on_the_map_is_a_right_click_on_the_minimap()
     {
         IReadOnlyList<Message> walk;
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             Assert.AreEqual(new MinimapRect(1620, 780, 300, 300), recording.Minimap, "the stock HUD's corner at 1080p");
             recording.Calibrate(new WorldBounds { MaxX = 14870, MaxY = 14980 });
@@ -237,7 +239,7 @@ public sealed class GhostRecordingTests
         {
             Destination = new Destination("bot lane", 13100, 3600),
         };
-        using var recording = GhostRecording.Create(_path, 1920, 1080, minimap: new MinimapRect(1500, 700, 400, 400));
+        using var recording = GhostRecording.Append(_path, 1920, 1080, minimap: new MinimapRect(1500, 700, 400, 400));
 
         // No world bounds yet: the walk has nowhere on the minimap to land,
         // so it is taken as a step on the ground its way.
@@ -258,7 +260,7 @@ public sealed class GhostRecordingTests
     public void What_was_written_is_handed_back_and_shown_plainly()
     {
         IReadOnlyList<Message> moved, pressed, stepped;
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             Assert.AreEqual("ScreenSize 1920x1080", recording.Header);
 
@@ -285,7 +287,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void Presses_and_steps_are_spaced_by_the_video_time_between_them()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             Assert.IsNull(recording.LastVideoTime);
             // The first input of a run starts the clock: no delay before it.
@@ -328,7 +330,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void A_step_stamped_before_the_last_press_follows_at_no_gap_and_leaves_the_clock_alone()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Press(new KeyPress(20.0, "Q", 2, "press"));
             // Stamped at the bolt's first sighting, 2s before the press was
@@ -351,11 +353,11 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
-    public void Each_run_starts_its_own_clock()
+    public void Each_run_starts_its_own_clock_so_no_gap_spans_two_runs()
     {
-        using (var first = GhostRecording.Create(_path, 1920, 1080))
+        using (var first = GhostRecording.Append(_path, 1920, 1080))
             first.Press(new KeyPress(10.0, "Q", 2, "first run"));
-        using (var second = GhostRecording.Create(_path, 1920, 1080))
+        using (var second = GhostRecording.Append(_path, 1920, 1080))
         {
             var pressed = second.Press(new KeyPress(500.0, "Q", 2, "second run, much later in the video"));
             Assert.AreEqual("KeyDown Q (0x14), KeyUp Q (0x14)", GhostRecording.Show(pressed));
@@ -367,7 +369,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void Untimed_writes_do_not_move_the_clock()
     {
-        using var recording = GhostRecording.Create(_path, 1920, 1080);
+        using var recording = GhostRecording.Append(_path, 1920, 1080);
         recording.Press(new KeyPress(10.0, "Q", 2, "press"));
         recording.Write(new MouseMoveMessage(1, 2));
         Assert.AreEqual(10.0, recording.LastVideoTime);
@@ -377,7 +379,7 @@ public sealed class GhostRecordingTests
     [TestMethod]
     public void A_delay_is_rounded_to_the_microsecond_the_file_holds()
     {
-        using (var recording = GhostRecording.Create(_path, 1920, 1080))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
         {
             recording.Press(new KeyPress(0.0, "Q", 2, "start"));
             // 16.7ms is not a whole number of microseconds in binary; what is

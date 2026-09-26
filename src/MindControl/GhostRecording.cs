@@ -77,10 +77,10 @@ public sealed class GhostRecording : IDisposable
     public MinimapRect Minimap { get; }
 
     /// <summary>
-    /// Starts <paramref name="path"/> afresh, creating it (and its directory)
-    /// if needed and replacing whatever an earlier run left there, and writes
-    /// the screen size the coordinates that follow are in. One file is one
-    /// run, so what misdirection plays back is only this run's ghost.
+    /// Opens <paramref name="path"/> for appending, creating it (and its
+    /// directory) if needed, and writes the screen size the coordinates that
+    /// follow are in. Appending to a file from an earlier run is fine: each run
+    /// restates its screen size, so a reader always knows which one applies.
     /// <paramref name="playerAnchor"/> is where the player's model sits on
     /// their screen, which a step is taken from; the camera is locked, so it
     /// is one place, and the default is the screen's centre.
@@ -89,13 +89,13 @@ public sealed class GhostRecording : IDisposable
     /// (<see cref="MinimapRect.Default"/>), a placeholder until a screenshot
     /// has been through the calibrator.
     /// </summary>
-    public static GhostRecording Create(
+    public static GhostRecording Append(
         string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null,
         MinimapRect? minimap = null)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
             Directory.CreateDirectory(dir);
-        var writer = ProtocolFileWriter.Create(path);
+        var writer = ProtocolFileWriter.Append(path);
         try
         {
             writer.Write(new ScreenSizeMessage(screenWidth, screenHeight));

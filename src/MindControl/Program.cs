@@ -105,8 +105,8 @@ for (var i = 0; i < args.Length; i++)
                   --trace <file>     record when the coach pressed and stepped, for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
                   --audit <file>     record every question put to Jev and its answer (JSONL)
-                  --record <file|none> write the ghost's mouse and key input as a misdirection
-                                     protocol file (.msdr), replaced each run  (default data/ghost.msdr)
+                  --record <file|none> append the ghost's mouse and key input as a misdirection
+                                     protocol file (.msdr)  (default data/ghost.msdr)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
@@ -156,7 +156,7 @@ using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, appen
 using var audit = auditPath is null ? null : new JevAudit(auditPath);
 using var recording = recordPath is null
     ? null
-    : GhostRecording.Create(recordPath, screenWidth, screenHeight, playerAnchor, minimap);
+    : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor, minimap);
 // One policy owns everything -- hands and feet -- because they are one set
 // of questions about one moment, and the model answers them together.
 var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },

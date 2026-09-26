@@ -217,12 +217,11 @@ never judged.
 ## Ghost input recording
 
 The ghost's input -- the mouse and keyboard reactions the coach would have
-made -- is also written to `data/ghost.msdr` in the wire format of the
+made -- is also appended to `data/ghost.msdr` in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file
-(`--record <file>` to move it, `--record none` to turn it off). Each run
-starts the file afresh, so it only ever holds the latest run's ghost, and
-opens it with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
+(`--record <file>` to move it, `--record none` to turn it off). Each run opens
+with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
 and `KeyUp` pair (a level-up's point as the chord, `KeyDown Ctrl` before the
 pair and `KeyUp Ctrl` after it, which the game reads as a point into the
 ability rather than a cast), and every step as a
@@ -244,7 +243,7 @@ on a feed without them (which asks no lane question anyway) would be taken
 as a step on the ground. It is a recording, not a connection: this tool never opens
 the device. The file stays open for the run, shared for reading, and the
 library's reader opens a file a writer still holds, so misdirection can play
-the recording by path while a run is still writing it: a read sees every
+the recording by path while a run is still appending to it: a read sees every
 frame flushed so far and a clean end of file, never a torn frame.
 
 The file carries the timing too, as the format's `FILE_DELAY` records: before
