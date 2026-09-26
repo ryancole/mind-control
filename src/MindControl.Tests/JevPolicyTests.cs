@@ -402,7 +402,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_walks_to_the_chosen_lane_and_again_while_they_still_stand()
+    public void A_yes_walks_to_the_chosen_lane_in_one_order_and_the_next_question_is_told()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, q) => id switch
@@ -414,8 +414,13 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 106.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
 
+        // Asked at 103 and again at 106; the fake says yes both times, where
+        // the rubric tells the real model that the lane in coach_sent_them_to
+        // has had its one click already.
+        Assert.IsNull(jev.Asks[0].State.Whereabouts!.CoachSentThemTo);
+        Assert.AreEqual("bot lane", jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
         var steps = policy.DrainMoves();
-        Assert.HasCount(2, steps, "asked at 103 and again at 106");
+        Assert.HasCount(2, steps);
         Assert.AreEqual(103.0, steps[0].VideoTime);
         Assert.AreEqual(106.0, steps[1].VideoTime);
         Assert.AreEqual("up-right", steps[0].Direction);
@@ -436,6 +441,26 @@ public sealed class JevPolicyTests
         Assert.AreEqual(3.0, reminded.SecondsAgo);
         Assert.IsEmpty(policy.DrainKeys());
         Assert.IsEmpty(policy.DrainCues());
+    }
+
+    [TestMethod]
+    public void A_new_spot_forgets_the_lane_the_coach_sent_them_to()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "walk" => FakeJev.Yes,
+            "lane" => FakeJev.Pick(q, "bot"),
+            _ => null,
+        };
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 50, Idle()));
+        // They moved on and stopped again somewhere else: a fresh stand.
+        for (var t = 103.1; t <= 106.1 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 53, Idle(x: 1400)));
+
+        Assert.HasCount(2, jev.Asks);
+        Assert.IsNull(jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
     }
 
     [TestMethod]

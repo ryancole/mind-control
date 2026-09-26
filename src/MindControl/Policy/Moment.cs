@@ -76,8 +76,14 @@ public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUni
 /// Where the player stands, off their own minimap: the place named as a coach
 /// would (<see cref="RiftMap.Place"/>), how long they have stood on that spot,
 /// and each lane's distance and screen direction with the allies already in it.
+/// <see cref="CoachSentThemTo"/> is the lane the coach already walked them to
+/// (one click on the minimap, the whole trip) while they stood on this spot;
+/// null when it has not.
 /// </summary>
-public sealed record WhereaboutsFacts(string Place, double StoodStillForSeconds, IReadOnlyList<LaneFacts> Lanes);
+public sealed record WhereaboutsFacts(string Place, double StoodStillForSeconds, IReadOnlyList<LaneFacts> Lanes)
+{
+    public string? CoachSentThemTo { get; init; }
+}
 
 /// <summary>A lane as seen from where the player stands. No direction when they are standing in it.</summary>
 public sealed record LaneFacts(string Lane, double DistanceUnits, string? ScreenDirection, IReadOnlyList<string> AlliesThere);

@@ -142,6 +142,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // Perception: the spot the player has stood on, and since when.
     private (double X, double Y)? _restAt;
     private double _stillSince;
+    // The lane the coach already walked the player to from this spot, if it
+    // has: one minimap click is the whole walk, and the next question is told.
+    private string? _sentTo;
 
     // Perception: the skill point the HUD shows waiting, when one is -- since
     // when the feed has shown it, which slots it lights, and a number that
@@ -253,6 +256,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastLanding = null;
         _recent.Clear();
         _restAt = null;
+        _sentTo = null;
         _point = null;
         _pressedFor.Clear();
         _firstLevelAsked = null;
@@ -382,8 +386,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// clock running (before it the player cannot move). Whether standing
     /// there is idling, and which lane a good player would be walking to,
     /// are the model's calls; a yes is a walk to that lane's nearest point
-    /// (one right-click on the minimap, the recording's broadest move), and
-    /// the ghost orders it again every interval until the player moves.
+    /// (one right-click on the minimap, the recording's broadest move). One
+    /// order is the whole walk: the questions that follow while the player
+    /// still stands on the spot are told the lane it was sent to, and the
+    /// rubric says not to order it again.
     /// </summary>
     private void AskIdle(FrameEnvelope frame, ChampionRow self)
     {
@@ -434,6 +440,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             {
                 Destination = new Destination($"{lane.Choice} lane", toward.X, toward.Y),
             });
+            _sentTo = $"{lane.Choice} lane";
             Remember($"walked toward {lane.Choice} lane", asked);
         });
     }
@@ -921,7 +928,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 toward.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(toward.X - x, toward.Y - y), there);
         }).ToArray();
         var still = _restAt is null ? 0 : Math.Max(0, Math.Round(now - _stillSince, 1));
-        return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes);
+        return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes) { CoachSentThemTo = _restAt is null ? null : _sentTo };
     }
 
     /// <summary>The spot the player stands on: a new one once they have left the old by more than the jitter.</summary>
@@ -930,12 +937,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (self is not { WorldX: { } x, WorldY: { } y })
         {
             _restAt = null;
+            _sentTo = null;
             return;
         }
         if (_restAt is { } rest && double.Hypot(x - rest.X, y - rest.Y) <= _options.StillRadiusUnits)
             return;
         _restAt = (x, y);
         _stillSince = frame.VideoTime;
+        _sentTo = null;
     }
 
     /// <summary>The enemies the player can see, with a place on the map. Nothing in fog is ever listed.</summary>
