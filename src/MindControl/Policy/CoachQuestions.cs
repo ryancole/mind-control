@@ -47,8 +47,11 @@ public static class CoachQuestions
         + "they are already in a lane: standing in lane, waiting for the minions or holding ground against a "
         + "visible enemy, is laning, not idling. No when an enemy is on the screen near them, because then "
         + "the moment is about that enemy. No when the still time is only a couple of seconds: a pause is not "
-        + "idling. The coach having stepped toward a lane a few seconds ago while the player still stands is "
-        + "a reason to step again, not to stop: the ghost keeps walking until the player does.";
+        + "idling. A good player moves with the broadest order that gets them there: one right-click on the "
+        + "minimap sends the champion the whole way to the lane, and that is the walk the coach demonstrates, "
+        + "never a string of short steps toward it. So one order is the whole demonstration: when "
+        + "`whereabouts.coach_sent_them_to` names a lane, the coach has already sent them there from this very "
+        + "spot, and ordering the walk again would only repeat that click; answer no.";
 
     public const string Lane =
         "Which lane would a good player in this seat be walking to? Each option gives its distance and "

@@ -217,10 +217,11 @@ never judged.
 ## Ghost input recording
 
 The ghost's input -- the mouse and keyboard reactions the coach would have
-made -- is also appended to `data/ghost.msdr` in the wire format of the
+made -- is also recorded to `data/ghost-<yyyyMMdd-HHmmss>.msdr`, a fresh file
+per run named for the moment it started, in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file
-(`--record <file>` to move it, `--record none` to turn it off). Each run opens
+(`--record <file>` to name the file instead, which a run appends to, `--record none` to turn it off). Each run opens
 with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
 and `KeyUp` pair (a level-up's point as the chord, `KeyDown Ctrl` before the
 pair and `KeyUp Ctrl` after it, which the game reads as a point into the

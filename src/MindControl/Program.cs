@@ -19,7 +19,9 @@ string? logPath = null;
 string? auditPath = null;
 // The ghost's input in misdirection's wire format. On by default: this file is
 // the demonstration the whole pipeline exists to produce. data/ is gitignored.
-string? recordPath = "data/ghost.msdr";
+// A file of its own per run, named for when the run started, so a session's
+// ghost is never mixed with an earlier one's.
+string? recordPath = $"data/ghost-{DateTime.Now:yyyyMMdd-HHmmss}.msdr";
 string? selfChampion = null;
 // Pinned, not the alias: the thresholds in JevOptions were tuned against one
 // release's calibration, and jev-latest moves without notice.
@@ -106,7 +108,8 @@ for (var i = 0; i < args.Length; i++)
                   --log <file>       also append coaching feedback to this file
                   --audit <file>     record every question put to Jev and its answer (JSONL)
                   --record <file|none> append the ghost's mouse and key input as a misdirection
-                                     protocol file (.msdr)  (default data/ghost.msdr)
+                                     protocol file (.msdr)  (default data/ghost-<yyyyMMdd-HHmmss>.msdr,
+                                     a fresh file for each run)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's

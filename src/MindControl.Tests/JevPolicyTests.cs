@@ -402,7 +402,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_walks_to_the_chosen_lane_and_again_while_they_still_stand()
+    public void A_yes_walks_to_the_chosen_lane_in_one_order_and_the_next_question_is_told()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, q) => id switch
@@ -414,28 +414,53 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 106.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
 
+        // Asked at 103 and again at 106; the fake says yes both times, where
+        // the rubric tells the real model that the lane in coach_sent_them_to
+        // has had its one click already.
+        Assert.IsNull(jev.Asks[0].State.Whereabouts!.CoachSentThemTo);
+        Assert.AreEqual("bot lane", jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
         var steps = policy.DrainMoves();
-        Assert.HasCount(2, steps, "asked at 103 and again at 106");
+        Assert.HasCount(2, steps);
         Assert.AreEqual(103.0, steps[0].VideoTime);
         Assert.AreEqual(106.0, steps[1].VideoTime);
-        Assert.AreEqual("up-right", steps[0].Direction);
+        Assert.AreEqual("right", steps[0].Direction);
         Assert.IsGreaterThan(0, steps[0].Dx);
         Assert.IsLessThan(0, steps[0].Dy, "screen y grows down");
         Assert.AreEqual(1, Math.Round(double.Hypot(steps[0].Dx, steps[0].Dy), 6));
         Assert.AreEqual(2, steps[0].Priority);
         Assert.AreEqual(
-            "coach would have walked up-right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
-            + "a good player would be on the way to bot lane (2244 units up-right)",
+            "coach would have walked right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
+            + "a good player would be on the way to bot lane (12086 units right)",
             steps[0].Sentence);
-        // A walk, not a sidestep: it goes to the lane's nearest point (the
-        // near end of bot lane, just outside the base), which the recording
-        // clicks on the minimap so one order covers the whole trip.
-        Assert.AreEqual(new Destination("bot lane", 2200, 1800), steps[0].Destination);
+        // A walk, not a sidestep: it goes to where bot lane is played, not
+        // its nearest point (the lane's mouth just outside the base), and the
+        // recording clicks it on the minimap so one order covers the whole trip.
+        Assert.AreEqual(new Destination("bot lane", 12400, 1900), steps[0].Destination);
         var reminded = jev.Last.State.Coach.Single();
         Assert.AreEqual("walked toward bot lane", reminded.Did);
         Assert.AreEqual(3.0, reminded.SecondsAgo);
         Assert.IsEmpty(policy.DrainKeys());
         Assert.IsEmpty(policy.DrainCues());
+    }
+
+    [TestMethod]
+    public void A_new_spot_forgets_the_lane_the_coach_sent_them_to()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "walk" => FakeJev.Yes,
+            "lane" => FakeJev.Pick(q, "bot"),
+            _ => null,
+        };
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 50, Idle()));
+        // They moved on and stopped again somewhere else: a fresh stand.
+        for (var t = 103.1; t <= 106.1 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 53, Idle(x: 1400)));
+
+        Assert.HasCount(2, jev.Asks);
+        Assert.IsNull(jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
     }
 
     [TestMethod]
