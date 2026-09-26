@@ -192,6 +192,20 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void An_attack_clicks_on_the_target_as_far_away_as_it_stands()
+    {
+        using (var recording = GhostRecording.Append(_path, 2560, 1440))
+            recording.Step(new MoveStep(1, "right", 1, 0, 2, "a low minion")
+            {
+                Target = new AttackTarget("the enemy minion at 20% health", 400),
+            });
+
+        // 400 units at 0.75px a unit on a 1080-tall screen, scaled to 1440.
+        var click = ProtocolFile.Read(_path).OfType<MouseMoveMessage>().Single();
+        Assert.AreEqual((1280 + 400, 720), (click.X, click.Y));
+    }
+
+    [TestMethod]
     public void A_step_is_taken_from_the_anchor_given_and_stays_on_the_screen()
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080, playerAnchor: (100, 540)))

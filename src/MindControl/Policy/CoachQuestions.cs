@@ -123,6 +123,59 @@ public static class CoachQuestions
         + "decides where they stand, not the minions. No when the coach stepped them back a moment ago "
         + "(`coach`) and they have not walked back in since.";
 
+    /// <summary>
+    /// Asked while an enemy minion with a readable bar, or a visible enemy
+    /// champion, is within or nearly within the player's basic-attack range:
+    /// should they right-click to attack something now? What is in reach is
+    /// in `attack`, `minions` and `visible_enemies`; when an attack is worth
+    /// it is decided here.
+    /// </summary>
+    public const string Attack =
+        "Enemies are within or nearly within reach of the player's basic attack: `attack.enemy_minions_near` lists "
+        + "the enemy minions near them with how much of each one's health bar is left (`health`, 0 to 1), how fast "
+        + "it has been falling (`falling_per_second`, 0 when it holds, absent when not yet known) and how soon it is "
+        + "empty at that rate (`seconds_to_empty`), and whether the attack reaches it (`in_attack_range`; false "
+        + "means a step outside it); `visible_enemies` the enemy champions with their own `in_attack_range` and, "
+        + "when one stands in an enemy turret's range, `under_their_turret`; `attack.you_under_their_turret` the "
+        + "enemy turret whose range the player stands in, if any, and `your_minions_under_that_turret` how many of "
+        + "the player's minions stand there too; and `minions.theirs_within_caster_range` how many enemy minions "
+        + "are within 550 units of the player. Would a good player right-click to attack something right now? "
+        + "Gold comes only from the killing blow on a minion, so a good player's basic attacks in lane are mostly "
+        + "last hits; attacking a champion draws every nearby enemy minion's attacks onto the attacker; and a "
+        + "turret shoots an enemy champion who attacks a champion inside its range, and shoots whoever stands in "
+        + "its range with no minions of their own there to shoot first. "
+        + "Go by these rules in order; the first that applies decides. "
+        + "First: `coach` has an entry that begins \"attacked\" with `seconds_ago` under 1.5: no, whatever else "
+        + "holds, since that right-click is still being carried out (the champion keeps attacking its target and "
+        + "a basic attack takes over a second to come round) and ordering it again only repeats the click. "
+        + "Second: `attack.you_under_their_turret` is set and `your_minions_under_that_turret` is 0: no, the "
+        + "turret has nobody else to shoot. "
+        + "Third: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.35 or less, or has more "
+        + "left but a `seconds_to_empty` under about 1 (the attack takes about half a second to wind up and land, "
+        + "and the minions' own fight finishes the rest): yes, it is a last hit. This holds whatever its "
+        + "`in_attack_range` says, because the right-click walks the champion the last step and attacks, and "
+        + "whoever else is on the screen, an enemy champion in range included. "
+        + "Fourth: the player's own health is low and the enemy champion's is not: no. "
+        + "Fifth: the only enemy champion worth attacking has `under_their_turret` set, or "
+        + "`attack.you_under_their_turret` is set: no to the champion, since the turret would shoot the player "
+        + "for it. "
+        + "Sixth: an enemy champion has `in_attack_range` true, health no higher than the player's, and at most "
+        + "one enemy minion is within 550 units of the player: yes, a trade the player wins. "
+        + "Seventh: `visible_enemies` is empty: yes, attack the wave to clear it, since there is nobody to trade "
+        + "with and nobody to push the wave away from. "
+        + "Otherwise no: a minion with more bar left than a last hit and no quick fall is not yet worth an "
+        + "attack while an enemy champion is on the screen, because hitting it early only pushes the wave toward "
+        + "the enemy's turret and hands the last hit to the player's own minions.";
+
+    public const string AttackTarget =
+        "Which would a good player right-click? Each option is an enemy minion, with how much of its health bar is "
+        + "left, how fast it is falling, how far it is and whether the attack reaches it, or an enemy champion, "
+        + "with the same and whether they stand under one of their turrets. A minion one basic attack finishes "
+        + "comes first, since a last hit is gold that is gone the moment it dies to anything else: the one whose "
+        + "bar will be empty soonest, within range before one the player would have to walk to. Then an enemy "
+        + "champion in range whose trade is the player's and who does not stand under their turret; never one "
+        + "who does. Then, with no enemy champion on the screen, the lowest minion in range, to clear the wave.";
+
     public const string BoltRemark =
         "A bolt has just come at the player; `occasion` says where from, what came of it, how far they "
         + "moved across its line between first seeing it and its arrival, and how much warning there was. "

@@ -86,6 +86,7 @@ function parseTrace(text) {
       vt: l.video_time, kind: l.t, icon: l.t === "key" ? "⌨" : "🖱",
       text: l.t === "key" ? `pressed ${l.key}: ${l.reason}`
         : l.destination ? `walked ${l.direction} to ${l.destination.name}: ${l.reason}`
+        : l.target ? `attacked ${l.target.name} ${l.direction}: ${l.reason}`
         : `stepped ${l.direction}: ${l.reason}`,
       destination: l.destination ?? null,   // a walk's place on the map; a sidestep has none
       frames: (l.input ?? []).map(describeFrame).join(", "),
