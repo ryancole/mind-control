@@ -55,21 +55,37 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// across the map rather than a sidestep: the ground in view is too small a
 /// canvas for a trip to lane, so the recording turns it into one right-click
 /// on the minimap at that point, the order a player gives to go somewhere
-/// far, and the direction then only says which way that is.
+/// far, and the direction then only says which way that is. A step with a
+/// <see cref="Target"/> is an attack: the same right-click, on the enemy
+/// minion or champion itself, which the game reads as an order to attack it.
 /// </summary>
 public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
 {
     /// <summary>Where the coach is going, when the move is a walk across the map; null for a sidestep on the ground.</summary>
     public Destination? Destination { get; init; }
 
+    /// <summary>What the coach attacks, when the click is on an enemy; null for a move.</summary>
+    public AttackTarget? Target { get; init; }
+
     /// <summary>The line as the player reads it, wherever it is shown.</summary>
-    public string Sentence => Destination is { } to
-        ? $"coach would have walked {Direction} to {to.Name} here: {Reason}"
-        : $"coach would have stepped {Direction} here: {Reason}";
+    public string Sentence => (Destination, Target) switch
+    {
+        ({ } to, _) => $"coach would have walked {Direction} to {to.Name} here: {Reason}",
+        (_, { } target) => $"coach would have attacked {target.Name} {Direction} here: {Reason}",
+        _ => $"coach would have stepped {Direction} here: {Reason}",
+    };
 }
 
 /// <summary>A place on the map, in game units, named as the player knows it ("bot lane").</summary>
 public sealed record Destination(string Name, double X, double Y);
+
+/// <summary>
+/// An enemy the coach right-clicks to attack, named as the player would say
+/// it ("Karma", "the enemy minion at 20% health"), and how far from the
+/// player's model it stands in game units: with the step's direction, where
+/// on the screen the click lands.
+/// </summary>
+public sealed record AttackTarget(string Name, double DistanceUnits);
 
 public interface IPolicy
 {

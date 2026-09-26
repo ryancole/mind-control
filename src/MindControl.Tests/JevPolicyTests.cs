@@ -841,7 +841,7 @@ public sealed class JevPolicyTests
             Bar(MinionTeam.Red, 9300, 1400), Bar(MinionTeam.Red, 9400, 1380), Bar(MinionTeam.Red, 9700, 1400),
             new Minion { Team = MinionTeam.Red, X = 1200, Y = 640 })));
 
-        var ask = jev.Asks.Single();
+        var ask = jev.Asks.Single(a => a.Questions.ContainsKey("back"));
         CollectionAssert.AreEqual(new[] { "back" }, ask.Questions.Keys.ToArray());
         var minions = ask.State.Minions!;
         Assert.AreEqual((2, 4), (minions.Ours, minions.Theirs), "an unplaced bar still counts");
@@ -928,7 +928,131 @@ public sealed class JevPolicyTests
         var (policy, jev) = Coach();
         var ally = Ally(3, 5000, 1300) with { IsSelf = true, Minions = [Bar(MinionTeam.Red, 9300, 1400)] };
         policy.OnFrame(Clocked(200, 300, Self(x: 9000, y: 1400) with { IsSelf = false }, ally));
-        Assert.AreEqual(300, jev.Asks.Single().State.Minions!.NearestTheirsUnits);
+        Assert.AreEqual(300, jev.Asks.Single(a => a.Questions.ContainsKey("back")).State.Minions!.NearestTheirsUnits);
+    }
+
+    // --- Basic attacks: a last hit, or a trade ---
+
+    private static FakeJev.Ask[] Attacks(FakeJev jev) => jev.Asks.Where(a => a.Questions.ContainsKey("attack")).ToArray();
+
+    [TestMethod]
+    public void Enemy_minions_in_reach_are_offered_as_targets_lowest_bar_first()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(200, 300, InLane(
+            Bar(MinionTeam.Red, 9400, 1400, health: 0.7),
+            Bar(MinionTeam.Red, 9300, 1400, health: 0.25),
+            Bar(MinionTeam.Red, 9650, 1400, health: 0.1),      // 650: a step past Ezreal's 550
+            Bar(MinionTeam.Red, 9800, 1400, health: 0.05),     // 800: out of reach
+            Bar(MinionTeam.Red, 9200, 1400, health: null),     // a covered bar: nothing to judge
+            Bar(MinionTeam.Blue, 8900, 1400, health: 0.1))));  // ours
+
+        var ask = Attacks(jev).Single();
+        var attack = ask.State.Attack!;
+        Assert.AreEqual(550, attack.AttackRangeUnits);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                new MinionTarget("minion 1", 0.1, 650, "right", false),
+                new MinionTarget("minion 2", 0.25, 300, "right", true),
+                new MinionTarget("minion 3", 0.7, 400, "right", true),
+            },
+            attack.EnemyMinionsNear.ToArray());
+        var criteria = ((ChoiceQuestion)ask.Questions["target"]).Criteria;
+        CollectionAssert.AreEqual(new[] { "minion 1", "minion 2", "minion 3" }, criteria.Keys.ToArray());
+        Assert.AreEqual("minion 2: an enemy minion with 25% of its health bar left, 300 units right, inside your attack range",
+            criteria["minion 2"]);
+        StringAssert.Contains((string)criteria["minion 1"]!, "a step outside your attack range");
+        Assert.AreEqual(0, ask.Options!.Retry!.MaxRetries, "a question about the moment is not retried");
+    }
+
+    [TestMethod]
+    public void A_yes_right_clicks_the_chosen_target()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "attack" => FakeJev.Yes,
+            "target" => FakeJev.Pick(q, "minion 1"),
+            _ => null,
+        };
+        var lane = InLane(Bar(MinionTeam.Red, 9300, 1700, health: 0.2), Bar(MinionTeam.Red, 9400, 1400, health: 0.9));
+        policy.OnFrame(Clocked(200, 300, lane));
+        policy.OnFrame(Clocked(200.1, 300, lane));
+
+        var attack = policy.DrainMoves().Single(m => m.Target is not null);
+        Assert.AreEqual(200.0, attack.VideoTime);
+        Assert.AreEqual(new AttackTarget("the enemy minion at 20% health", 424), attack.Target);
+        Assert.AreEqual("up-right", attack.Direction);
+        Assert.AreEqual(Math.Sqrt(0.5), attack.Dx, 1e-3);
+        Assert.AreEqual(-Math.Sqrt(0.5), attack.Dy, 1e-3, "world y grows north, screen y down");
+        Assert.IsNull(attack.Destination);
+        Assert.AreEqual(
+            "coach would have attacked the enemy minion at 20% health up-right here: it is 424 units up-right with 20% "
+            + "of its bar left, inside your attack range; a good player would attack it now",
+            attack.Sentence);
+
+        policy.OnFrame(Clocked(201.1, 301, lane));
+        Assert.AreEqual("attacked the enemy minion at 20% health", Attacks(jev)[^1].State.Coach.Single().Did);
+    }
+
+    [TestMethod]
+    public void A_lone_enemy_champion_in_reach_is_asked_about_without_a_choice()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, _) => id == "attack" ? FakeJev.Yes : null;
+        var karma = Enemy(500) with { Health = 0.4 };
+        policy.OnFrame(Frame(10, Self(), karma));
+        policy.OnFrame(Frame(10.1, Self(), karma));
+
+        var ask = Attacks(jev)[0];
+        CollectionAssert.AreEqual(new[] { "attack" }, ask.Questions.Keys.ToArray());
+        Assert.IsTrue(ask.State.VisibleEnemies.Single().InAttackRange);
+        Assert.IsEmpty(ask.State.Attack!.EnemyMinionsNear, "the bars were not read: no minion to offer");
+        var attack = policy.DrainMoves().Single();
+        Assert.AreEqual(new AttackTarget("Karma", 500), attack.Target);
+        Assert.AreEqual("right", attack.Direction);
+        Assert.AreEqual("Karma is 500 units right with 40% health, inside your attack range; a good player would attack them now",
+            attack.Reason);
+    }
+
+    [TestMethod]
+    public void Nothing_in_reach_dead_or_unplaced_is_no_attack_question()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Frame(10, Self(), Enemy(800)));                              // past range and a step
+        policy.OnFrame(Frame(12, Self(), Enemy(500, visible: false)));              // in fog
+        policy.OnFrame(Frame(14, Self(alive: false), Enemy(500)));
+        policy.OnFrame(Frame(16, Self() with { WorldX = null }, Enemy(500)));
+        policy.OnFrame(Clocked(18, 300, InLane(Bar(MinionTeam.Blue, 9100, 1400, health: 0.1))));
+        Assert.IsEmpty(Attacks(jev));
+    }
+
+    [TestMethod]
+    public void A_champion_whose_attack_range_is_not_on_file_is_still_asked_about_and_told_so()
+    {
+        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Nidalee" });
+        policy.OnFrame(Frame(10, Self() with { Champion = "Nidalee" }, Enemy(600)));
+        var ask = Attacks(jev).Single();
+        Assert.IsNull(ask.State.Attack!.AttackRangeUnits);
+        Assert.IsNull(ask.State.VisibleEnemies.Single().InAttackRange);
+    }
+
+    [TestMethod]
+    public void The_attack_question_is_one_in_flight_and_no_more_often_than_its_interval()
+    {
+        var (policy, jev) = Coach();
+        jev.Hold = true;
+        var near = InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3));
+        for (var t = 200.0; t <= 202.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, near));
+        Assert.HasCount(1, Attacks(jev), "one in flight");
+
+        jev.Hold = false;
+        jev.Release();
+        for (var t = 202.1; t <= 203.5 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 302, near));
+        CollectionAssert.AreEqual(new[] { 200.0, 202.1, 203.1 }, Attacks(jev).Select(a => a.State.VideoTime).ToArray());
     }
 
     // --- A bolt at the player ---
@@ -1482,7 +1606,7 @@ public sealed class JevPolicyTests
         var policy = new JevPolicy(new FakeJev());
         policy.Configure(Coaching with { HasMinions = false, HasMinionDots = false });
         var reason = policy.DrainCues().Single().Reason;
-        StringAssert.Contains(reason, "minion bars (nobody will be stepped back out of an enemy wave)");
+        StringAssert.Contains(reason, "minion bars (nobody will be stepped back out of an enemy wave or shown a last hit)");
         StringAssert.Contains(reason, "minimap minions (walks go to where a lane is played, not to its wave");
         StringAssert.Contains(reason, "400px");
     }

@@ -32,7 +32,23 @@ public static class AbilityKits
         ],
     };
 
+    /// <summary>
+    /// Basic-attack ranges, in game units, of the champions the recordings
+    /// have shown: how near a minion or an enemy champion must be before a
+    /// right-click on it is an attack and not a walk toward it.
+    /// </summary>
+    private static readonly Dictionary<string, double> AttackRanges = new()
+    {
+        ["Akali"] = 125, ["Braum"] = 125, ["Ezreal"] = 550, ["Hecarim"] = 175, ["Jinx"] = 525,
+        ["Karma"] = 525, ["Leblanc"] = 525, ["Leona"] = 125, ["MissFortune"] = 550, ["Shaco"] = 125,
+        ["Swain"] = 525,
+    };
+
     public static readonly string[] Slots = ["Q", "W", "E", "R"];
+
+    /// <summary>The champion's basic-attack range, or null when it is not on file.</summary>
+    public static double? AttackRange(string? champion) =>
+        champion is not null && AttackRanges.TryGetValue(champion, out var range) ? range : null;
 
     public static Note? For(string? champion, string slot) =>
         champion is not null && Kits.TryGetValue(champion, out var kit)

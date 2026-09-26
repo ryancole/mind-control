@@ -6,7 +6,7 @@ namespace MindControl;
 
 /// <summary>
 /// Records the ghost's input -- what the coach would have done with the mouse
-/// and keyboard: key presses, steps and walks -- as a misdirection protocol
+/// and keyboard: key presses, steps, walks and attacks -- as a misdirection protocol
 /// file (<c>.msdr</c>), one frame per message, in the order the coaching
 /// produced them. The file opens with a
 /// <see cref="ScreenSizeMessage"/>, as a device session would, so the mouse
@@ -48,6 +48,17 @@ public sealed class GhostRecording : IDisposable
     /// is ordered from the minimap, however far it goes.
     /// </summary>
     public const int StepPx = 200;
+
+    /// <summary>
+    /// Screen pixels per game unit on the ground around the player's model,
+    /// at a screen 1080 pixels tall (scaled by height for others): how far
+    /// from the model an attack's click lands for a target that far away.
+    /// The stock camera shows about 2,500 units across a 1920-wide screen;
+    /// the camera's tilt is ignored. Unmeasured, like <see cref="StepPx"/>:
+    /// a click this near the target is on its model when the model is as big
+    /// as a minion's, and nothing has yet replayed one into a game.
+    /// </summary>
+    public const double PxPerUnitAt1080 = 0.75;
 
     private readonly ProtocolFileWriter _writer;
     private readonly ushort _width, _height;
@@ -156,22 +167,28 @@ public sealed class GhostRecording : IDisposable
     /// (a step with a <see cref="MoveStep.Destination"/>) is the same click
     /// on the minimap instead, at the place the coach is going: one order for
     /// the whole trip, which is how a player sets off for lane, and as broad
-    /// as a move can be.
+    /// as a move can be. An attack (a step with a <see cref="MoveStep.Target"/>)
+    /// is the same click on the target itself, as far from the player's
+    /// model as the target stands (<see cref="PxPerUnitAt1080"/>): a
+    /// right-click on an enemy is the order to attack it.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
-        var (x, y) = step.Destination is { } to && _bounds is { } bounds
-            ? Minimap.Place(bounds, to.X, to.Y)
-            : OnTheGround(step);
+        var (x, y) = step switch
+        {
+            { Destination: { } to } when _bounds is { } bounds => Minimap.Place(bounds, to.X, to.Y),
+            { Target: { } target } => OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
+            _ => OnTheGround(step, StepPx),
+        };
         return WriteAt(step.VideoTime,
             new MouseMoveMessage(x, y),
             new MouseButtonsMessage(MouseButtons.Right),
             new MouseButtonsMessage(MouseButtons.None));
     }
 
-    private (ushort X, ushort Y) OnTheGround(MoveStep step) => (
-        (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * StepPx), 0, _width - 1),
-        (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * StepPx), 0, _height - 1));
+    private (ushort X, ushort Y) OnTheGround(MoveStep step, double px) => (
+        (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * px), 0, _width - 1),
+        (ushort)Math.Clamp(Math.Round(_anchor.Y + step.Dy * px), 0, _height - 1));
 
     /// <summary>
     /// The gap the file records before an input at <paramref name="videoTime"/>:

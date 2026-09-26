@@ -24,7 +24,8 @@ public sealed record Moment
         + "their own HUD, champions drawn on the screen in front of them, and their own team on "
         + "the minimap, themselves included (`whereabouts` is where they stand on it, how long they "
         + "have stood there, and how far each lane is, with the minions and turrets the minimap shows in it), and the minions "
-        + "on their screen (`minions`). Enemies hidden in fog of war are not listed, because the player cannot "
+        + "on their screen (`minions`, and in `attack` the enemy ones their basic attack could reach, with how much "
+        + "of each one's health bar is left). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself.";
@@ -46,6 +47,7 @@ public sealed record Moment
     public IReadOnlyList<AllyFacts> Allies { get; init; } = [];
     public WhereaboutsFacts? Whereabouts { get; init; }
     public MinionFacts? Minions { get; init; }
+    public AttackFacts? Attack { get; init; }
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
@@ -69,7 +71,27 @@ public sealed record SlotFacts(
 /// <summary>An enemy the player can see right now.</summary>
 public sealed record EnemyFacts(
     string Champion, double DistanceUnits, string ScreenDirection, double VisibleForSeconds,
-    double? Health, int? Level, IReadOnlyList<string> InRangeOf, double? WithinReachForSeconds);
+    double? Health, int? Level, IReadOnlyList<string> InRangeOf, double? WithinReachForSeconds)
+{
+    /// <summary>Whether the player's basic attack reaches them; null when the player's attack range is not on file.</summary>
+    public bool? InAttackRange { get; init; }
+}
+
+/// <summary>
+/// What the player's basic attack could hit: its range (null when it is not
+/// on file) and the enemy minions near enough to attack or nearly, the
+/// lowest bars first. Only minions whose bar could be read are listed, since
+/// a last hit is about how much bar is left.
+/// </summary>
+public sealed record AttackFacts(double? AttackRangeUnits, IReadOnlyList<MinionTarget> EnemyMinionsNear);
+
+/// <summary>
+/// An enemy minion on the player's screen, by the name the attack question's
+/// options use for it. <see cref="Health"/> is its bar's fill, 0 to 1; the
+/// distance is from the player's model in game units, good to about a
+/// hundred. <see cref="InAttackRange"/> is null when the range is not on file.
+/// </summary>
+public sealed record MinionTarget(string Name, double Health, double DistanceUnits, string? ScreenDirection, bool? InAttackRange);
 
 /// <summary>An ally, always on the player's own minimap.</summary>
 public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);

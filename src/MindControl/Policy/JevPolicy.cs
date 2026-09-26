@@ -70,6 +70,15 @@ public sealed record JevOptions
     public double TendAskEverySeconds { get; init; } = 3;
 
     /// <summary>
+    /// How often, in video seconds, a player with an enemy minion or champion
+    /// within reach of their basic attack is asked about: should they
+    /// right-click to attack something? One right-click keeps a champion
+    /// attacking its target, so this is the pace of a new target, not of the
+    /// attacks. One in flight at a time, apart from the other questions.
+    /// </summary>
+    public double AttackAskEverySeconds { get; init; } = 1;
+
+    /// <summary>
     /// How far, in game units, the player's model can drift and still be on
     /// the same spot. The minimap read jitters by tens of units on a
     /// champion that has not moved; a walking one covers this in a third of
@@ -92,7 +101,8 @@ public sealed record Consultation(
 /// <summary>
 /// The coach: every coaching decision -- which button to press, whether and
 /// which way to step, whether a shot or a bolt is worth a word, which
-/// ability a new level's point goes into -- is a
+/// ability a new level's point goes into, whether and what to right-click
+/// to attack -- is a
 /// question put to Jev, TypeSafe's System One model, and
 /// answered as a probability, a level or an option. Nothing here decides; it
 /// measures, asks, and turns the answer into the output the reactor already
@@ -109,7 +119,8 @@ public sealed record Consultation(
 /// player stands and how far each lane is (<see cref="RiftMap"/>), which lane
 /// each minimap minion is in and how far each side's wave has pushed, and
 /// how near the minions on the screen are and whether the player stands in
-/// front of their own. Fair
+/// front of their own, and which enemy minions and champions the player's
+/// basic attack reaches. Fair
 /// play: <see cref="Moment"/> is built from visible
 /// rows only, so the model is never shown a thing in fog. Each of those is a
 /// measurement or a mechanism, not a judgement; the judgements are in
@@ -203,6 +214,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _lastWaveAskAt = double.NegativeInfinity;
     private bool _askingTend;
     private double _lastTendAskAt = double.NegativeInfinity;
+    private bool _askingAttack;
+    private double _lastAttackAskAt = double.NegativeInfinity;
     private bool _failing;
 
     // Questions on the wire, by occasion, oldest first. Touched from the
@@ -211,7 +224,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly Lock _wireLock = new();
 
     /// <summary>
-    /// The occasions ("now", "idle", "wave", "tend", "bolt", "shot", "level") of the questions
+    /// The occasions ("now", "idle", "wave", "tend", "attack", "bolt", "shot", "level") of the questions
     /// on their way to the model, oldest first, raised each time that changes: when one
     /// is sent and when its answer or failure comes back. It follows the
     /// network, not <see cref="Settle"/>, so it is raised on whichever thread
@@ -236,7 +249,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (meta.WorldBounds is null)
             missing.Add("world calibration (nobody will be walked to lane)");
         if (!meta.HasMinions)
-            missing.Add("minion bars (nobody will be stepped back out of an enemy wave)");
+            missing.Add("minion bars (nobody will be stepped back out of an enemy wave or shown a last hit)");
         if (!meta.HasMinionDots)
             missing.Add("minimap minions (walks go to where a lane is played, not to its wave; "
                 + "they need the minimap scale at 400px or more)");
@@ -277,6 +290,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastWaveAskAt = double.NegativeInfinity;
         _askingTend = false;
         _lastTendAskAt = double.NegativeInfinity;
+        _askingAttack = false;
+        _lastAttackAskAt = double.NegativeInfinity;
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -341,6 +356,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             AskIdle(frame, self);
             AskWave(frame, self);
             AskTend(frame, self);
+            AskAttack(frame, self);
             AskHeldPoint(frame, self);
         }
         Settle();
@@ -658,6 +674,128 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason));
             Remember($"stepped back {direction}, out of the enemy minions", asked);
         });
+    }
+
+    // --- Basic attacks: a last hit, or a trade ---
+
+    /// <summary>How far past the attack's range a target still counts as nearly in reach: a step or two.</summary>
+    private const double ApproachUnits = 150;
+
+    /// <summary>
+    /// The reach a target is looked for within when the player's attack range
+    /// is not on file: a caster minion's, which is also a ranged champion's
+    /// usual. Only the gate uses it; the facts say the range is not on file.
+    /// </summary>
+    private const double ReachWithoutARange = CasterMinionRange;
+
+    /// <summary>How many enemy minions near the player, lowest bars first, are offered as targets.</summary>
+    private const int MinionTargets = 4;
+
+    /// <summary>
+    /// Asks about a player with something to attack, when there is something
+    /// to ask: alive, placed on the map, and an enemy minion whose bar was
+    /// read or a visible enemy champion within (or a step or two beyond) the
+    /// player's basic-attack range. Whether an attack is worth it -- a last
+    /// hit, a trade, clearing the wave -- and on which target are the model's
+    /// calls, from the bars, distances and healths in the state; a yes is one
+    /// right-click on the target, the order that has the champion attack it.
+    /// One in flight at a time, and no more often than
+    /// <see cref="JevOptions.AttackAskEverySeconds"/>.
+    /// </summary>
+    private void AskAttack(FrameEnvelope frame, ChampionRow self)
+    {
+        if (_askingAttack || frame.VideoTime - _lastAttackAskAt < _options.AttackAskEverySeconds)
+            return;
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
+            return;
+        var range = AbilityKits.AttackRange(self.Champion);
+        var reach = (range ?? ReachWithoutARange) + ApproachUnits;
+
+        var targets = new Dictionary<string, (AttackTarget Target, double X, double Y, string Reason)>();
+        var criteria = new ChoiceCriteria();
+        foreach (var (minion, mx, my) in NearMinions(frame, self))
+        {
+            var name = $"the enemy minion at {minion.Health:0%} health";
+            var where = minion.ScreenDirection is { } way ? $"{minion.DistanceUnits:0} units {way}" : "where the player stands";
+            criteria[minion.Name] = $"{minion.Name}: an enemy minion with {minion.Health:0%} of its health bar left, "
+                + $"{where}, {InReach(minion.InAttackRange)}";
+            targets[minion.Name] = (new AttackTarget(name, minion.DistanceUnits), mx, my,
+                $"it is {where} with {minion.Health:0%} of its bar left, {InReach(minion.InAttackRange)}; a good player would attack it now");
+        }
+        foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
+        {
+            var distance = Distance(self, row)!.Value;
+            var champion = row.Champion ?? $"track {row.TrackId}";
+            if (distance > reach || targets.ContainsKey(champion))
+                continue;
+            bool? inRange = range is { } r ? distance <= r : null;
+            var health = row.Health is { } h ? $"{h:0%} health" : "health not read";
+            criteria[champion] = $"{champion}: the enemy champion, {health}, {distance:0} units {Direction(self, row)}, {InReach(inRange)}";
+            targets[champion] = (new AttackTarget(champion, distance), row.WorldX!.Value, row.WorldY!.Value,
+                $"{champion} is {distance:0} units {Direction(self, row)} with {health}, {InReach(inRange)}; a good player would attack them now");
+        }
+        if (targets.Count == 0)
+            return;
+
+        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
+        var questions = new Questions().Noul("attack", CoachQuestions.Attack,
+            yes: "a good player would right-click an enemy now: a minion one attack finishes, a trade that is theirs, or a wave to clear",
+            no: "nothing in reach is worth an attack yet, the trade is not theirs, or the coach just ordered this attack");
+        if (targets.Count > 1)
+            questions.Choice("target", CoachQuestions.AttackTarget, criteria);
+
+        _askingAttack = true;
+        _lastAttackAskAt = frame.VideoTime;
+        var asked = frame.VideoTime;
+        Ask("attack", moment, questions, asked, NowRequest, released: () => _askingAttack = false, answered: response =>
+        {
+            if (!response.TryGet<NoulAnswer>("attack", out var attack) || !attack!.IsYes(_options.YesAt))
+                return;
+            var chosen = targets.Count == 1 ? targets.Keys.Single()
+                : response.TryGet<ChoiceAnswer>("target", out var pick) ? pick!.Choice : null;
+            if (chosen is null || !targets.TryGetValue(chosen, out var target))
+                return;
+            // World y grows north, screen y grows down: flip for the click.
+            var (dx, dy) = (target.X - x, -(target.Y - y));
+            var length = double.Hypot(dx, dy);
+            var (ux, uy) = length < 1 ? (0.0, 0.0) : (dx / length, dy / length);
+            var direction = length < 1 ? "where you stand" : ScreenDirections.Name(dx, dy);
+            _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target });
+            Remember($"attacked {target.Target.Name}", asked);
+        });
+
+        static string InReach(bool? inRange) => inRange switch
+        {
+            true => "inside your attack range",
+            false => "a step outside your attack range",
+            null => "your attack range is not on file",
+        };
+    }
+
+    /// <summary>
+    /// The enemy minions on the player's screen near enough to attack, or a
+    /// step or two beyond, whose bars could be read, lowest bar first, with
+    /// where each stands in world units. Named "minion 1" and on in that
+    /// order: the names the attack question's options and the state share.
+    /// </summary>
+    private static (MinionTarget Fact, double X, double Y)[] NearMinions(FrameEnvelope frame, ChampionRow self)
+    {
+        if (Carried(frame, r => r.Minions) is not { } minions || self is not { WorldX: { } x, WorldY: { } y })
+            return [];
+        var range = AbilityKits.AttackRange(self.Champion);
+        var reach = (range ?? ReachWithoutARange) + ApproachUnits;
+        return minions
+            .Where(m => m.Team != MinionTeam.Blue && m is { WorldX: not null, WorldY: not null, Health: not null })
+            .Select(m => (Minion: m, Distance: double.Hypot(m.WorldX!.Value - x, m.WorldY!.Value - y)))
+            .Where(p => p.Distance <= reach)
+            .OrderBy(p => p.Minion.Health).ThenBy(p => p.Distance)
+            .Take(MinionTargets)
+            .Select((p, i) => (new MinionTarget(
+                    $"minion {i + 1}", Math.Round(p.Minion.Health!.Value, 2), Math.Round(p.Distance),
+                    p.Distance < 1 ? null : ScreenDirections.NameOfWorldOffset(p.Minion.WorldX!.Value - x, p.Minion.WorldY!.Value - y),
+                    range is { } r ? p.Distance <= r : null),
+                p.Minion.WorldX!.Value, p.Minion.WorldY!.Value))
+            .ToArray();
     }
 
     /// <summary>
@@ -1104,10 +1242,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         List<AllyFacts> allies = [];
         WhereaboutsFacts? whereabouts = null;
         MinionFacts? minions = null;
+        AttackFacts? attack = null;
         if (frame is not null && self is not null)
         {
             whereabouts = Whereabouts(frame, self, now);
             minions = MinionsOnScreen(frame, self);
+            var attackRange = AbilityKits.AttackRange(champion);
+            if (self is { WorldX: not null, WorldY: not null })
+                attack = new AttackFacts(attackRange, NearMinions(frame, self).Select(m => m.Fact).ToArray());
             foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
             {
                 var distance = Distance(self, row)!.Value;
@@ -1118,7 +1260,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     row.Champion ?? $"track {row.TrackId}", distance, Direction(self, row)!,
                     Math.Round(now - _visibleSince.GetValueOrDefault(row.TrackId, now), 1),
                     row.Health, row.Level, inRange,
-                    _withinReachSince.TryGetValue(row.TrackId, out var since) ? Math.Round(now - since, 1) : null));
+                    _withinReachSince.TryGetValue(row.TrackId, out var since) ? Math.Round(now - since, 1) : null)
+                {
+                    InAttackRange = attackRange is { } r ? distance <= r : null,
+                });
             }
             foreach (var row in frame.Champions.Where(c => c.Team == self.Team && c.TrackId != self.TrackId))
                 allies.Add(new AllyFacts(row.Champion ?? $"track {row.TrackId}", row.Alive, Distance(self, row)));
@@ -1135,6 +1280,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Allies = allies,
             Whereabouts = whereabouts,
             Minions = minions,
+            Attack = attack,
             Coach = _recent.Select(r => new RecentAction(r.Did, Math.Round(now - r.At, 1))).ToArray(),
             Occasion = occasion,
         };
