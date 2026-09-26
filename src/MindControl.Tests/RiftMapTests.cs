@@ -40,4 +40,15 @@ public sealed class RiftMapTests
         Assert.IsGreaterThan(6000, mx, "the nearest point of the diagonal lies down-right of a point above it");
         Assert.IsLessThan(8000, my);
     }
+
+    [TestMethod]
+    public void Each_lane_is_played_at_a_spot_on_it_far_from_the_base()
+    {
+        foreach (var lane in RiftMap.Lanes)
+        {
+            var (x, y) = RiftMap.LaningSpot(lane);
+            Assert.AreEqual($"{lane} lane", RiftMap.Place(x, y));
+            Assert.IsGreaterThan(9000, double.Hypot(x - 450, y - 450), $"{lane}: a walk from the fountain goes the whole way");
+        }
+    }
 }

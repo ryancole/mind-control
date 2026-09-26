@@ -423,19 +423,19 @@ public sealed class JevPolicyTests
         Assert.HasCount(2, steps);
         Assert.AreEqual(103.0, steps[0].VideoTime);
         Assert.AreEqual(106.0, steps[1].VideoTime);
-        Assert.AreEqual("up-right", steps[0].Direction);
+        Assert.AreEqual("right", steps[0].Direction);
         Assert.IsGreaterThan(0, steps[0].Dx);
         Assert.IsLessThan(0, steps[0].Dy, "screen y grows down");
         Assert.AreEqual(1, Math.Round(double.Hypot(steps[0].Dx, steps[0].Dy), 6));
         Assert.AreEqual(2, steps[0].Priority);
         Assert.AreEqual(
-            "coach would have walked up-right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
-            + "a good player would be on the way to bot lane (2244 units up-right)",
+            "coach would have walked right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
+            + "a good player would be on the way to bot lane (12086 units right)",
             steps[0].Sentence);
-        // A walk, not a sidestep: it goes to the lane's nearest point (the
-        // near end of bot lane, just outside the base), which the recording
-        // clicks on the minimap so one order covers the whole trip.
-        Assert.AreEqual(new Destination("bot lane", 2200, 1800), steps[0].Destination);
+        // A walk, not a sidestep: it goes to where bot lane is played, not
+        // its nearest point (the lane's mouth just outside the base), and the
+        // recording clicks it on the minimap so one order covers the whole trip.
+        Assert.AreEqual(new Destination("bot lane", 12400, 1900), steps[0].Destination);
         var reminded = jev.Last.State.Coach.Single();
         Assert.AreEqual("walked toward bot lane", reminded.Did);
         Assert.AreEqual(3.0, reminded.SecondsAgo);

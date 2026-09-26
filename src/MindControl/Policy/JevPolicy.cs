@@ -385,8 +385,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// when there is something to ask: alive, placed on the map, with a game
     /// clock running (before it the player cannot move). Whether standing
     /// there is idling, and which lane a good player would be walking to,
-    /// are the model's calls; a yes is a walk to that lane's nearest point
-    /// (one right-click on the minimap, the recording's broadest move). One
+    /// are the model's calls; a yes is a walk to where that lane is played
+    /// (<see cref="RiftMap.LaningSpot"/>; one right-click on the minimap, the recording's broadest move). One
     /// order is the whole walk: the questions that follow while the player
     /// still stands on the spot are told the lane it was sent to, and the
     /// rubric says not to order it again.
@@ -426,19 +426,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 return;
             if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
                 return;
-            var toward = RiftMap.Toward(lane.Choice, rest.X, rest.Y);
+            if (RiftMap.Toward(lane.Choice, rest.X, rest.Y).Distance == 0)
+                return;   // walking to the lane they stand in: nothing to demonstrate
+            // The whole trip in one order: to where the lane is played, not
+            // to its nearest point, which from base is only its mouth.
+            var spot = RiftMap.LaningSpot(lane.Choice);
             // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (toward.X - rest.X, -(toward.Y - rest.Y));
+            var (dx, dy) = (spot.X - rest.X, -(spot.Y - rest.Y));
             var length = double.Hypot(dx, dy);
             if (length == 0)
-                return;   // walking to the lane they stand in: nothing to demonstrate
+                return;
             var direction = ScreenDirections.Name(dx, dy);
             var clock = moment.GameClock is { } time ? $" at {time}" : "";
             var reason = $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}; "
-                + $"a good player would be on the way to {lane.Choice} lane ({toward.Distance:0} units {direction})";
+                + $"a good player would be on the way to {lane.Choice} lane ({length:0} units {direction})";
             _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
             {
-                Destination = new Destination($"{lane.Choice} lane", toward.X, toward.Y),
+                Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
             });
             _sentTo = $"{lane.Choice} lane";
             Remember($"walked toward {lane.Choice} lane", asked);

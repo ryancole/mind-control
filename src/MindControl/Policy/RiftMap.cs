@@ -67,6 +67,23 @@ public static class RiftMap
         return Toward(nearest, x, y).Distance <= LaneHalfWidth ? $"{nearest} lane" : "the jungle or river";
     }
 
+    /// <summary>
+    /// Where each lane is played in the early game: the point a player walking
+    /// to lane is headed for, and so where a walk's one minimap click goes,
+    /// rather than the lane's nearest point (from the fountain that is the
+    /// lane's mouth at the nexus, a few seconds' walk). Bot is its corner,
+    /// between where the fixture's player waited for the first minions
+    /// (11162, 2115) and where they laned (12688, 3462); top mirrors it
+    /// across the diagonal; mid is the map's centre.
+    /// </summary>
+    public static (double X, double Y) LaningSpot(string lane) => lane switch
+    {
+        "top" => (1900, 12400),
+        "mid" => (7400, 7400),
+        "bot" => (12400, 1900),
+        _ => throw new ArgumentException($"no lane \"{lane}\"", nameof(lane)),
+    };
+
     /// <summary>The nearest point of a lane to (<paramref name="x"/>, <paramref name="y"/>), and how far it is.</summary>
     public static (double Distance, double X, double Y) Toward(string lane, double x, double y)
     {
