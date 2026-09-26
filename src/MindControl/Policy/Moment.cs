@@ -104,7 +104,19 @@ public sealed record LaneFacts(string Lane, double DistanceUnits, string? Screen
 /// </summary>
 public sealed record WaveFacts(
     int OurMinions, int TheirMinions, double? OurFront, double? TheirFront,
-    double? MeetAt, double? MeetUnitsAway, string? MeetScreenDirection);
+    double? MeetAt, double? MeetUnitsAway, string? MeetScreenDirection)
+{
+    /// <summary>
+    /// Where the enemy's front is, by the player's own turrets
+    /// (<see cref="RiftMap.EnemyFrontPlace"/>): "at your outer turret" and the
+    /// like. Null when the minimap shows none of theirs in the lane.
+    /// </summary>
+    public string? TheirFrontPlace { get; init; }
+
+    /// <summary>How far the enemy's front is from the player, and which way on the screen.</summary>
+    public double? TheirFrontUnitsAway { get; init; }
+    public string? TheirFrontScreenDirection { get; init; }
+}
 
 /// <summary>
 /// The minions on the player's own screen, off their health bars. The counts

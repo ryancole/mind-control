@@ -80,6 +80,45 @@ public static class RiftMap
         return Toward(nearest, x, y).Distance <= LaneHalfWidth ? nearest : null;
     }
 
+    /// <summary>
+    /// The player's own outer and inner turrets in each lane, as the points of
+    /// its path they stand beside. Whether one still stands is not in the feed.
+    /// </summary>
+    private static readonly Dictionary<string, ((double X, double Y) Outer, (double X, double Y) Inner)> OurTurrets = new()
+    {
+        ["top"] = ((1250, 10504), (1483, 6919)),
+        ["mid"] = ((5846, 6396), (5048, 4812)),
+        ["bot"] = ((10504, 1250), (6919, 1483)),
+    };
+
+    /// <summary>A turret's attack range, in game units: a wave this near one is fighting it.</summary>
+    public const double TurretRange = 750;
+
+    /// <summary>
+    /// Where an enemy wave's front is in a lane, named as a coach says it,
+    /// by the player's own turrets: in the enemy's half, in the player's half
+    /// short of their outer turret, at their outer turret, or at or past their
+    /// inner turret. "At" is within a turret's range of it, along the lane.
+    /// </summary>
+    public static string EnemyFrontPlace(string lane, double progress)
+    {
+        if (progress <= TurretReach(lane, inner: true))
+            return "at or past your inner turret";
+        if (progress <= TurretReach(lane, inner: false))
+            return "at your outer turret";
+        return progress < 0.5 ? "in your half of the lane, short of your outer turret" : "in their half of the lane";
+    }
+
+    /// <summary>Whether an enemy wave's front is at one of the player's own turrets.</summary>
+    public static bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, inner: false);
+
+    /// <summary>How far along the lane a turret's range reaches toward the enemy.</summary>
+    private static double TurretReach(string lane, bool inner)
+    {
+        var turret = inner ? OurTurrets[lane].Inner : OurTurrets[lane].Outer;
+        return Along(lane, turret.X, turret.Y).Progress + TurretRange / Length(lane);
+    }
+
     /// <summary>A lane's length along its centre line, nexus to nexus.</summary>
     public static double Length(string lane)
     {

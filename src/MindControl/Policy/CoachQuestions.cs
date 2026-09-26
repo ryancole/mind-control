@@ -74,6 +74,33 @@ public static class CoachQuestions
         + "lane is theirs. Distance decides only between lanes that are otherwise equally theirs.";
 
     /// <summary>
+    /// Asked while an enemy wave is at one of the player's turrets and the
+    /// player is not at it: should they be on their way to it? Where each
+    /// lane's minions are is in `whereabouts`; whose wave it is to catch is
+    /// decided here.
+    /// </summary>
+    public const string Tend =
+        "An enemy minion wave is at one of the player's own turrets and the player is not there; each lane's "
+        + "`wave` in `whereabouts` says how many minions of each side the minimap shows in it, where the enemy's "
+        + "front is (`their_front_place`, by the player's turrets), how far that is from the player, and which "
+        + "allies are in the lane. Would a good player in this seat be on their way to that wave right now? A "
+        + "wave left to crash into a turret is gold and experience lost for good and the turret worn down, so a "
+        + "good player keeps their own lane's wave from being left alone: the lane their role belongs in (a "
+        + "marksman or a support in bot, a mid champion in mid, a top champion in top). Yes when the wave is in "
+        + "their own lane and no ally is there to take it, and nothing on the screen holds them: they are "
+        + "roaming, in the jungle or river, in another lane, or dawdling in base after buying. No when an ally "
+        + "is already in that lane to catch it; no when it is not their lane and their own needs them; no when "
+        + "an enemy champion is close on the screen and the moment is a fight with them; no when the wave is "
+        + "too far to reach before the turret kills it and their own lane has its own wave; and "
+        + "no when the coach walked them toward that lane moments ago (`coach`): one minimap click is the "
+        + "whole demonstration.";
+
+    public const string TendLane =
+        "Which lane's wave would a good player in this seat go to? Each option is a lane whose enemy wave is at "
+        + "one of the player's turrets, with how far it is and which allies are there. Their own lane by role "
+        + "comes first, then the one nobody is in, and distance decides only between lanes otherwise equal.";
+
+    /// <summary>
     /// Asked while the player stands in a lane with enemy minions on their
     /// screen: should they step back behind their own? The counts and
     /// distances are in `minions`; where a laner stands is decided here.

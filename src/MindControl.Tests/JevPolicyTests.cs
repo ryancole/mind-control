@@ -558,12 +558,116 @@ public sealed class JevPolicyTests
     private static Minion Bar(string team, double x, double y, double? health = 0.8) =>
         new() { Team = team, WorldX = x, WorldY = y, Health = health };
 
-    /// <summary>The waves meeting on bot lane's long straight, east of our outer turret.</summary>
+    /// <summary>The waves meeting in bot lane beyond our outer turret, well out of its range.</summary>
     private static readonly MinionDot[] BotWavesMeeting =
     [
-        Dot(MinionTeam.Blue, 8800, 1400), Dot(MinionTeam.Blue, 9000, 1380),
-        Dot(MinionTeam.Red, 9600, 1340), Dot(MinionTeam.Red, 9800, 1330), Dot(MinionTeam.Red, 9700, 1300),
+        Dot(MinionTeam.Blue, 10900, 1300), Dot(MinionTeam.Blue, 11100, 1350),
+        Dot(MinionTeam.Red, 11650, 1480), Dot(MinionTeam.Red, 11800, 1560), Dot(MinionTeam.Red, 11750, 1500),
     ];
+
+    /// <summary>An enemy wave crashing into our bot outer turret, with nothing of ours left in front of it.</summary>
+    private static readonly MinionDot[] BotWaveAtOurTurret =
+    [
+        Dot(MinionTeam.Red, 10300, 1260), Dot(MinionTeam.Red, 10500, 1250), Dot(MinionTeam.Red, 10450, 1300),
+    ];
+
+    [TestMethod]
+    public void The_enemy_front_is_placed_by_our_turrets()
+    {
+        Assert.AreEqual("in their half of the lane", RiftMap.EnemyFrontPlace("bot", 0.8));
+        Assert.AreEqual("in your half of the lane, short of your outer turret", RiftMap.EnemyFrontPlace("bot", 0.45),
+            "bot's outer turret stands far up the lane");
+        Assert.AreEqual("at your outer turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 10500, 1250).Progress));
+        Assert.AreEqual("at or past your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress));
+        Assert.IsFalse(RiftMap.AtOurTurret("mid", 0.5));
+        Assert.IsTrue(RiftMap.AtOurTurret("mid", RiftMap.Along("mid", 5846, 6396).Progress));
+    }
+
+    [TestMethod]
+    public void A_player_away_from_a_wave_at_their_turret_is_asked_whether_to_catch_it()
+    {
+        var (policy, jev) = Coach();
+        // Walking through the river, not standing: a roaming player is who leaves a wave.
+        var roaming = Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret };
+        policy.OnFrame(Clocked(300, 400, roaming));
+
+        var ask = jev.Asks.Single();
+        CollectionAssert.AreEqual(new[] { "tend" }, ask.Questions.Keys.ToArray(), "one lane crashing: no choice to make");
+        var bot = ask.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!;
+        Assert.AreEqual("at your outer turret", bot.TheirFrontPlace);
+        Assert.IsNull(bot.OurFront);
+        Assert.AreEqual("down-right", bot.TheirFrontScreenDirection);
+        Assert.IsGreaterThan(1500, bot.TheirFrontUnitsAway!.Value);
+    }
+
+    [TestMethod]
+    public void A_yes_walks_to_the_crashing_wave_in_one_minimap_click()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, _) => id == "tend" ? FakeJev.Yes : null;
+        policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret }));
+
+        var step = policy.DrainMoves().Single();
+        // The enemy's front, its dot nearest our base, as the facts round it.
+        var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
+        Assert.AreEqual("bot lane", step.Destination!.Name);
+        Assert.AreEqual(x, step.Destination.X, 1e-6);
+        Assert.AreEqual(y, step.Destination.Y, 1e-6);
+        StringAssert.StartsWith(step.Reason,
+            "the enemy wave is at your outer turret in bot lane with none of your team there; a good player would be on the way to catch it (");
+        policy.OnFrame(Clocked(303, 403, Self(x: 7300, y: 4800) with { MinionDots = BotWaveAtOurTurret }));
+        Assert.AreEqual("walked toward bot lane's wave at your turret", jev.Last.State.Coach.Single().Did);
+    }
+
+    [TestMethod]
+    public void Two_lanes_crashing_is_a_choice_between_them()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "tend" => FakeJev.Yes,
+            "tend_lane" => FakeJev.Pick(q, "mid"),
+            _ => null,
+        };
+        var dots = BotWaveAtOurTurret.Append(Dot(MinionTeam.Red, 5846, 6396)).ToArray();
+        policy.OnFrame(Clocked(300, 400, Self(x: 1300, y: 12000) with { MinionDots = dots }, InBotLane()));
+
+        var choice = (ChoiceQuestion)jev.Last.Questions["tend_lane"];
+        CollectionAssert.AreEquivalent(new[] { "mid", "bot" }, choice.Options.ToArray());
+        StringAssert.Contains((string)choice.Criteria["bot"]!, "the enemy wave is at your outer turret");
+        StringAssert.Contains((string)choice.Criteria["bot"]!, "allies there: champ3");
+        Assert.AreEqual("mid lane", policy.DrainMoves().Single().Destination!.Name);
+    }
+
+    [TestMethod]
+    public void A_walk_to_lane_goes_to_an_enemy_wave_alone_at_their_turret()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "walk" => FakeJev.Yes,
+            "lane" => FakeJev.Pick(q, "bot"),
+            _ => null,
+        };
+        var self = Idle() with { MinionDots = BotWaveAtOurTurret };
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 400, self));
+
+        var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
+        var walk = policy.DrainMoves().Single(m => m.Reason.StartsWith("you have stood still", StringComparison.Ordinal));
+        Assert.AreEqual(new Destination("bot lane", x, y), walk.Destination, "not past it, to where the lane is played");
+    }
+
+    [TestMethod]
+    public void No_wave_at_a_turret_or_a_player_already_at_it_is_no_tend_question()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWavesMeeting }));
+        policy.OnFrame(Clocked(303, 403, Self(x: 10000, y: 1300) with { MinionDots = BotWaveAtOurTurret }));
+        policy.OnFrame(Clocked(306, 406, Self(x: 7000, y: 5000, alive: false) with { MinionDots = BotWaveAtOurTurret }));
+        policy.OnFrame(Clocked(309, 409, Self(x: 7000, y: 5000)));
+        Assert.IsFalse(jev.Asks.Any(a => a.Questions.ContainsKey("tend")));
+    }
 
     [TestMethod]
     public void The_minimap_minions_are_placed_in_their_lanes_and_told_to_the_lane_question()
@@ -576,8 +680,9 @@ public sealed class JevPolicyTests
         var lanes = jev.Last.State.Whereabouts!.Lanes;
         var bot = lanes.Single(l => l.Lane == "bot").Wave!;
         Assert.AreEqual((2, 3), (bot.OurMinions, bot.TheirMinions));
-        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 9000, 1380).Progress, 2), bot.OurFront, "our front is our foremost dot");
-        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 9600, 1340).Progress, 2), bot.TheirFront, "theirs is their foremost toward us");
+        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 11100, 1350).Progress, 2), bot.OurFront, "our front is our foremost dot");
+        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 11650, 1480).Progress, 2), bot.TheirFront, "theirs is their foremost toward us");
+        Assert.AreEqual("in your half of the lane, short of your outer turret", bot.TheirFrontPlace);
         Assert.AreEqual(Math.Round((bot.OurFront!.Value + bot.TheirFront!.Value) / 2, 2), bot.MeetAt);
         Assert.AreEqual("right", bot.MeetScreenDirection);
         var mid = lanes.Single(l => l.Lane == "mid").Wave!;
@@ -585,7 +690,9 @@ public sealed class JevPolicyTests
         Assert.IsNull(mid.MeetAt);
 
         var criteria = ((ChoiceQuestion)jev.Last.Questions["lane"]).Criteria;
-        StringAssert.Contains((string)criteria["bot"]!, $"minions on the minimap: 2 ours, 3 theirs, meeting {bot.MeetAt:0.00} of the way to the enemy nexus");
+        StringAssert.Contains((string)criteria["bot"]!,
+            $"minions on the minimap: 2 ours, 3 theirs, theirs in your half of the lane, short of your outer turret, "
+            + $"meeting {bot.MeetAt:0.00} of the way to the enemy nexus");
         StringAssert.Contains((string)criteria["mid"]!, "the minimap shows no minions in it");
     }
 

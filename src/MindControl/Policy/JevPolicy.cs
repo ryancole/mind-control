@@ -62,6 +62,14 @@ public sealed record JevOptions
     public double WaveAskEverySeconds { get; init; } = 2;
 
     /// <summary>
+    /// How often, in video seconds, a player away from an enemy wave that is
+    /// at one of their turrets is asked about: should they go and catch it?
+    /// Asked whether they stand or walk. One in flight at a time, apart from
+    /// the other questions.
+    /// </summary>
+    public double TendAskEverySeconds { get; init; } = 3;
+
+    /// <summary>
     /// How far, in game units, the player's model can drift and still be on
     /// the same spot. The minimap read jitters by tens of units on a
     /// champion that has not moved; a walking one covers this in a third of
@@ -189,6 +197,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _lastPointAskAt = double.NegativeInfinity;
     private bool _askingWave;
     private double _lastWaveAskAt = double.NegativeInfinity;
+    private bool _askingTend;
+    private double _lastTendAskAt = double.NegativeInfinity;
     private bool _failing;
 
     // Questions on the wire, by occasion, oldest first. Touched from the
@@ -197,7 +207,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly Lock _wireLock = new();
 
     /// <summary>
-    /// The occasions ("now", "idle", "wave", "bolt", "shot", "level") of the questions
+    /// The occasions ("now", "idle", "wave", "tend", "bolt", "shot", "level") of the questions
     /// on their way to the model, oldest first, raised each time that changes: when one
     /// is sent and when its answer or failure comes back. It follows the
     /// network, not <see cref="Settle"/>, so it is raised on whichever thread
@@ -259,6 +269,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastPointAskAt = double.NegativeInfinity;
         _askingWave = false;
         _lastWaveAskAt = double.NegativeInfinity;
+        _askingTend = false;
+        _lastTendAskAt = double.NegativeInfinity;
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -318,6 +330,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             AskNow(frame, self);
             AskIdle(frame, self);
             AskWave(frame, self);
+            AskTend(frame, self);
             AskHeldPoint(frame, self);
         }
         Settle();
@@ -449,10 +462,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
                 return;
             // The whole trip in one order: to where the lane's waves meet when
-            // the minimap shows both, and otherwise to where the lane is
-            // played -- never its nearest point, which from base is only its mouth.
-            var wave = whereabouts.Lanes.First(l => l.Lane == lane.Choice).Wave?.MeetAt;
-            var spot = wave is { } meet ? RiftMap.At(lane.Choice, meet) : RiftMap.LaningSpot(lane.Choice);
+            // the minimap shows both, to the enemy's front when it is alone at
+            // one of their turrets, and otherwise to where the lane is played
+            // -- never its nearest point, which from base is only its mouth.
+            var facts = whereabouts.Lanes.First(l => l.Lane == lane.Choice).Wave;
+            var wave = facts?.MeetAt
+                ?? (facts?.TheirFront is { } front && RiftMap.AtOurTurret(lane.Choice, front) ? front : null);
+            var spot = wave is { } at ? RiftMap.At(lane.Choice, at) : RiftMap.LaningSpot(lane.Choice);
             // World y grows north, screen y grows down: flip for the step.
             var (dx, dy) = (spot.X - rest.X, -(spot.Y - rest.Y));
             var length = double.Hypot(dx, dy);
@@ -480,10 +496,88 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (wave is { OurMinions: 0, TheirMinions: 0 })
             return "; the minimap shows no minions in it";
         var said = $"; minions on the minimap: {wave.OurMinions} ours, {wave.TheirMinions} theirs";
+        if (wave.TheirFrontPlace is { } place)
+            said += $", theirs {place}";
         if (wave.MeetAt is { } meet)
             return said + $", meeting {meet:0.00} of the way to the enemy nexus, "
                 + (wave.MeetScreenDirection is { } way ? $"{wave.MeetUnitsAway:0} units away, {way} on the screen" : "where the player stands");
         return said + (wave.OurFront is { } ours ? $", ours pushed {ours:0.00} of the way" : $", theirs pushed to {wave.TheirFront:0.00} of the way");
+    }
+
+    // --- A wave at the player's turret: go and catch it ---
+
+    /// <summary>
+    /// How near an enemy wave the player already is when they are at it: about
+    /// a screen's width, inside which a minimap click has nothing to show.
+    /// </summary>
+    private const double AtTheWaveUnits = 1500;
+
+    /// <summary>
+    /// Asks about a player away from an enemy wave that the minimap shows at
+    /// one of their own turrets, when there is something to ask: alive,
+    /// placed on the map, and such a wave more than
+    /// <see cref="AtTheWaveUnits"/> away. Asked whether they stand or walk,
+    /// since a roaming player is exactly who leaves a wave alone. Whether it
+    /// is theirs to catch, and which one when more than one lane is crashing,
+    /// are the model's calls; a yes is one minimap walk to that wave's front.
+    /// </summary>
+    private void AskTend(FrameEnvelope frame, ChampionRow self)
+    {
+        if (_askingTend || frame.VideoTime - _lastTendAskAt < _options.TendAskEverySeconds)
+            return;
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
+            return;
+        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
+        if (moment.Whereabouts is not { } whereabouts)
+            return;
+        var crashing = whereabouts.Lanes
+            .Where(l => l.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits }
+                && RiftMap.AtOurTurret(l.Lane, front))
+            .ToArray();
+        if (crashing.Length == 0)
+            return;
+
+        var questions = new Questions().Noul("tend", CoachQuestions.Tend,
+            yes: "the wave at their turret is theirs to catch, nobody is there to, and nothing on the screen holds them",
+            no: "an ally has it, their own lane needs them, a fight holds them, or the coach just sent them");
+        if (crashing.Length > 1)
+        {
+            var criteria = new ChoiceCriteria();
+            foreach (var lane in crashing)
+            {
+                var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
+                criteria[lane.Lane] = $"{lane.Lane} lane: the enemy wave is {lane.Wave!.TheirFrontPlace}, "
+                    + $"{lane.Wave.TheirFrontUnitsAway:0} units away, {lane.Wave.TheirFrontScreenDirection} on the screen; allies there: {allies}";
+            }
+            questions.Choice("tend_lane", CoachQuestions.TendLane, criteria);
+        }
+
+        _askingTend = true;
+        _lastTendAskAt = frame.VideoTime;
+        var asked = frame.VideoTime;
+        Ask("tend", moment, questions, asked, NowRequest, released: () => _askingTend = false, answered: response =>
+        {
+            if (!response.TryGet<NoulAnswer>("tend", out var tend) || !tend!.IsYes(_options.YesAt))
+                return;
+            var chosen = crashing.Length == 1 ? crashing[0].Lane
+                : response.TryGet<ChoiceAnswer>("tend_lane", out var pick) ? pick!.Choice : null;
+            if (crashing.FirstOrDefault(l => l.Lane == chosen) is not { Wave: { TheirFront: { } front } wave } lane)
+                return;
+            var spot = RiftMap.At(lane.Lane, front);
+            // World y grows north, screen y grows down: flip for the step.
+            var (dx, dy) = (spot.X - x, -(spot.Y - y));
+            var length = double.Hypot(dx, dy);
+            var direction = ScreenDirections.Name(dx, dy);
+            var alone = lane.AlliesThere.Count == 0 ? " with none of your team there" : "";
+            var reason = $"the enemy wave is {wave.TheirFrontPlace} in {lane.Lane} lane{alone}; "
+                + $"a good player would be on the way to catch it ({length:0} units {direction})";
+            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+            {
+                Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
+            });
+            _sentTo = $"{lane.Lane} lane";
+            Remember($"walked toward {lane.Lane} lane's wave at your turret", asked);
+        });
     }
 
     // --- In the lane: out of the enemy wave ---
@@ -1077,13 +1171,28 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         }
         double? ourFront = ours.Count > 0 ? Math.Round(ours.Max(), 2) : null;
         double? theirFront = theirs.Count > 0 ? Math.Round(theirs.Min(), 2) : null;
+        var facts = new WaveFacts(ours.Count, theirs.Count, ourFront, theirFront, null, null, null);
+        if (theirs.Count > 0)
+        {
+            var (tx, ty) = RiftMap.At(lane, theirs.Min());
+            var toTheirs = double.Hypot(tx - x, ty - y);
+            facts = facts with
+            {
+                TheirFrontPlace = RiftMap.EnemyFrontPlace(lane, theirs.Min()),
+                TheirFrontUnitsAway = Math.Round(toTheirs),
+                TheirFrontScreenDirection = toTheirs < 1 ? null : ScreenDirections.NameOfWorldOffset(tx - x, ty - y),
+            };
+        }
         if (ourFront is not { } o || theirFront is not { } t)
-            return new WaveFacts(ours.Count, theirs.Count, ourFront, theirFront, null, null, null);
+            return facts;
         var meet = Math.Round((o + t) / 2, 2);
         var (mx, my) = RiftMap.At(lane, meet);
         var away = double.Hypot(mx - x, my - y);
-        return new WaveFacts(ours.Count, theirs.Count, o, t, meet, Math.Round(away),
-            away < 1 ? null : ScreenDirections.NameOfWorldOffset(mx - x, my - y));
+        return facts with
+        {
+            MeetAt = meet, MeetUnitsAway = Math.Round(away),
+            MeetScreenDirection = away < 1 ? null : ScreenDirections.NameOfWorldOffset(mx - x, my - y),
+        };
     }
 
     /// <summary>
