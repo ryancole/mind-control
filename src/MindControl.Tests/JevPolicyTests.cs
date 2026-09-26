@@ -21,7 +21,7 @@ public sealed class JevPolicyTests
     private static readonly Meta Coaching = new()
     {
         Schema = 1, HasNameplates = true, HasAbilities = true, HasThreats = true, HasSkillshots = true,
-        HasMinions = true, HasMinionDots = true, HasLastHits = true,
+        HasMinions = true, HasMinionDots = true, HasLastHits = true, HasTurrets = true,
         WorldBounds = new() { MaxX = 14870, MaxY = 14980 },
     };
 
@@ -578,9 +578,29 @@ public sealed class JevPolicyTests
         Assert.AreEqual("in your half of the lane, short of your outer turret", RiftMap.EnemyFrontPlace("bot", 0.45),
             "bot's outer turret stands far up the lane");
         Assert.AreEqual("at your outer turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 10500, 1250).Progress));
-        Assert.AreEqual("at or past your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress));
+        Assert.AreEqual("at your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress));
+        Assert.AreEqual("at or past your inhibitor turret", RiftMap.EnemyFrontPlace("top", RiftMap.Along("top", 1253, 4400).Progress));
         Assert.IsFalse(RiftMap.AtOurTurret("mid", 0.5));
         Assert.IsTrue(RiftMap.AtOurTurret("mid", RiftMap.Along("mid", 5846, 6396).Progress));
+    }
+
+    [TestMethod]
+    public void A_wave_at_a_fallen_turret_is_placed_on_the_way_to_the_next_one_in()
+    {
+        var atOuter = RiftMap.Along("bot", 10500, 1250).Progress;
+        Assert.AreEqual("at your outer turret", RiftMap.EnemyFrontPlace("bot", atOuter, _ => true));
+        Assert.AreEqual("past your fallen outer turret, on the way to your inner turret",
+            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier != "outer"));
+        Assert.AreEqual("past your fallen outer and inner turrets, on the way to your inhibitor turret",
+            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier == "inhibitor"));
+        Assert.AreEqual("past your fallen outer, inner and inhibitor turrets, on the way to your nexus",
+            RiftMap.EnemyFrontPlace("bot", atOuter, _ => false));
+        Assert.AreEqual("past your fallen outer turret, on the way to your inner turret (the minimap has not shown whether it stands)",
+            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier == "outer" ? false : null));
+        Assert.AreEqual("at your outer turret (the minimap has not shown whether it stands)",
+            RiftMap.EnemyFrontPlace("bot", atOuter, _ => null), "not called is not fallen");
+        Assert.AreEqual("at your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress,
+            tier => tier != "outer"), "a turret the wave is already past is not named");
     }
 
     [TestMethod]
@@ -656,6 +676,63 @@ public sealed class JevPolicyTests
         var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
         var walk = policy.DrainMoves().Single(m => m.Reason.StartsWith("you have stood still", StringComparison.Ordinal));
         Assert.AreEqual(new Destination("bot lane", x, y), walk.Destination, "not past it, to where the lane is played");
+    }
+
+    /// <summary>All 22 turrets standing, but for the ones named: (team, lane, tier) to their reading.</summary>
+    private static Turret[] Turrets(params (string Team, string Lane, string Tier, bool? Standing)[] except) =>
+    [
+        .. new[] { MinionTeam.Blue, MinionTeam.Red }.SelectMany(team =>
+            RiftMap.Lanes.SelectMany(lane => RiftMap.Tiers.Select(tier => new Turret
+            {
+                Team = team, Lane = lane, Tier = tier,
+                Standing = except.Where(e => e.Team == team && e.Lane == lane && e.Tier == tier)
+                    .Select(e => e.Standing).DefaultIfEmpty(true).First(),
+            }))
+            .Concat(new[] { "top", "bot" }.Select(side =>
+                new Turret { Team = team, Lane = "base", Tier = TurretTier.Nexus, Standing = true, Side = side }))),
+    ];
+
+    [TestMethod]
+    public void A_wave_at_a_fallen_outer_turret_is_told_as_on_the_way_to_the_inner_one()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, _) => id == "tend" ? FakeJev.Yes : null;
+        var turrets = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false), (MinionTeam.Red, "mid", TurretTier.Inner, null));
+        policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret, Turrets = turrets }));
+
+        var lanes = jev.Last.State.Whereabouts!.Lanes;
+        var bot = lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual("past your fallen outer turret, on the way to your inner turret", bot.Wave!.TheirFrontPlace);
+        Assert.AreEqual(new LaneTurretFacts("fallen", "standing", "standing"), bot.YourTurrets);
+        Assert.AreEqual(new LaneTurretFacts("standing", "not seen", "standing"), lanes.Single(l => l.Lane == "mid").TheirTurrets);
+        StringAssert.StartsWith(policy.DrainMoves().Single().Reason,
+            "the enemy wave is past your fallen outer turret, on the way to your inner turret in bot lane");
+    }
+
+    [TestMethod]
+    public void Turrets_are_remembered_across_frames_that_do_not_carry_them_and_forgotten_on_resync()
+    {
+        var (policy, jev) = Coach();
+        var turrets = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false));
+        policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret, Turrets = turrets }));
+        policy.OnFrame(Clocked(303, 403, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret }));
+        Assert.AreEqual("fallen", jev.Last.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").YourTurrets!.Outer);
+
+        policy.Resync(Clocked(310, 410, Self(x: 7000, y: 5000)));
+        policy.OnFrame(Clocked(313, 413, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret }));
+        var bot = jev.Last.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot");
+        Assert.IsNull(bot.YourTurrets, "nothing read since the gap");
+        Assert.AreEqual("at your outer turret", bot.Wave!.TheirFrontPlace, "placed by the spot alone");
+    }
+
+    [TestMethod]
+    public void A_turret_falling_or_rebuilt_is_said_in_the_log()
+    {
+        var (policy, _) = Coach();
+        policy.OnEvent(new GameEvent { Kind = EventKind.TurretDestroyed, Team = "blue", Lane = "bot", Tier = "outer", VideoTime = 512 });
+        policy.OnEvent(new GameEvent { Kind = EventKind.TurretRebuilt, Team = "red", Lane = "base", Tier = "nexus", Side = "top", VideoTime = 800 });
+        CollectionAssert.AreEqual(new[] { "your bot outer turret fell", "their top nexus turret stands again" },
+            policy.DrainCues().Select(c => c.Reason).ToArray());
     }
 
     [TestMethod]
@@ -1408,6 +1485,14 @@ public sealed class JevPolicyTests
         StringAssert.Contains(reason, "minion bars (nobody will be stepped back out of an enemy wave)");
         StringAssert.Contains(reason, "minimap minions (walks go to where a lane is played, not to its wave");
         StringAssert.Contains(reason, "400px");
+    }
+
+    [TestMethod]
+    public void A_feed_without_the_turret_reader_says_what_it_costs()
+    {
+        var policy = new JevPolicy(new FakeJev());
+        policy.Configure(Coaching with { HasTurrets = false });
+        StringAssert.Contains(policy.DrainCues().Single().Reason, "minimap turrets (a wave is placed by the turret spots");
     }
 
     [TestMethod]

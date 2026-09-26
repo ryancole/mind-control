@@ -80,15 +80,19 @@ public static class RiftMap
         return Toward(nearest, x, y).Distance <= LaneHalfWidth ? nearest : null;
     }
 
+    /// <summary>The lane turret tiers, from the enemy's side of a lane in toward the player's base.</summary>
+    public static readonly string[] Tiers = ["outer", "inner", "inhibitor"];
+
     /// <summary>
-    /// The player's own outer and inner turrets in each lane, as the points of
-    /// its path they stand beside. Whether one still stands is not in the feed.
+    /// The player's own lane turrets, outer to inhibitor, as the points of
+    /// each lane's path they stand beside. Whether each still stands is the
+    /// feed's (<c>turrets</c>); this is only where they are.
     /// </summary>
-    private static readonly Dictionary<string, ((double X, double Y) Outer, (double X, double Y) Inner)> OurTurrets = new()
+    private static readonly Dictionary<string, (double X, double Y)[]> OurTurrets = new()
     {
-        ["top"] = ((1250, 10504), (1483, 6919)),
-        ["mid"] = ((5846, 6396), (5048, 4812)),
-        ["bot"] = ((10504, 1250), (6919, 1483)),
+        ["top"] = [(1250, 10504), (1483, 6919), (1253, 4281)],
+        ["mid"] = [(5846, 6396), (5048, 4812), (3651, 3696)],
+        ["bot"] = [(10504, 1250), (6919, 1483), (4281, 1253)],
     };
 
     /// <summary>A turret's attack range, in game units: a wave this near one is fighting it.</summary>
@@ -97,25 +101,53 @@ public static class RiftMap
     /// <summary>
     /// Where an enemy wave's front is in a lane, named as a coach says it,
     /// by the player's own turrets: in the enemy's half, in the player's half
-    /// short of their outer turret, at their outer turret, or at or past their
-    /// inner turret. "At" is within a turret's range of it, along the lane.
+    /// short of their outer turret, or at one of their turrets, "at" being
+    /// within a turret's range of its spot, along the lane.
+    /// <paramref name="standing"/> says whether the player's turret of a tier
+    /// in this lane stands (null: not known). A wave at the spot of a fallen
+    /// turret is not fighting it: it is named past it, on the way to the next
+    /// turret in that has not fallen, since that is the one it pressures.
+    /// Without <paramref name="standing"/> every turret is named by its spot.
     /// </summary>
-    public static string EnemyFrontPlace(string lane, double progress)
+    public static string EnemyFrontPlace(string lane, double progress, Func<string, bool?>? standing = null)
     {
-        if (progress <= TurretReach(lane, inner: true))
-            return "at or past your inner turret";
-        if (progress <= TurretReach(lane, inner: false))
-            return "at your outer turret";
-        return progress < 0.5 ? "in your half of the lane, short of your outer turret" : "in their half of the lane";
+        var reached = -1;
+        for (var tier = 0; tier < Tiers.Length; tier++)
+            if (progress <= TurretReach(lane, tier))
+                reached = tier;
+        if (reached < 0)
+            return progress < 0.5 ? "in your half of the lane, short of your outer turret" : "in their half of the lane";
+
+        var next = reached;
+        while (next < Tiers.Length && standing?.Invoke(Tiers[next]) == false)
+            next++;
+        if (next == reached)
+            return At(Tiers[reached], standing?.Invoke(Tiers[reached]) is null && standing is not null);
+
+        var fallen = Tiers[reached..next];
+        var past = fallen.Length == 1
+            ? $"past your fallen {fallen[0]} turret"
+            : $"past your fallen {string.Join(", ", fallen[..^1])} and {fallen[^1]} turrets";
+        if (next == Tiers.Length)
+            return $"{past}, on the way to your nexus";
+        return $"{past}, on the way to your {Tiers[next]} turret"
+            + (standing!(Tiers[next]) is null ? " (the minimap has not shown whether it stands)" : "");
+
+        static string At(string tier, bool unknown) =>
+            (tier == "inhibitor" ? "at or past your inhibitor turret" : $"at your {tier} turret")
+            + (unknown ? " (the minimap has not shown whether it stands)" : "");
     }
 
-    /// <summary>Whether an enemy wave's front is at one of the player's own turrets.</summary>
-    public static bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, inner: false);
+    /// <summary>
+    /// Whether an enemy wave's front is at one of the player's own turrets, or
+    /// at or past the spot of their outer turret when it has fallen.
+    /// </summary>
+    public static bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, 0);
 
     /// <summary>How far along the lane a turret's range reaches toward the enemy.</summary>
-    private static double TurretReach(string lane, bool inner)
+    private static double TurretReach(string lane, int tier)
     {
-        var turret = inner ? OurTurrets[lane].Inner : OurTurrets[lane].Outer;
+        var turret = OurTurrets[lane][tier];
         return Along(lane, turret.X, turret.Y).Progress + TurretRange / Length(lane);
     }
 

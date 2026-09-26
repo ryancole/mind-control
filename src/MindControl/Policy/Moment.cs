@@ -23,7 +23,7 @@ public sealed record Moment
         + "in their place at this exact moment. Everything below is what the player can see: "
         + "their own HUD, champions drawn on the screen in front of them, and their own team on "
         + "the minimap, themselves included (`whereabouts` is where they stand on it, how long they "
-        + "have stood there, and how far each lane is, with the minions the minimap shows in it), and the minions "
+        + "have stood there, and how far each lane is, with the minions and turrets the minimap shows in it), and the minions "
         + "on their screen (`minions`). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
@@ -92,7 +92,19 @@ public sealed record LaneFacts(string Lane, double DistanceUnits, string? Screen
 {
     /// <summary>The minions the minimap shows in the lane; null when the minimap was not read for them.</summary>
     public WaveFacts? Wave { get; init; }
+
+    /// <summary>The player's own turrets in the lane, off the minimap; null when it was not read for turrets.</summary>
+    public LaneTurretFacts? YourTurrets { get; init; }
+
+    /// <summary>The enemy's turrets in the lane, likewise.</summary>
+    public LaneTurretFacts? TheirTurrets { get; init; }
 }
+
+/// <summary>
+/// One side's three turrets in a lane, each "standing", "fallen" or
+/// "not seen" (its spot on the minimap has not been clear enough to call).
+/// </summary>
+public sealed record LaneTurretFacts(string Outer, string Inner, string Inhibitor);
 
 /// <summary>
 /// A lane's minions off the player's own minimap. The counts are a floor (a
@@ -108,8 +120,10 @@ public sealed record WaveFacts(
 {
     /// <summary>
     /// Where the enemy's front is, by the player's own turrets
-    /// (<see cref="RiftMap.EnemyFrontPlace"/>): "at your outer turret" and the
-    /// like. Null when the minimap shows none of theirs in the lane.
+    /// (<see cref="RiftMap.EnemyFrontPlace"/>): "at your outer turret", or
+    /// "past your fallen outer turret, on the way to your inner turret" when
+    /// the minimap shows the one at its spot fallen. Null when the minimap
+    /// shows none of theirs in the lane.
     /// </summary>
     public string? TheirFrontPlace { get; init; }
 
