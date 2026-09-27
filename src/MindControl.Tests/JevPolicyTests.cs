@@ -77,6 +77,30 @@ public sealed class JevPolicyTests
             policy.OnFrame(Frame(t, champions));
     }
 
+    // --- The root question and its options ---
+
+    /// <summary>The options the root question offered, carry_on first; none when it was not asked.</summary>
+    private static string[] Offered(FakeJev.Ask ask) =>
+        ask.Questions.TryGetValue("decide", out var q) ? ((ChoiceQuestion)q).Options.ToArray() : [];
+
+    /// <summary>The asks whose root offered <paramref name="option"/>.</summary>
+    private static FakeJev.Ask[] Offering(FakeJev jev, string option) =>
+        jev.Asks.Where(a => Offered(a).Contains(option)).ToArray();
+
+    /// <summary>What the root said of one of its options.</summary>
+    private static string Criterion(FakeJev.Ask ask, string option) =>
+        (string)((ChoiceQuestion)ask.Questions["decide"]).Criteria[option]!;
+
+    /// <summary>
+    /// A model that picks <paramref name="option"/> at the root whenever it is
+    /// offered (and carry_on, the no-order option, when it is not), and each
+    /// follow-up named its pick; every other question its silent default.
+    /// </summary>
+    private static Func<string, Question, Answer?> Choose(string option, params (string Question, string Pick)[] picks) =>
+        (id, q) => id == "decide"
+            ? FakeJev.Pick(q, ((ChoiceQuestion)q).Options.Contains(option) ? option : "carry_on")
+            : picks.Where(p => p.Question == id).Select(p => (Answer?)FakeJev.Pick(q, p.Pick)).FirstOrDefault();
+
     // The fixture's threats (data/coach-full-20260902-222718.jsonl), verbatim.
 
     /// <summary>From the upper right, 12 damage, the player 0.1px across its line.</summary>
@@ -101,16 +125,68 @@ public sealed class JevPolicyTests
          "outcome":"hit","lead":-16.3}
         """;
 
-    // --- The moment itself: buttons ---
+    // --- The moment itself: the root question ---
+
+    [TestMethod]
+    public void The_root_offers_only_what_the_moment_makes_possible_and_carry_on_first()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 50, Idle()));
+
+        var ask = jev.Asks.Single();
+        CollectionAssert.AreEqual(new[] { "carry_on", "walk_to_lane", "buy" }, Offered(ask),
+            "in the fountain with the clock running: no button up, nobody on the screen, nothing in reach");
+        CollectionAssert.AreEquivalent(new[] { "decide", "lane" }, ask.Questions.Keys.ToArray(),
+            "the walk's follow-up goes in the same request");
+        StringAssert.StartsWith(Criterion(ask, "walk_to_lane"), "walk_to_lane: a step toward a lane's minion wave");
+        Assert.AreEqual(0, ask.Options!.Retry!.MaxRetries, "a question about the moment is not retried");
+    }
+
+    [TestMethod]
+    public void Carry_on_or_a_pick_below_the_threshold_is_no_order()
+    {
+        var (policy, jev) = Coach();
+        policy.OnEvent(Cast("Q", 10, 5));
+        Run(policy, 15.5, 16.5, Self(), Enemy(900));
+        Assert.IsEmpty(policy.DrainKeys(), "the silent model picks carry_on");
+
+        jev.Script = (id, _) => id == "decide"
+            ? new ChoiceAnswer("use_ability", new Dictionary<string, double>
+            {
+                ["carry_on"] = 0.3, ["use_ability"] = 0.35, ["run_away"] = 0.35,
+            }, 0.5)
+            : null;
+        Run(policy, 16.6, 17.5, Self(), Enemy(900));
+        Assert.IsEmpty(policy.DrainKeys(), "0.35 is under DecideAt");
+        Assert.IsNotEmpty(Offering(jev, "use_ability"), "it was asked; the pick just fell short");
+    }
+
+    [TestMethod]
+    public void One_request_carries_the_root_and_every_offered_branchs_follow_up()
+    {
+        var (policy, jev) = Coach();
+        policy.OnEvent(Cast("Q", 10, 5));
+        policy.OnEvent(Cast("W", 10, 5));
+        jev.Hold = true;
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 50, Idle(), Enemy(900)));
+
+        var ask = jev.Asks.Single();
+        CollectionAssert.IsSubsetOf(new[] { "carry_on", "use_ability", "walk_to_lane", "run_away" }, Offered(ask));
+        CollectionAssert.AreEquivalent(new[] { "decide", "ability", "lane" }, ask.Questions.Keys.ToArray());
+    }
+
+    // --- Buttons ---
 
     [TestMethod]
     public void Nothing_is_asked_before_the_HUD_has_shown_a_button_come_back()
     {
         // A slot may not be skilled; until a cooldown has been printed for it
-        // there is no button to ask about, only a guess.
+        // there is no button to offer, only a guess.
         var (policy, jev) = Coach();
         Run(policy, 10, 12, Self(), Enemy(900));
-        Assert.IsEmpty(jev.Asks);
+        Assert.IsNotEmpty(jev.Asks, "the enemy on the screen is something to decide about");
+        Assert.IsEmpty(Offering(jev, "use_ability"));
     }
 
     [TestMethod]
@@ -119,12 +195,13 @@ public sealed class JevPolicyTests
         var (policy, jev) = Coach();
         policy.OnEvent(Cast("Q", 10, 5));
         Run(policy, 14.5, 14.9, Self(), Enemy(900));   // still on the printed cooldown
-        Assert.IsEmpty(jev.Asks);
+        Assert.IsEmpty(Offering(jev, "use_ability"));
 
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
 
-        var ask = jev.Asks.Single();
-        CollectionAssert.AreEqual(new[] { "press_Q" }, ask.Questions.Keys.ToArray(), "W has never been seen cast");
+        var ask = Offering(jev, "use_ability").Single();
+        Assert.IsFalse(ask.Questions.ContainsKey("ability"), "one button up, since W has never been seen cast: no choice to make");
+        StringAssert.StartsWith(Criterion(ask, "use_ability"), "use_ability: throw one of the buttons that is up (Q)");
         Assert.AreEqual(15.5, ask.State.VideoTime);
         var q = ask.State.Abilities.Single(a => a.Slot == "Q");
         Assert.AreEqual("up", q.Status);
@@ -145,7 +222,7 @@ public sealed class JevPolicyTests
     public void A_yes_presses_the_key_at_the_moment_it_was_asked_about()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "press_Q" ? FakeJev.Yes : null;
+        jev.Script = Choose("use_ability");
         policy.OnEvent(Cast("Q", 10, 5));
         Run(policy, 15.5, 17.5, Self(), Enemy(900));
 
@@ -162,7 +239,7 @@ public sealed class JevPolicyTests
     public void The_coach_is_reminded_of_what_it_pressed()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "press_Q" ? FakeJev.Yes : null;
+        jev.Script = Choose("use_ability");
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
         policy.OnFrame(Frame(16.0, Self(), Enemy(900)));
@@ -170,17 +247,6 @@ public sealed class JevPolicyTests
         var reminded = jev.Last.State.Coach.Single();
         Assert.AreEqual("pressed Q", reminded.Did);
         Assert.AreEqual(0.5, reminded.SecondsAgo);
-    }
-
-    [TestMethod]
-    public void A_yes_below_the_threshold_is_a_no()
-    {
-        var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "press_Q" ? new NoulAnswer(0.5) : null;
-        policy.OnEvent(Cast("Q", 10, 5));
-        Run(policy, 15.5, 17.5, Self(), Enemy(900));
-        Assert.IsEmpty(policy.DrainKeys());
-        Assert.IsNotEmpty(jev.Asks, "it was asked; the answer just fell short");
     }
 
     [TestMethod]
@@ -230,17 +296,21 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_button_the_player_just_pressed_is_not_asked_about()
+    public void A_button_the_player_just_pressed_is_not_offered()
     {
         var (policy, jev) = Coach();
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnEvent(Cast("W", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
-        CollectionAssert.AreEqual(new[] { "press_Q", "press_W" }, jev.Last.Questions.Keys.Order().ToArray());
+        var ability = (ChoiceQuestion)jev.Last.Questions["ability"];
+        CollectionAssert.AreEqual(new[] { "Q", "W" }, ability.Options.ToArray());
+        StringAssert.Contains((string)ability.Criteria["Q"]!, "Q: Mystic Shot");
+        StringAssert.Contains((string)ability.Criteria["Q"]!, "reaching 1150 units; inside its range: Karma");
 
         policy.OnEvent(Cast("Q", 15.6, 5));   // they pressed it: up again at 20.6
         policy.OnFrame(Frame(16, Self(), Enemy(900)));
-        CollectionAssert.AreEqual(new[] { "press_W" }, jev.Last.Questions.Keys.ToArray());
+        Assert.IsFalse(jev.Last.Questions.ContainsKey("ability"), "only W is up");
+        StringAssert.StartsWith(Criterion(jev.Last, "use_ability"), "use_ability: throw one of the buttons that is up (W)");
         Assert.AreEqual("cooldown", jev.Last.State.Abilities.Single(a => a.Slot == "Q").Status);
     }
 
@@ -251,14 +321,14 @@ public sealed class JevPolicyTests
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnEvent(Cast("Q", 16, countdown: null));
         Run(policy, 16, 30, Self(), Enemy(900));
-        Assert.IsEmpty(jev.Asks);
+        Assert.IsEmpty(Offering(jev, "use_ability"));
     }
 
     [TestMethod]
     public void Resync_drops_the_answers_still_in_flight()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "press_Q" ? FakeJev.Yes : null;
+        jev.Script = Choose("use_ability");
         policy.OnEvent(Cast("Q", 10, 5));
         jev.Hold = true;
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
@@ -269,7 +339,7 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(15.7, Self(), Enemy(900)));
 
         Assert.IsEmpty(policy.DrainKeys(), "an answer about a past we stopped trusting");
-        Assert.HasCount(1, jev.Asks, "and the cooldown was forgotten with the gap, so nothing to ask");
+        Assert.HasCount(1, Offering(jev, "use_ability"), "and the cooldown was forgotten with the gap, so no button to offer");
     }
 
     [TestMethod]
@@ -282,7 +352,7 @@ public sealed class JevPolicyTests
 
         jev.Hold = true;
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
-        CollectionAssert.AreEqual(new[] { "now" }, heard[^1], "sent and not yet back");
+        CollectionAssert.AreEqual(new[] { "decide" }, heard[^1], "sent and not yet back");
 
         jev.Release();
         CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1],
@@ -301,7 +371,7 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
 
         policy.Resync(null);
-        CollectionAssert.AreEqual(new[] { "now" }, heard[^1]);
+        CollectionAssert.AreEqual(new[] { "decide" }, heard[^1]);
         jev.Release();
         CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1]);
     }
@@ -316,7 +386,7 @@ public sealed class JevPolicyTests
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
 
-        CollectionAssert.AreEqual(new[] { "now" }, heard[0]);
+        CollectionAssert.AreEqual(new[] { "decide" }, heard[0]);
         CollectionAssert.AreEqual(Array.Empty<string>(), heard[^1]);
     }
 
@@ -336,7 +406,7 @@ public sealed class JevPolicyTests
         Assert.IsGreaterThan(1, jev.Asks.Count, "it kept asking");
 
         jev.Fault = null;
-        jev.Script = (id, _) => id == "press_Q" ? FakeJev.Yes : null;
+        jev.Script = Choose("use_ability");
         Run(policy, 17.1, 17.5, Self(), Enemy(900));
         Assert.IsNotEmpty(policy.DrainKeys(), "and took the next answer");
     }
@@ -352,11 +422,11 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
 
         var consultation = audited.Single();
-        Assert.AreEqual("now", consultation.Occasion);
+        Assert.AreEqual("decide", consultation.Occasion);
         Assert.AreEqual(15.5, consultation.VideoTime);
         Assert.IsNotNull(consultation.Response);
         Assert.IsNull(consultation.Error);
-        Assert.IsTrue(consultation.Questions.ContainsKey("press_Q"));
+        CollectionAssert.Contains(((ChoiceQuestion)consultation.Questions["decide"]).Options.ToArray(), "use_ability");
     }
 
     // --- Away from the action: heading to lane ---
@@ -372,21 +442,20 @@ public sealed class JevPolicyTests
     private static ChampionRow InBotLane(int track = 3) => Ally(track, 13064, 2051);
 
     [TestMethod]
-    public void A_player_is_asked_every_second_whether_to_head_to_lane()
+    public void A_player_is_offered_the_walk_to_lane_whether_they_stand_or_walk()
     {
         var (policy, jev) = Coach();
         // Jittering by 40 units is standing still; the minimap read wobbles that much.
         var i = 0;
         for (var t = 100.0; t < 103.0; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle(x: 400 + i++ % 2 * 40), InBotLane()));
-        Assert.HasCount(3, jev.Asks, "at 100, 101 and 102: no wait for them to stand still first");
+        Assert.IsTrue(jev.Asks.All(a => Offered(a).Contains("walk_to_lane")), "no wait for them to stand still first");
         Assert.AreEqual(0.0, jev.Asks[0].State.Whereabouts!.StoodStillForSeconds);
 
         policy.OnFrame(Clocked(103.0, 53, Idle(), InBotLane()));
 
-        Assert.HasCount(4, jev.Asks);
         var ask = jev.Last;
-        CollectionAssert.AreEquivalent(new[] { "walk", "lane" }, ask.Questions.Keys.ToArray());
+        Assert.AreEqual(103.0, ask.State.VideoTime);
         Assert.AreEqual("0:53", ask.State.GameClock);
         var where = ask.State.Whereabouts!;
         Assert.AreEqual("the fountain", where.Place);
@@ -401,27 +470,22 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEquivalent(new[] { "top", "mid", "bot" }, lane.Options.ToArray());
         StringAssert.Contains((string)lane.Criteria["bot"]!, "2244 units away, up-right on the screen; allies there: champ3");
         StringAssert.Contains((string)lane.Criteria["top"]!, "allies there: none");
-        Assert.IsNotNull(ask.Options, "a question about the moment is not retried");
-        Assert.AreEqual(0, ask.Options!.Retry!.MaxRetries);
     }
 
     [TestMethod]
-    public void A_yes_is_a_short_step_toward_the_chosen_lane_and_the_next_second_asks_again()
+    public void A_pick_is_a_step_toward_the_chosen_lane_and_the_next_comes_a_second_on()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
-        for (var t = 103.0; t <= 105.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        for (var t = 103.0; t <= 105.5 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
 
-        // Asked at 103, 104 and 105, and a step each time: the step still
-        // being walked is no reason to hold the next.
+        // Decided every 0.3s of these frames; for a second after each step the
+        // walk is not offered, and then it is again: the step still being
+        // walked is no reason to hold the next.
         var steps = policy.DrainMoves();
-        CollectionAssert.AreEqual(new[] { 103.0, 104.0, 105.0 }, steps.Select(s => s.VideoTime).ToArray());
+        CollectionAssert.AreEqual(new[] { 103.0, 104.2, 105.4 }, steps.Select(s => s.VideoTime).ToArray());
+        CollectionAssert.DoesNotContain(Offered(jev.Asks[1]), "walk_to_lane", "0.3s after a step");
         Assert.AreEqual("right", steps[0].Direction);
         Assert.IsGreaterThan(0, steps[0].Dx);
         Assert.IsLessThan(0, steps[0].Dy, "screen y grows down");
@@ -431,55 +495,24 @@ public sealed class JevPolicyTests
             "coach would have stepped right toward bot lane here: you are in the fountain at 0:50; "
             + "a good player would be on the way to bot lane (12086 units right)",
             steps[0].Sentence);
-        StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.0s in the fountain");
+        StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.4s in the fountain");
         // Aimed at where bot lane is played, not its nearest point (the
-        // lane's mouth just outside the base); the recording clicks a short
-        // step that way on the ground.
+        // lane's mouth just outside the base); the recording clicks a step
+        // that way on the ground.
         Assert.AreEqual(new Destination("bot lane", 12400, 1900), steps[0].Destination);
-        var reminded = jev.Last.State.Coach;
+        Assert.AreEqual(12086, steps[0].DistanceUnits!.Value, 1);
+        var reminded = Offering(jev, "walk_to_lane")[^1].State.Coach;
         Assert.AreEqual("stepped toward bot lane", reminded[^1].Did);
-        Assert.AreEqual(1.0, reminded[^1].SecondsAgo, "the step a second ago, still being walked");
+        Assert.AreEqual(1.2, reminded[^1].SecondsAgo, "the step before, still being walked");
         Assert.IsEmpty(policy.DrainKeys());
         Assert.IsEmpty(policy.DrainCues());
     }
 
     [TestMethod]
-    public void A_walk_is_taken_on_a_lower_yes_than_the_other_questions()
+    public void A_walk_to_the_lane_they_stand_in_is_no_step()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => new NoulAnswer(0.55),
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
-        for (var t = 100.0; t <= 100.9 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 50, Idle()));
-        Assert.HasCount(1, policy.DrainMoves(), "0.55 is under YesAt but over WalkYesAt");
-    }
-
-    [TestMethod]
-    public void A_walk_that_falls_short_or_a_lane_they_stand_in_is_no_step()
-    {
-        var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => new NoulAnswer(0.45),
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
-        for (var t = 100.0; t <= 100.9 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 50, Idle()));
-        Assert.HasCount(1, jev.Asks, "it was asked; the answer just fell short");
-        Assert.IsEmpty(policy.DrainMoves());
-
-        // Standing in bot lane, told to walk to bot lane: nothing to demonstrate.
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         for (var t = 200.0; t <= 203.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 150, Self(x: 12400, y: 1900)));
         var asked = jev.Asks.Last(a => a.Questions.ContainsKey("lane"));
@@ -491,25 +524,25 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_player_on_the_move_is_asked_about_lane_but_not_without_a_clock()
+    public void A_player_on_the_move_is_offered_the_walk_but_not_without_a_clock()
     {
         var (policy, jev) = Coach();
         // Walking out of base at 335 units a second: never on one spot, and
-        // still asked each second, since a walk is a click a second too.
+        // still offered the walk, since a walk is a click a second too.
         for (var t = 100.0; t <= 110.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle(x: 400 + (t - 100) * 335)));
-        Assert.HasCount(11, jev.Asks);
+        Assert.HasCount(34, Offering(jev, "walk_to_lane"), "every 0.3s of these frames");
         Assert.IsTrue(jev.Asks.All(a => a.State.Whereabouts!.StoodStillForSeconds < 0.5), "the jitter radius holds a walker a fraction of a second at most");
         jev.Asks.Clear();
 
         // On one spot, but no game clock: the game has not begun.
         for (var t = 110.1; t <= 120.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Frame(t, Idle()));
-        Assert.IsEmpty(jev.Asks);
+        Assert.IsEmpty(Offering(jev, "walk_to_lane"));
 
         // The clock lands: the spot has been held since 110.1.
-        policy.OnFrame(Clocked(120.1, 60, Idle()));
-        Assert.AreEqual(10.0, jev.Asks.Single().State.Whereabouts!.StoodStillForSeconds);
+        policy.OnFrame(Clocked(120.3, 60, Idle()));
+        Assert.AreEqual(10.2, Offering(jev, "walk_to_lane").Single().State.Whereabouts!.StoodStillForSeconds);
     }
 
     [TestMethod]
@@ -523,19 +556,6 @@ public sealed class JevPolicyTests
         policy.OnFrame(Clocked(102.2, 52, Idle()));
         Assert.AreEqual(0.1, jev.Asks[before].State.Whereabouts!.StoodStillForSeconds,
             "still since the baseline, not since before the gap");
-    }
-
-    [TestMethod]
-    public void The_lane_question_and_the_button_question_are_each_one_in_flight()
-    {
-        var (policy, jev) = Coach();
-        policy.OnEvent(Cast("Q", 10, 5));
-        jev.Hold = true;
-        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 50, Idle(), Enemy(900)));
-        // The button question at 100.0 is still unanswered; the lane question at 103.0 went anyway.
-        CollectionAssert.AreEqual(new[] { "press_Q", "walk" },
-            jev.Asks.Select(a => a.Questions.Keys.First()).ToArray());
     }
 
     [TestMethod]
@@ -601,15 +621,15 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_player_away_from_a_wave_at_their_turret_is_asked_whether_to_catch_it()
+    public void A_player_away_from_a_wave_at_their_turret_is_offered_to_catch_it()
     {
         var (policy, jev) = Coach();
         // Walking through the river, not standing: a roaming player is who leaves a wave.
         var roaming = Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret };
         policy.OnFrame(Clocked(300, 400, roaming));
 
-        var ask = jev.Asks.Single(a => a.Questions.ContainsKey("tend"));
-        CollectionAssert.AreEqual(new[] { "tend" }, ask.Questions.Keys.ToArray(), "one lane crashing: no choice to make");
+        var ask = Offering(jev, "catch_wave").Single();
+        Assert.IsFalse(ask.Questions.ContainsKey("tend_lane"), "one lane crashing: no choice to make");
         var bot = ask.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!;
         Assert.AreEqual("at your outer turret", bot.TheirFrontPlace);
         Assert.IsNull(bot.OurFront);
@@ -621,7 +641,7 @@ public sealed class JevPolicyTests
     public void A_yes_steps_toward_the_crashing_wave()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "tend" ? FakeJev.Yes : null;
+        jev.Script = Choose("catch_wave");
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret }));
 
         var step = policy.DrainMoves().Single();
@@ -640,16 +660,11 @@ public sealed class JevPolicyTests
     public void Two_lanes_crashing_is_a_choice_between_them()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "tend" => FakeJev.Yes,
-            "tend_lane" => FakeJev.Pick(q, "mid"),
-            _ => null,
-        };
+        jev.Script = Choose("catch_wave", ("tend_lane", "mid"));
         var dots = BotWaveAtOurTurret.Append(Dot(MinionTeam.Red, 5846, 6396)).ToArray();
         policy.OnFrame(Clocked(300, 400, Self(x: 1300, y: 12000) with { MinionDots = dots }, InBotLane()));
 
-        var choice = (ChoiceQuestion)jev.Asks.Single(a => a.Questions.ContainsKey("tend")).Questions["tend_lane"];
+        var choice = (ChoiceQuestion)Offering(jev, "catch_wave").Single().Questions["tend_lane"];
         CollectionAssert.AreEquivalent(new[] { "mid", "bot" }, choice.Options.ToArray());
         StringAssert.Contains((string)choice.Criteria["bot"]!, "the enemy wave is at your outer turret");
         StringAssert.Contains((string)choice.Criteria["bot"]!, "allies there: champ3");
@@ -660,12 +675,7 @@ public sealed class JevPolicyTests
     public void A_walk_to_lane_goes_to_an_enemy_wave_alone_at_their_turret()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         var self = Idle() with { MinionDots = BotWaveAtOurTurret };
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 400, self));
@@ -693,7 +703,7 @@ public sealed class JevPolicyTests
     public void A_wave_at_a_fallen_outer_turret_is_told_as_on_the_way_to_the_inner_one()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "tend" ? FakeJev.Yes : null;
+        jev.Script = Choose("catch_wave");
         var turrets = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false), (MinionTeam.Red, "mid", TurretTier.Inner, null));
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret, Turrets = turrets }));
 
@@ -733,14 +743,14 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void No_wave_at_a_turret_or_a_player_already_at_it_is_no_tend_question()
+    public void No_wave_at_a_turret_or_a_player_already_at_it_offers_no_catch()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWavesMeeting }));
         policy.OnFrame(Clocked(303, 403, Self(x: 10000, y: 1300) with { MinionDots = BotWaveAtOurTurret }));
         policy.OnFrame(Clocked(306, 406, Self(x: 7000, y: 5000, alive: false) with { MinionDots = BotWaveAtOurTurret }));
         policy.OnFrame(Clocked(309, 409, Self(x: 7000, y: 5000)));
-        Assert.IsFalse(jev.Asks.Any(a => a.Questions.ContainsKey("tend")));
+        Assert.IsEmpty(Offering(jev, "catch_wave"));
     }
 
     [TestMethod]
@@ -790,12 +800,7 @@ public sealed class JevPolicyTests
     public void A_walk_goes_to_where_the_lanes_waves_meet_when_the_minimap_shows_both()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         var self = Idle() with { MinionDots = BotWavesMeeting };
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 180, self));
@@ -811,26 +816,21 @@ public sealed class JevPolicyTests
     public void A_walk_to_a_lane_whose_waves_are_not_both_seen_goes_where_it_is_played()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         var self = Idle() with { MinionDots = [Dot(MinionTeam.Blue, 8800, 1400)] };
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 70, self));
 
         Assert.AreEqual(new Destination("bot lane", 12400, 1900), policy.DrainMoves().First().Destination);
         StringAssert.Contains(
-            (string)((ChoiceQuestion)jev.Last.Questions["lane"]).Criteria["bot"]!, "1 ours, 0 theirs, ours pushed");
+            (string)((ChoiceQuestion)Offering(jev, "walk_to_lane")[^1].Questions["lane"]).Criteria["bot"]!, "1 ours, 0 theirs, ours pushed");
     }
 
     /// <summary>The player on bot lane's straight, east of our outer turret.</summary>
     private static ChampionRow InLane(params Minion[] minions) => Self(x: 9000, y: 1400) with { Minions = minions };
 
     [TestMethod]
-    public void A_player_in_lane_with_enemy_minions_on_the_screen_is_asked_whether_to_step_back()
+    public void A_player_in_lane_with_enemy_minions_on_the_screen_is_offered_a_step_back()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Clocked(200, 300, InLane(
@@ -838,8 +838,8 @@ public sealed class JevPolicyTests
             Bar(MinionTeam.Red, 9300, 1400), Bar(MinionTeam.Red, 9400, 1380), Bar(MinionTeam.Red, 9700, 1400),
             new Minion { Team = MinionTeam.Red, X = 1200, Y = 640 })));
 
-        var ask = jev.Asks.Single(a => a.Questions.ContainsKey("back"));
-        CollectionAssert.AreEqual(new[] { "back" }, ask.Questions.Keys.ToArray());
+        var ask = Offering(jev, "step_back").Single();
+        StringAssert.StartsWith(Criterion(ask, "step_back"), "step_back: one step back down the lane");
         var minions = ask.State.Minions!;
         Assert.AreEqual((2, 4), (minions.Ours, minions.Theirs), "an unplaced bar still counts");
         Assert.AreEqual(300, minions.NearestTheirsUnits);
@@ -852,10 +852,10 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_steps_back_down_the_lane_toward_home()
+    public void A_pick_steps_back_down_the_lane_toward_home()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "back" ? FakeJev.Yes : null;
+        jev.Script = Choose("step_back");
         policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Blue, 8700, 1400), Bar(MinionTeam.Red, 9300, 1400))));
         policy.OnFrame(Clocked(200.1, 300, InLane(Bar(MinionTeam.Blue, 8700, 1400), Bar(MinionTeam.Red, 9300, 1400))));
 
@@ -870,6 +870,7 @@ public sealed class JevPolicyTests
 
         policy.OnFrame(Clocked(202.0, 302, InLane(Bar(MinionTeam.Blue, 8700, 1400), Bar(MinionTeam.Red, 9300, 1400))));
         var reminded = jev.Last.State.Coach.Single();
+        Assert.AreEqual(202.0, jev.Last.State.VideoTime);
         Assert.AreEqual("stepped back left, out of the enemy minions", reminded.Did);
         Assert.AreEqual(2.0, reminded.SecondsAgo);
     }
@@ -878,7 +879,7 @@ public sealed class JevPolicyTests
     public void Among_enemy_minions_with_none_of_their_own_the_copy_says_so()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "back" ? FakeJev.Yes : null;
+        jev.Script = Choose("step_back");
         policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Red, 9700, 1400))));
         policy.OnFrame(Clocked(200.1, 300, InLane(Bar(MinionTeam.Red, 9700, 1400))));
 
@@ -890,7 +891,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void No_enemy_minion_off_lane_dead_or_bars_unread_is_no_wave_question()
+    public void No_enemy_minion_off_lane_dead_or_bars_unread_offers_no_step_back()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Blue, 8700, 1400))));
@@ -898,25 +899,22 @@ public sealed class JevPolicyTests
         policy.OnFrame(Clocked(206, 306, Self(x: 7000, y: 3000) with { Minions = [Bar(MinionTeam.Red, 7200, 3000)] }));
         policy.OnFrame(Clocked(209, 309, InLane(Bar(MinionTeam.Red, 9300, 1400)) with { Alive = false }));
         policy.OnFrame(Clocked(212, 312, Self(x: 9000, y: 1400)));
-        Assert.IsFalse(jev.Asks.Any(a => a.Questions.ContainsKey("back")));
+        Assert.IsEmpty(Offering(jev, "step_back"));
     }
 
     [TestMethod]
-    public void The_wave_question_is_one_in_flight_and_no_more_often_than_its_interval()
+    public void A_movement_click_is_not_offered_again_for_a_second()
     {
         var (policy, jev) = Coach();
-        jev.Hold = true;
+        jev.Script = Choose("step_back");
         var near = InLane(Bar(MinionTeam.Red, 9300, 1400));
-        for (var t = 200.0; t <= 205.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+        for (var t = 200.0; t <= 202.5 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 300, near));
-        Assert.AreEqual(1, jev.Asks.Count(a => a.Questions.ContainsKey("back")), "one in flight");
 
-        jev.Hold = false;
-        jev.Release();
-        for (var t = 205.1; t <= 208.0 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 305, near));
-        var times = jev.Asks.Where(a => a.Questions.ContainsKey("back")).Select(a => a.State.VideoTime).ToArray();
-        CollectionAssert.AreEqual(new[] { 200.0, 205.1, 206.1, 207.1 }, times);
+        CollectionAssert.AreEqual(new[] { 200.0, 201.2, 202.4 }, Offering(jev, "step_back").Select(a => a.State.VideoTime).ToArray());
+        CollectionAssert.AreEqual(new[] { 200.0, 201.2, 202.4 }, policy.DrainMoves().Select(m => m.VideoTime).ToArray());
+        Assert.IsTrue(jev.Asks.Where(a => !Offered(a).Contains("step_back")).All(a => !Offered(a).Contains("walk_to_lane")),
+            "no other step either");
     }
 
     [TestMethod]
@@ -925,12 +923,12 @@ public sealed class JevPolicyTests
         var (policy, jev) = Coach();
         var ally = Ally(3, 5000, 1300) with { IsSelf = true, Minions = [Bar(MinionTeam.Red, 9300, 1400)] };
         policy.OnFrame(Clocked(200, 300, Self(x: 9000, y: 1400) with { IsSelf = false }, ally));
-        Assert.AreEqual(300, jev.Asks.Single(a => a.Questions.ContainsKey("back")).State.Minions!.NearestTheirsUnits);
+        Assert.AreEqual(300, Offering(jev, "step_back").Single().State.Minions!.NearestTheirsUnits);
     }
 
     // --- Basic attacks: a last hit, or a trade ---
 
-    private static FakeJev.Ask[] Attacks(FakeJev jev) => jev.Asks.Where(a => a.Questions.ContainsKey("attack")).ToArray();
+    private static FakeJev.Ask[] Attacks(FakeJev jev) => Offering(jev, "attack");
 
     [TestMethod]
     public void Enemy_minions_in_reach_are_offered_as_targets_lowest_bar_first()
@@ -964,15 +962,10 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_right_clicks_the_chosen_target()
+    public void A_pick_right_clicks_the_chosen_target()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "attack" => FakeJev.Yes,
-            "target" => FakeJev.Pick(q, "minion 1"),
-            _ => null,
-        };
+        jev.Script = Choose("attack", ("target", "minion 1"));
         var lane = InLane(Bar(MinionTeam.Red, 9300, 1700, health: 0.2), Bar(MinionTeam.Red, 9400, 1400, health: 0.9));
         policy.OnFrame(Clocked(200, 300, lane));
         policy.OnFrame(Clocked(200.1, 300, lane));
@@ -994,16 +987,16 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_lone_enemy_champion_in_reach_is_asked_about_without_a_choice()
+    public void A_lone_enemy_champion_in_reach_is_offered_without_a_choice()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "attack" ? FakeJev.Yes : null;
+        jev.Script = Choose("attack");
         var karma = Enemy(500) with { Health = 0.4 };
         policy.OnFrame(Frame(10, Self(), karma));
         policy.OnFrame(Frame(10.1, Self(), karma));
 
         var ask = Attacks(jev)[0];
-        CollectionAssert.AreEqual(new[] { "attack" }, ask.Questions.Keys.ToArray());
+        Assert.IsFalse(ask.Questions.ContainsKey("target"));
         Assert.IsTrue(ask.State.VisibleEnemies.Single().InAttackRange);
         Assert.IsEmpty(ask.State.Attack!.EnemyMinionsNear, "the bars were not read: no minion to offer");
         var attack = policy.DrainMoves().Single();
@@ -1014,7 +1007,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void Nothing_in_reach_dead_or_unplaced_is_no_attack_question()
+    public void Nothing_in_reach_dead_or_unplaced_offers_no_attack()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Frame(10, Self(), Enemy(800)));                              // past range and a step
@@ -1036,26 +1029,21 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void The_attack_question_is_one_in_flight_and_no_more_often_than_its_interval()
+    public void An_attack_is_not_offered_again_for_a_second()
     {
         var (policy, jev) = Coach();
-        jev.Hold = true;
+        jev.Script = Choose("attack");
         var near = InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3));
-        for (var t = 200.0; t <= 202.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+        for (var t = 200.0; t <= 202.5 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 300, near));
-        Assert.HasCount(1, Attacks(jev), "one in flight");
-
-        jev.Hold = false;
-        jev.Release();
-        for (var t = 202.1; t <= 203.5 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 302, near));
-        CollectionAssert.AreEqual(new[] { 200.0, 202.1, 203.1 }, Attacks(jev).Select(a => a.State.VideoTime).ToArray());
+        CollectionAssert.AreEqual(new[] { 200.0, 201.2, 202.4 }, Attacks(jev).Select(a => a.State.VideoTime).ToArray());
+        CollectionAssert.AreEqual(new[] { 200.0, 201.2, 202.4 }, policy.DrainMoves().Select(m => m.VideoTime).ToArray());
     }
 
     [TestMethod]
     public void A_bar_followed_across_frames_tells_its_fall_to_the_attack_question()
     {
-        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Ezreal", AttackAskEverySeconds = 0.5 });
+        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Ezreal", AskEverySeconds = 0.5 });
         for (var i = 0; i <= 5; i++)
             policy.OnFrame(Clocked(200 + 0.1 * i, 300, InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.6 - 0.05 * i))));
 
@@ -1275,22 +1263,27 @@ public sealed class JevPolicyTests
         IsSelf = true, HeldFor = heldFor,
     };
 
-    private static string[] Offered(FakeJev.Ask ask) => ((ChoiceQuestion)ask.Questions["slot"]).Options.ToArray();
+    private static string[] Lit(FakeJev.Ask ask) => ((ChoiceQuestion)ask.Questions["slot"]).Options.ToArray();
+
+    private static FakeJev.Ask[] Levels(FakeJev jev) => Offering(jev, "level_up");
 
     [TestMethod]
-    public void A_waiting_point_is_asked_about_with_the_lit_buttons_as_options()
+    public void A_waiting_point_is_offered_with_the_lit_buttons_to_choose_from()
     {
         var (policy, jev) = Coach(baseline: Clocked(450, 312, Self(level: 7), Enemy(900)));
         policy.OnEvent(Cast("Q", 440, 5));
         policy.OnEvent(SkillPoint(452.1, "Q", "W", "E"));
+        Assert.IsEmpty(jev.Asks, "noted, and offered at the next moment decided");
+        policy.OnFrame(Clocked(452.1, 312, Self(level: 7), Enemy(900)));
 
-        var ask = jev.Asks.Single();
-        CollectionAssert.AreEquivalent(new[] { "spend", "slot" }, ask.Questions.Keys.ToArray());
-        var occasion = (LevelOccasion)ask.State.Occasion!;
-        Assert.AreEqual(7, occasion.Level, "the level is the self row's");
-        Assert.IsFalse(occasion.UltimateTakesAPoint);
-        Assert.AreEqual(7, occasion.CoachWatchingSinceLevel);
-        Assert.AreEqual(0, occasion.HeldForSeconds);
+        var ask = Levels(jev).Single();
+        StringAssert.StartsWith(Criterion(ask, "level_up"), "level_up: put the ability point waiting");
+        var point = ask.State.SkillPoint!;
+        Assert.AreEqual(7, point.Level, "the level is the self row's");
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, point.Lit.ToArray());
+        Assert.IsFalse(point.UltimateTakesAPoint);
+        Assert.AreEqual(7, point.CoachWatchingSinceLevel);
+        Assert.AreEqual(0, point.HeldForSeconds);
         Assert.AreEqual("5:12", ask.State.GameClock);
         var slot = (ChoiceQuestion)ask.Questions["slot"];
         CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, slot.Options.ToArray());
@@ -1301,7 +1294,6 @@ public sealed class JevPolicyTests
         StringAssert.Contains((string)slot.Criteria["W"]!, "usually maxes second");
         StringAssert.Contains((string)slot.Criteria["W"]!, "never seen cast this game, so it may hold no point yet");
         StringAssert.Contains((string)slot.Criteria["E"]!, "usually maxes last");
-        Assert.IsNull(ask.Options?.Retry, "a question about an event keeps the client's retries");
     }
 
     [TestMethod]
@@ -1312,31 +1304,29 @@ public sealed class JevPolicyTests
         // options are the lit set and nothing is reconstructed in code.
         var (policy, jev) = Coach(baseline: Frame(385, Self(level: 6)));
         policy.OnEvent(SkillPoint(385.7, "W", "E", "R"));
+        policy.OnFrame(Frame(385.7, Self(level: 6)));
 
-        var ask = jev.Asks.Single();
-        CollectionAssert.AreEqual(new[] { "W", "E", "R" }, Offered(ask));
-        Assert.IsTrue(((LevelOccasion)ask.State.Occasion!).UltimateTakesAPoint);
+        var ask = Levels(jev).Single();
+        CollectionAssert.AreEqual(new[] { "W", "E", "R" }, Lit(ask));
+        Assert.IsTrue(ask.State.SkillPoint!.UltimateTakesAPoint);
         var r = (string)((ChoiceQuestion)ask.Questions["slot"]).Criteria["R"]!;
         StringAssert.Contains(r, "Trueshot Barrage");
         StringAssert.Contains(r, "takes a point at levels 6, 11 and 16, and the HUD offers it now");
 
         // The feed's order is not trusted, and a string that is no slot is left out.
         policy.OnEvent(SkillPoint(400.0, "E", "Q", "X"));
-        CollectionAssert.AreEqual(new[] { "Q", "E" }, Offered(jev.Last));
-        Assert.IsFalse(((LevelOccasion)jev.Last.State.Occasion!).UltimateTakesAPoint);
+        policy.OnFrame(Frame(400.0, Self(level: 6)));
+        CollectionAssert.AreEqual(new[] { "Q", "E" }, Lit(jev.Last));
+        Assert.IsFalse(jev.Last.State.SkillPoint!.UltimateTakesAPoint);
     }
 
     [TestMethod]
-    public void A_yes_puts_the_point_in_the_chosen_ability_with_Ctrl_held()
+    public void A_pick_puts_the_point_in_the_chosen_ability_with_Ctrl_held()
     {
         var (policy, jev) = Coach(baseline: Clocked(450, 312, Self(level: 7)));
-        jev.Script = (id, q) => id switch
-        {
-            "spend" => FakeJev.Yes,
-            "slot" => FakeJev.Pick(q, "Q"),
-            _ => null,
-        };
+        jev.Script = Choose("level_up", ("slot", "Q"));
         policy.OnEvent(SkillPoint(452.1));
+        policy.OnFrame(Clocked(452.1, 312, Self(level: 7)));
 
         var press = policy.DrainKeys().Single();
         Assert.AreEqual(452.1, press.VideoTime);
@@ -1352,9 +1342,11 @@ public sealed class JevPolicyTests
         Assert.IsEmpty(policy.DrainCues());
 
         policy.OnFrame(Clocked(452.6, 314, Self(level: 7)));
+        Assert.HasCount(1, Levels(jev), "the chord is pressed: the point is not offered again");
         policy.OnEvent(SkillSpent(452.8, 0.7));
         policy.OnEvent(SkillPoint(473.2));
-        var reminded = jev.Last.State.Coach.Single();
+        policy.OnFrame(Frame(473.2, Self(level: 8)));
+        var reminded = Levels(jev)[^1].State.Coach.Single();
         Assert.AreEqual("put the point in Q", reminded.Did);
         Assert.AreEqual(21.1, reminded.SecondsAgo);
     }
@@ -1363,16 +1355,17 @@ public sealed class JevPolicyTests
     public void The_coachs_placement_is_counted_when_the_HUD_shows_the_point_gone_in()
     {
         var (policy, jev) = Coach(baseline: Frame(450, Self(level: 7)));
-        jev.Script = (id, q) => id switch
+        jev.Script = Choose("level_up", ("slot", "Q"));
+        void Point(double at)
         {
-            "spend" => FakeJev.Yes,
-            "slot" => FakeJev.Pick(q, "Q"),
-            _ => null,
-        };
-        policy.OnEvent(SkillPoint(452.1));
+            policy.OnEvent(SkillPoint(at));
+            policy.OnFrame(Frame(at, Self(level: 7)));
+        }
+
+        Point(452.1);
         Assert.HasCount(1, policy.DrainKeys());
-        policy.OnEvent(SkillPoint(473.2));
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!,
+        Point(473.2);
+        StringAssert.Contains((string)((ChoiceQuestion)Levels(jev)[^1].Questions["slot"]).Criteria["Q"]!,
             "put no point in it", "pressed, but the HUD has not shown it go in");
         policy.OnEvent(SkillSpent(473.8, 0.6));
         var cue = policy.DrainCues().Single();
@@ -1380,20 +1373,21 @@ public sealed class JevPolicyTests
         Assert.AreEqual(1, cue.Priority);
         Assert.AreEqual("the point went in after 0.6s; the coach's Ctrl+Q counted as its placement", cue.Reason);
 
-        policy.OnEvent(SkillPoint(500.0));
-        Assert.AreEqual(7, ((LevelOccasion)jev.Last.State.Occasion!).CoachWatchingSinceLevel);
-        var slot = (ChoiceQuestion)jev.Last.Questions["slot"];
+        Point(500.0);
+        Assert.AreEqual(7, Levels(jev)[^1].State.SkillPoint!.CoachWatchingSinceLevel);
+        var slot = (ChoiceQuestion)Levels(jev)[^1].Questions["slot"];
         StringAssert.Contains((string)slot.Criteria["Q"]!, "the coach has put 1 point in it since it began watching");
         StringAssert.Contains((string)slot.Criteria["W"]!, "the coach has put no point in it since it began watching");
         policy.OnEvent(SkillSpent(500.5, 0.5));
-        policy.OnEvent(SkillPoint(520.0));
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!, "put 2 points in it");
+        Point(520.0);
+        StringAssert.Contains((string)((ChoiceQuestion)Levels(jev)[^1].Questions["slot"]).Criteria["Q"]!, "put 2 points in it");
 
         // A gap may be a new game: the count starts over, and says so.
         policy.Resync(Frame(600, Self(level: 10)));
         policy.OnEvent(SkillPoint(600.5));
-        Assert.AreEqual(10, ((LevelOccasion)jev.Last.State.Occasion!).CoachWatchingSinceLevel);
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!, "put no point in it");
+        policy.OnFrame(Frame(600.5, Self(level: 10)));
+        Assert.AreEqual(10, Levels(jev)[^1].State.SkillPoint!.CoachWatchingSinceLevel);
+        StringAssert.Contains((string)((ChoiceQuestion)Levels(jev)[^1].Questions["slot"]).Criteria["Q"]!, "put no point in it");
     }
 
     [TestMethod]
@@ -1402,26 +1396,23 @@ public sealed class JevPolicyTests
         var (policy, jev) = Coach(baseline: Frame(450, Self(level: 7)));
         jev.Script = (id, q) => id == "slot" ? FakeJev.Pick(q, "Q") : null;
         policy.OnEvent(SkillPoint(452.1));
-        Assert.HasCount(1, jev.Asks);
-        Assert.IsEmpty(policy.DrainKeys(), "a no on spending is no press even with an ability chosen");
+        policy.OnFrame(Frame(452.1, Self(level: 7)));
+        Assert.HasCount(1, Levels(jev));
+        Assert.IsEmpty(policy.DrainKeys(), "carry_on at the root is no press even with an ability chosen");
 
         policy.OnEvent(SkillSpent(455.5, 3.4));
         var cue = policy.DrainCues().Single();
         Assert.AreEqual("the player put the point in themselves after 3.4s; it is in nobody's count", cue.Reason);
         Assert.IsEmpty(policy.DrainKeys());
 
-        // Nothing is re-asked once it is gone.
+        // Nothing is offered once it is gone.
         Run(policy, 455.6, 465, Self(level: 7, learnable: []));
-        Assert.HasCount(1, jev.Asks);
+        Assert.HasCount(1, Levels(jev));
 
-        jev.Script = (id, q) => id switch
-        {
-            "spend" => FakeJev.Yes,
-            "slot" => FakeJev.Pick(q, "Q"),
-            _ => null,
-        };
+        jev.Script = Choose("level_up", ("slot", "Q"));
         policy.OnEvent(SkillPoint(473.2));
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!, "put no point in it");
+        policy.OnFrame(Frame(473.2, Self(level: 8)));
+        StringAssert.Contains((string)((ChoiceQuestion)Levels(jev)[^1].Questions["slot"]).Criteria["Q"]!, "put no point in it");
 
         // A spend whose arrival the feed never saw has no held time to say.
         policy.OnEvent(SkillSpent(474.0, null));
@@ -1432,14 +1423,10 @@ public sealed class JevPolicyTests
     public void A_point_spent_before_the_answer_lands_is_no_press()
     {
         var (policy, jev) = Coach(baseline: Frame(450, Self(level: 7)));
-        jev.Script = (id, q) => id switch
-        {
-            "spend" => FakeJev.Yes,
-            "slot" => FakeJev.Pick(q, "Q"),
-            _ => null,
-        };
+        jev.Script = Choose("level_up", ("slot", "Q"));
         jev.Hold = true;
         policy.OnEvent(SkillPoint(452.1));
+        policy.OnFrame(Frame(452.1, Self(level: 7)));
         policy.OnEvent(SkillSpent(452.3, 0.2));
         jev.Release();
         policy.OnFrame(Frame(452.4, Self(level: 7)));
@@ -1449,63 +1436,61 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_new_set_for_a_held_point_is_a_new_question_and_the_same_set_again_is_not()
+    public void A_new_set_for_a_held_point_is_a_new_point_and_the_same_set_again_is_not()
     {
         var (policy, jev) = Coach(baseline: Frame(300, Self(level: 5)));
         jev.Script = (id, q) => id switch
         {
-            "spend" => FakeJev.Yes,
+            "decide" => FakeJev.Pick(q, "level_up"),
             "slot" => FakeJev.Pick(q, ((ChoiceQuestion)q).Options.Contains("R") ? "R" : "Q"),
             _ => null,
         };
         jev.Hold = true;
         policy.OnEvent(SkillPoint(300.5, "Q", "W", "E"));
+        policy.OnFrame(Frame(300.5, Self(level: 5)));
         policy.OnEvent(SkillPoint(300.9, "Q", "W", "E"));
-        Assert.HasCount(1, jev.Asks, "the set the coach already knows, announced again");
+        Assert.HasCount(1, jev.Asks, "the set the coach already knows, announced again, and one in flight");
 
-        // The ultimate lights at 6 under the point still held.
+        // The ultimate lights at 6 under the point still held, before the answer lands.
         policy.OnFrame(Frame(385.6, Self(level: 6)));
         policy.OnEvent(SkillPoint(385.7, "Q", "W", "E", "R"));
-        Assert.HasCount(2, jev.Asks);
-        CollectionAssert.AreEqual(new[] { "Q", "W", "E", "R" }, Offered(jev.Last));
-        var occasion = (LevelOccasion)jev.Last.State.Occasion!;
-        Assert.AreEqual(6, occasion.Level);
-        Assert.IsTrue(occasion.UltimateTakesAPoint);
-        Assert.AreEqual(85.2, occasion.HeldForSeconds, "held since the point first showed");
-
+        jev.Hold = false;
         jev.Release();
         policy.OnFrame(Frame(385.8, Self(level: 6)));
+
         var press = policy.DrainKeys().Single();
         Assert.AreEqual("R", press.Key, "the answer about the old set is dropped; the new set's stands");
-        Assert.AreEqual(385.7, press.VideoTime);
+        Assert.AreEqual(385.8, press.VideoTime);
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E", "R" }, Lit(jev.Last));
+        var point = jev.Last.State.SkillPoint!;
+        Assert.AreEqual(6, point.Level);
+        Assert.IsTrue(point.UltimateTakesAPoint);
+        Assert.AreEqual(85.3, point.HeldForSeconds, "held since the point first showed");
     }
 
     [TestMethod]
-    public void A_held_point_is_asked_about_again_until_the_coach_says_spend()
+    public void A_held_point_is_offered_again_until_the_coach_spends_it()
     {
-        // The first point of a game, at level one: the model says hold, and
-        // is asked again every interval with how long it has waited, until
-        // it says spend. Which moment that is is its call; here, half a
-        // minute in.
+        // The first point of a game, at level one: the model says carry on,
+        // and is asked again at every moment with how long the point has
+        // waited, until it picks level_up. Which moment that is is its call;
+        // here, half a minute in.
         var (policy, jev) = Coach(baseline: Frame(10, Self(level: 1)));
         jev.Script = (id, q) => id switch
         {
-            "spend" => ((LevelOccasion)jev.Last.State.Occasion!).HeldForSeconds >= 30 ? FakeJev.Yes : FakeJev.No,
+            "decide" => FakeJev.Pick(q, jev.Last.State.SkillPoint!.HeldForSeconds >= 30 ? "level_up" : "carry_on"),
             "slot" => FakeJev.Pick(q, "Q"),
             _ => null,
         };
         policy.OnEvent(SkillPoint(10.5, "Q", "W", "E"));
-        Assert.AreEqual(1, ((LevelOccasion)jev.Last.State.Occasion!).Level);
-        Assert.AreEqual("you have an ability point to spend", ((LevelOccasion)jev.Last.State.Occasion!).Kind);
+        Run(policy, 10.5, 45, Self(level: 1, learnable: ["Q", "W", "E"]));
 
-        Run(policy, 10.6, 45, Self(level: 1, learnable: ["Q", "W", "E"]));
-        // Asked at 10.5, then every 3s from 13.5; the yes came at 40.5, and nothing after.
-        Assert.HasCount(11, jev.Asks);
-        var again = (LevelOccasion)jev.Asks[1].State.Occasion!;
-        Assert.AreEqual("you have held an ability point", again.Kind);
-        Assert.AreEqual(3, again.HeldForSeconds);
-        Assert.AreEqual(1, again.CoachWatchingSinceLevel);
-        Assert.AreEqual(30, ((LevelOccasion)jev.Last.State.Occasion!).HeldForSeconds);
+        // Offered at 10.5 and every 0.3s of these frames; the pick came at 40.5, and nothing after.
+        Assert.HasCount(101, Levels(jev));
+        Assert.AreEqual(1, Levels(jev)[0].State.SkillPoint!.Level);
+        Assert.AreEqual(0.3, Levels(jev)[1].State.SkillPoint!.HeldForSeconds);
+        Assert.AreEqual(1, Levels(jev)[1].State.SkillPoint!.CoachWatchingSinceLevel);
+        Assert.AreEqual(30, Levels(jev)[^1].State.SkillPoint!.HeldForSeconds);
 
         var press = policy.DrainKeys().Single();
         Assert.AreEqual(40.5, press.VideoTime);
@@ -1518,39 +1503,38 @@ public sealed class JevPolicyTests
         policy.OnEvent(SkillSpent(41.2, 31.0));
         Assert.AreEqual("the point went in after 31.0s; the coach's Ctrl+Q counted as its placement", policy.DrainCues().Single().Reason);
         policy.OnEvent(SkillPoint(120.0, "Q", "W", "E"));
-        StringAssert.Contains((string)((ChoiceQuestion)jev.Last.Questions["slot"]).Criteria["Q"]!, "put 1 point in it");
+        policy.OnFrame(Frame(120.0, Self(level: 2)));
+        StringAssert.Contains((string)((ChoiceQuestion)Levels(jev)[^1].Questions["slot"]).Criteria["Q"]!, "put 1 point in it");
     }
 
     [TestMethod]
-    public void A_point_already_waiting_at_the_baseline_is_asked_about_from_the_frames()
+    public void A_point_already_waiting_at_the_baseline_is_offered_from_the_frames()
     {
         // After a gap the feed does not announce a point it already showed;
         // the row still carries it.
         var (policy, jev) = Coach(baseline: Frame(100, Self(level: 1, learnable: ["Q", "W", "E"])));
         policy.OnFrame(Frame(100.1, Self(level: 1, learnable: ["Q", "W", "E"])));
-        Assert.HasCount(1, jev.Asks, "first sight, off the row");
-        Assert.AreEqual("you have an ability point to spend", ((LevelOccasion)jev.Last.State.Occasion!).Kind);
-        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, Offered(jev.Last));
+        Assert.HasCount(1, Levels(jev), "first sight, off the row");
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, Lit(jev.Last));
 
         policy.OnEvent(SkillPoint(100.3, "Q", "W", "E"));
-        Assert.HasCount(1, jev.Asks, "the same set, announced: already known");
-
         Run(policy, 100.4, 103.5, Self(level: 1, learnable: ["Q", "W", "E"]));
-        Assert.HasCount(2, jev.Asks, "and still held, an interval on");
-        Assert.AreEqual("you have held an ability point", ((LevelOccasion)jev.Last.State.Occasion!).Kind);
+        Assert.AreEqual(3.4, Levels(jev)[^1].State.SkillPoint!.HeldForSeconds,
+            "the same set, announced: the same point, held since the baseline");
     }
 
     [TestMethod]
     public void A_row_without_a_reading_neither_asks_nor_forgets()
     {
         // Dead, the reader is off and the key is absent; the point is still
-        // waiting, and the question says a point can be spent while dead.
+        // waiting, and a point can be spent while dead.
         var (policy, jev) = Coach(baseline: Frame(200, Self(level: 4)));
         policy.OnEvent(SkillPoint(200.5, "Q", "W", "E"));
-        Run(policy, 200.6, 203.5, Self(level: 4, alive: false));
-        Assert.HasCount(2, jev.Asks);
+        Run(policy, 200.5, 203.5, Self(level: 4, alive: false));
+        Assert.HasCount(11, Levels(jev));
         Assert.IsFalse(jev.Last.State.Player!.Alive);
-        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, Offered(jev.Last), "the last set announced");
+        CollectionAssert.AreEqual(new[] { "carry_on", "level_up" }, Offered(jev.Last), "nothing else while dead");
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, Lit(jev.Last), "the last set announced");
     }
 
     // --- Late answers ---
@@ -1559,7 +1543,7 @@ public sealed class JevPolicyTests
     public void An_answer_that_arrives_later_lands_on_the_next_call_stamped_when_it_was_asked()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "press_Q" ? FakeJev.Yes : null;
+        jev.Script = Choose("use_ability");
         policy.OnEvent(Cast("Q", 10, 5));
         jev.Hold = true;
 
@@ -1681,7 +1665,7 @@ public sealed class JevPolicyTests
 
     // --- Brush: out of sight ---
 
-    private static FakeJev.Ask[] Hides(FakeJev jev) => jev.Asks.Where(a => a.Questions.ContainsKey("hide")).ToArray();
+    private static FakeJev.Ask[] Hides(FakeJev jev) => Offering(jev, "hide_in_brush");
 
     /// <summary>
     /// In bot lane between our turrets, about 550 units above the lane's
@@ -1690,13 +1674,13 @@ public sealed class JevPolicyTests
     private static ChampionRow ByTheLaneBrush(params Minion[] minions) => Self(x: 7807, y: 1400) with { Minions = minions };
 
     [TestMethod]
-    public void A_player_outside_the_brush_with_a_patch_near_is_asked_whether_to_walk_in()
+    public void A_player_outside_the_brush_with_a_patch_near_is_offered_to_walk_in()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Clocked(200, 300, ByTheLaneBrush()));
 
         var ask = Hides(jev).Single();
-        CollectionAssert.AreEqual(new[] { "hide" }, ask.Questions.Keys.ToArray(), "one patch near: no choice to make");
+        Assert.IsFalse(ask.Questions.ContainsKey("brush"), "one patch near: no choice to make");
         var brush = ask.State.Brush!;
         Assert.IsNull(brush.YouStandIn);
         var near = brush.Near.Single();
@@ -1711,10 +1695,10 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_steps_toward_the_patch_and_the_next_question_is_told()
+    public void A_pick_steps_toward_the_patch_and_the_next_question_is_told()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, _) => id == "hide" ? FakeJev.Yes : null;
+        jev.Script = Choose("hide_in_brush");
         policy.OnFrame(Clocked(200, 300, ByTheLaneBrush(), Enemy(1500) with { WorldX = 8600, WorldY = 1500 }));
         policy.OnFrame(Clocked(200.1, 300, ByTheLaneBrush()));
 
@@ -1735,12 +1719,7 @@ public sealed class JevPolicyTests
     public void Several_patches_near_are_a_choice_between_them()
     {
         var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "hide" => FakeJev.Yes,
-            "brush" => FakeJev.Pick(q, "brush 2"),
-            _ => null,
-        };
+        jev.Script = Choose("hide_in_brush", ("brush", "brush 2"));
         policy.OnFrame(Clocked(200, 300, Self(x: 12400, y: 2400)));
 
         var ask = Hides(jev).Single();
@@ -1767,7 +1746,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void Standing_in_brush_dead_unplaced_without_a_clock_or_far_from_any_is_no_brush_question()
+    public void Standing_in_brush_dead_unplaced_without_a_clock_or_far_from_any_offers_no_brush()
     {
         var (policy, jev) = Coach();
         var inside = RiftBrush.All.Single(p => p.Name == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
@@ -1791,19 +1770,37 @@ public sealed class JevPolicyTests
             "the patch they stand in is not somewhere to walk to");
     }
 
+
+    // --- Said, not yet done ---
+
     [TestMethod]
-    public void The_brush_question_is_one_in_flight_and_no_more_often_than_its_interval()
+    public void A_pick_the_hands_cannot_do_yet_is_said_and_not_said_again_for_a_while()
     {
         var (policy, jev) = Coach();
-        jev.Hold = true;
-        for (var t = 200.0; t <= 204.0 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 300, ByTheLaneBrush()));
-        Assert.HasCount(1, Hides(jev), "one in flight");
+        jev.Script = Choose("recall");
+        var hurt = Self(x: 9000, y: 1400) with { Health = 0.2 };
+        for (var t = 200.0; t <= 206.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, hurt));
 
-        jev.Hold = false;
-        jev.Release();
-        for (var t = 204.1; t <= 207.5 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 304, ByTheLaneBrush()));
-        CollectionAssert.AreEqual(new[] { 200.0, 204.1, 205.1, 206.1, 207.1 }, Hides(jev).Select(a => a.State.VideoTime).ToArray());
+        var cues = policy.DrainCues();
+        CollectionAssert.AreEqual(new[] { 200.0, 205.1 }, cues.Select(c => c.VideoTime).ToArray(), "SayEverySeconds apart");
+        Assert.AreEqual("coach would have recalled here: you are in bot lane at 5:00; 20% health; no enemy on the screen", cues[0].Reason);
+        Assert.AreEqual(2, cues[0].Priority);
+        Assert.IsFalse(cues[0].Failure);
+        Assert.IsEmpty(policy.DrainKeys(), "no key for it yet");
+        Assert.IsEmpty(policy.DrainMoves());
+        CollectionAssert.DoesNotContain(Offered(jev.Asks[1]), "recall", "just said");
+        Assert.AreEqual("said recall", Offering(jev, "recall")[^1].State.Coach[^1].Did);
+    }
+
+    [TestMethod]
+    public void Buying_is_offered_in_the_fountain_and_recalling_out_of_the_base()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Frame(10, Idle()));
+        CollectionAssert.AreEqual(new[] { "carry_on", "buy" }, Offered(jev.Last), "shopping before the clock starts");
+        policy.OnFrame(Clocked(20, 60, Self(x: 9000, y: 1400), Enemy(1500) with { WorldX = 10000, WorldY = 1400 }));
+        CollectionAssert.IsSubsetOf(new[] { "run_away", "go_to_turret", "recall" }, Offered(jev.Last));
+        CollectionAssert.DoesNotContain(Offered(jev.Last), "buy");
     }
 }

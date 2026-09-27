@@ -44,11 +44,22 @@ public sealed class GhostRecording : IDisposable
     /// pixels. Far enough to clear a bolt's line with a margin (the fixture's
     /// dodges moved 40–74px across it), near enough to still be a sidestep
     /// and not a retreat. Unmeasured beyond that: nothing has yet replayed a
-    /// recording into a game. A step toward somewhere farther (a lane, a
-    /// wave, the brush) is sized by this too: the coach walks in short clicks,
-    /// one a second, never with one order for the whole trip.
+    /// recording into a game. A step toward somewhere farther is sized by
+    /// <see cref="WalkPxAt1080"/> instead.
     /// </summary>
     public const int StepPx = 200;
+
+    /// <summary>
+    /// How far from the player's model a walk's click lands (a step toward a
+    /// lane, a wave, the brush), in screen pixels at a screen 1080 pixels
+    /// tall (scaled by height for others). The coach walks in clicks asked a
+    /// second apart, never with one order for the whole trip, so a click
+    /// must hold more than a second of walking or the model stops short
+    /// between them: at <see cref="PxPerUnitAt1080"/> this is 400 units,
+    /// past the 325–390 a champion walks in a second. A place nearer than
+    /// that is clicked on itself, so the last leg does not overshoot it.
+    /// </summary>
+    public const int WalkPxAt1080 = 300;
 
     /// <summary>
     /// Screen pixels per game unit on the ground around the player's model,
@@ -145,8 +156,9 @@ public sealed class GhostRecording : IDisposable
     /// is how a step is taken in the game; the cursor is left where it was
     /// clicked, as a player's would be, until the next step moves it. A step
     /// toward somewhere farther (one with a <see cref="MoveStep.Destination"/>)
-    /// is the same short click, aimed that way: the game window, never the
-    /// minimap, one leg of the trip a second. An attack (a step with a <see cref="MoveStep.Target"/>)
+    /// is a longer click aimed that way (<see cref="WalkPxAt1080"/>), or on
+    /// the place itself once it is nearer than that: the game window, never
+    /// the minimap, one leg of the trip a second. An attack (a step with a <see cref="MoveStep.Target"/>)
     /// is the same click on the target itself, as far from the player's
     /// model as the target stands (<see cref="PxPerUnitAt1080"/>): a
     /// right-click on an enemy is the order to attack it.
@@ -156,6 +168,8 @@ public sealed class GhostRecording : IDisposable
         var (x, y) = step switch
         {
             { Target: { } target } => OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
+            { Destination: not null } => OnTheGround(step, Math.Min(
+                WalkPxAt1080, (step.DistanceUnits ?? double.PositiveInfinity) * PxPerUnitAt1080) * _height / 1080),
             _ => OnTheGround(step, StepPx),
         };
         return WriteAt(step.VideoTime,

@@ -57,13 +57,19 @@ public static class RiftMap
     /// </summary>
     public const double LaneHalfWidth = 800;
 
+    /// <summary>What <see cref="Place"/> calls the player's fountain, where the shop is.</summary>
+    public const string FountainPlace = "the fountain";
+
+    /// <summary>What <see cref="Place"/> calls the rest of the player's own base.</summary>
+    public const string BasePlace = "their own base";
+
     /// <summary>Where a point is, named the way a coach says it: "the fountain", "bot lane", "the jungle or river".</summary>
     public static string Place(double x, double y)
     {
         if (double.Hypot(x - FountainX, y - FountainY) <= FountainRadius)
-            return "the fountain";
+            return FountainPlace;
         if (x < BaseEdge && y < BaseEdge)
-            return "their own base";
+            return BasePlace;
         if (x > EnemyBaseEdge && y > EnemyBaseEdge)
             return "the enemy base";
         return LaneOf(x, y) is { } lane ? $"{lane} lane" : "the jungle or river";

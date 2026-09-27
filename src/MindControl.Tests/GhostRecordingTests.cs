@@ -218,28 +218,57 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
-    public void A_step_toward_a_place_on_the_map_is_a_short_click_on_the_ground()
+    public void A_step_toward_a_place_on_the_map_is_a_walks_click_on_the_ground()
     {
         IReadOnlyList<Message> step;
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
             step = recording.Step(new MoveStep(103.0, "up-right", 0.8, -0.6, 2, "off to lane")
             {
                 Destination = new Destination("bot lane", 13100, 3600),
+                DistanceUnits = 6000,
             });
 
-        // However far bot lane is, the click is a step's 200px from the
+        // However far bot lane is, the click is a walk's 300px from the
         // model its way, in the game window and never on the minimap: the
         // coach walks there a click a second.
-        Assert.AreEqual("MouseMove 1120,420, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+        Assert.AreEqual("MouseMove 1200,360, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
         CollectionAssert.AreEqual(
             new Message[]
             {
                 new ScreenSizeMessage(1920, 1080),
-                new MouseMoveMessage(1120, 420),
+                new MouseMoveMessage(1200, 360),
                 new MouseButtonsMessage(MouseButtons.Right),
                 new MouseButtonsMessage(MouseButtons.None),
             },
             ProtocolFile.Read(_path).ToArray());
+    }
+
+    [TestMethod]
+    public void A_walk_to_a_place_nearer_than_a_click_lands_on_it()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+            recording.Step(new MoveStep(1, "up-right", 0.8, -0.6, 2, "into the brush")
+            {
+                Destination = new Destination("the river brush", 9800, 6400),
+                DistanceUnits = 100,
+            });
+
+        // 100 units is 75px: the click is on the brush, not 300px past it.
+        Assert.AreEqual(new MouseMoveMessage(1020, 495), ProtocolFile.Read(_path)[1]);
+    }
+
+    [TestMethod]
+    public void A_walks_click_scales_with_the_screen_height()
+    {
+        using (var recording = GhostRecording.Append(_path, 2560, 1440))
+            recording.Step(new MoveStep(1, "right", 1, 0, 2, "off to lane")
+            {
+                Destination = new Destination("bot lane", 13100, 3600),
+                DistanceUnits = 6000,
+            });
+
+        // 300px at 1080 is 400px at 1440, from the centre at 1280.
+        Assert.AreEqual(new MouseMoveMessage(1680, 720), ProtocolFile.Read(_path)[1]);
     }
 
     [TestMethod]
