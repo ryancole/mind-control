@@ -208,10 +208,15 @@ public static class CoachQuestions
         + "too, is shopping, not idling, and after it is. After a recall or a respawn later in the game they buy "
         + "in a few seconds and walk straight back out. Right when they are in a lane but `short of it`: back at "
         + "their own inner or inhibitor turret with the lane's safe spot far up it is still the walk out, not "
-        + "laning. Right when they are in the jungle or river with no enemy on the screen and nothing to do "
+        + "laning; and when `walk_to` is `behind your minions`, their wave has pushed out past their turret and "
+        + "they have stayed back at it, where every minion that dies is a last hit they are not there to take: a "
+        + "good player walks up behind their wave to farm it, and the spot is safe by construction, behind their "
+        + "own minions and short of the enemy's. Right when they are in the jungle or river with no enemy on the screen and nothing to do "
         + "there. Not when they are `at it` or `past it` in a lane: being there, waiting for the minions or "
-        + "holding ground against a visible enemy, is laning, not idling. Not when an enemy is on the screen "
-        + "near them, because then the moment is about that enemy. Whether they stand or are already walking "
+        + "holding ground against a visible enemy, is laning, not idling. Not when an enemy champion is close on "
+        + "the screen and the moment is a fight with them or a retreat from them, because then the moment is "
+        + "about that enemy; but an enemy laner standing back behind their own wave is the lane as usual, not a "
+        + "reason to stay under the turret while the player's own wave goes unfarmed. Whether they stand or are already walking "
         + "makes no difference.";
 
     public const string Lane =

@@ -85,7 +85,7 @@ function parseTrace(text) {
     .map(l => ({
       vt: l.video_time, kind: l.t, icon: l.t === "key" ? "⌨" : "🖱",
       text: l.t === "key" ? `pressed ${l.key}: ${l.reason}`
-        : l.destination ? `stepped ${l.direction} toward ${l.destination.name}: ${l.reason}`
+        : l.destination ? `${l.attack_move ? "attack-moved" : "stepped"} ${l.direction} toward ${l.destination.name}: ${l.reason}`
         : l.target ? `attacked ${l.target.name} ${l.direction}: ${l.reason}`
         : `stepped ${l.direction}: ${l.reason}`,
       destination: l.destination ?? null,   // where a step is headed on the map; a sidestep has none

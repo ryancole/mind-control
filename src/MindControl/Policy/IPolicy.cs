@@ -59,6 +59,9 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// nearer than that, and the next leg is asked a second later. A step with a
 /// <see cref="Target"/> is an attack: the same right-click, on the enemy
 /// minion or champion itself, which the game reads as an order to attack it.
+/// A step that is an <see cref="AttackMove"/> is the same walk ordered as an
+/// attack-move instead, which stops to attack an enemy that comes into range
+/// on the way.
 /// </summary>
 public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
 {
@@ -76,9 +79,19 @@ public sealed record MoveStep(double VideoTime, string Direction, double Dx, dou
     /// <summary>What the coach attacks, when the click is on an enemy; null for a move.</summary>
     public AttackTarget? Target { get; init; }
 
+    /// <summary>
+    /// Whether the step is ordered as an attack-move (the attack-move key,
+    /// then a left-click on the ground) rather than a right-click: the
+    /// champion walks there but stops to attack an enemy that comes into
+    /// range on the way. For walks toward the fight -- up a lane, to a wave --
+    /// never for a step away from it, which must not stop to shoot.
+    /// </summary>
+    public bool AttackMove { get; init; }
+
     /// <summary>The line as the player reads it, wherever it is shown.</summary>
     public string Sentence => (Destination, Target) switch
     {
+        ({ } to, _) when AttackMove => $"coach would have attack-moved {Direction} toward {to.Name} here: {Reason}",
         ({ } to, _) => $"coach would have stepped {Direction} toward {to.Name} here: {Reason}",
         (_, { } target) => $"coach would have attacked {target.Name} {Direction} here: {Reason}",
         _ => $"coach would have stepped {Direction} here: {Reason}",
@@ -109,6 +122,14 @@ public interface IPolicy
 
     /// <summary>Steps the coach would have taken since the last drain.</summary>
     IReadOnlyList<MoveStep> DrainMoves() => [];
+
+    /// <summary>
+    /// What the coach did since the last drain, as one line for the health
+    /// log (who it took the player to be, what it asked and what came back),
+    /// so a silent stretch says whether nothing was asked or every answer
+    /// was no order; null when there is nothing to say.
+    /// </summary>
+    string? DrainActivity() => null;
 
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);

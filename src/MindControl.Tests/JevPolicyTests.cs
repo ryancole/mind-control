@@ -493,8 +493,9 @@ public sealed class JevPolicyTests
         Assert.AreEqual(2, steps[0].Priority);
         var (x, y) = RiftMap.Blue.At("bot", RiftMapTests.Progress(RiftMap.Blue, "bot", "outer"));
         var length = double.Hypot(x - 400, y - 460);
+        Assert.IsTrue(steps[0].AttackMove, "a walk toward the lane stops to attack on the way");
         Assert.AreEqual(
-            "coach would have stepped right toward bot lane here: you are in the fountain at 0:50; "
+            "coach would have attack-moved right toward bot lane here: you are in the fountain at 0:50; "
             + $"a good player would be on the way up bot lane (your outer turret, {length:0} units right)",
             steps[0].Sentence);
         StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.4s in the fountain");
@@ -650,6 +651,7 @@ public sealed class JevPolicyTests
         // The enemy's front, its dot nearest our base, as the facts round it.
         var (x, y) = RiftMap.Blue.At("bot", Math.Round(RiftMap.Blue.Along("bot", 10300, 1260).Progress, 2));
         Assert.AreEqual("bot lane", step.Destination!.Name);
+        Assert.IsTrue(step.AttackMove, "a walk to catch a wave stops to attack on the way");
         Assert.AreEqual(x, step.Destination.X, 1e-6);
         Assert.AreEqual(y, step.Destination.Y, 1e-6);
         StringAssert.StartsWith(step.Reason,
@@ -818,6 +820,33 @@ public sealed class JevPolicyTests
         StringAssert.Contains(step.Reason, "a good player would be on the way up bot lane (behind your minions, ");
         StringAssert.Contains((string)((ChoiceQuestion)jev.Asks[0].Questions["lane"]).Criteria["bot"]!,
             "; the farthest it is safe to walk: behind your minions, ");
+    }
+
+    [TestMethod]
+    public void A_player_left_at_the_turret_behind_a_pushed_wave_walks_up_behind_it()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        // Standing at their bot outer turret, their wave well up the lane beyond it.
+        var outer = RiftMapTests.Progress(RiftMap.Blue, "bot", "outer");
+        var (tx, ty) = RiftMap.Blue.At("bot", outer);
+        var ours = RiftMap.Blue.At("bot", outer + 0.15);
+        var theirs = RiftMap.Blue.At("bot", outer + 0.20);
+        var self = Idle(tx, ty) with
+        {
+            MinionDots = [Dot(MinionTeam.Blue, ours.X, ours.Y), Dot(MinionTeam.Red, theirs.X, theirs.Y)],
+        };
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 180, self));
+
+        var bot = jev.Asks[0].State.Whereabouts!.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual("behind your minions", bot.WalkTo);
+        Assert.AreEqual("short of it", bot.YouAre, "at the turret, with the wave pushed beyond it");
+        CollectionAssert.Contains(Offered(jev.Asks[0]), "walk_to_lane");
+        var step = policy.DrainMoves().First();
+        Assert.AreEqual("bot lane", step.Destination!.Name);
+        Assert.IsTrue(step.AttackMove, "walking up to the wave stops to farm it on the way");
+        StringAssert.Contains(step.Reason, "a good player would be on the way up bot lane (behind your minions, ");
     }
 
     [TestMethod]
@@ -1659,6 +1688,35 @@ public sealed class JevPolicyTests
         // The flag flaps onto the ally; the question is still about Ezreal's seat.
         policy.OnFrame(Frame(2.0, Self() with { IsSelf = false }, Ally(3, 3000, 3000) with { IsSelf = true }, Enemy(900)));
         Assert.AreEqual("Ezreal", jev.Asks.Single().State.Player!.Champion, "the question should be about the majority self");
+    }
+
+    [TestMethod]
+    public void Self_is_the_flagged_row_when_the_name_it_was_known_by_is_lost()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 180, Idle()));
+        var asked = jev.Asks.Count;
+
+        // The reader loses the name: the flagged row carries none from here on.
+        var unnamed = Idle() with { Champion = null };
+        for (var t = 100.5; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 180, unnamed));
+        Assert.IsGreaterThan(asked, jev.Asks.Count, "the coach went silent when the player's name was lost");
+        Assert.AreEqual("?", jev.Last.State.Player!.Champion);
+    }
+
+    [TestMethod]
+    public void The_activity_line_tells_no_player_from_answers_of_no_order()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 180));
+        Assert.AreEqual("no player row in 1 frames; asked 0", policy.DrainActivity());
+
+        jev.Script = Choose("carry_on");
+        for (var t = 101.0; t <= 102.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 180, Idle()));
+        Assert.AreEqual("player Ezreal; asked 4 (carry_on 4)", policy.DrainActivity());
+        Assert.IsNull(policy.DrainActivity(), "drained");
     }
 
     [TestMethod]

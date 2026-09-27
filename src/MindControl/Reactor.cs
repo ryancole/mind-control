@@ -141,8 +141,9 @@ public sealed class Reactor(
             _latencySamples.Sort();
             var p50 = _latencySamples[_latencySamples.Count / 2];
             var max = _latencySamples[^1];
+            var activity = policy.DrainActivity() is { } said ? $"; coach: {said}" : "";
             Log($"health: e2e latency p50={p50 * 1000:0}ms max={max * 1000:0}ms " +
-                $"over {_latencySamples.Count} frames, fps={frame.Fps?.ToString("0.0") ?? "?"} dropped={frame.Dropped}");
+                $"over {_latencySamples.Count} frames, fps={frame.Fps?.ToString("0.0") ?? "?"} dropped={frame.Dropped}{activity}");
             _latencySamples.Clear();
         }
     }

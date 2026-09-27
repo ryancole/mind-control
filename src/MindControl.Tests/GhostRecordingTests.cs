@@ -244,6 +244,24 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void An_attack_move_is_the_attack_move_key_and_a_left_click_where_the_walk_would_land()
+    {
+        IReadOnlyList<Message> step;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+            step = recording.Step(new MoveStep(103.0, "up-right", 0.8, -0.6, 2, "off to lane")
+            {
+                Destination = new Destination("bot lane", 13100, 3600),
+                DistanceUnits = 6000,
+                AttackMove = true,
+            });
+
+        // The same spot as a walk's right-click, ordered with A and a left-click.
+        Assert.AreEqual(
+            "MouseMove 1200,360, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None",
+            GhostRecording.Show(step));
+    }
+
+    [TestMethod]
     public void A_walk_to_a_place_nearer_than_a_click_lands_on_it()
     {
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
