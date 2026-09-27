@@ -444,12 +444,27 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
+    public void A_walk_is_taken_on_a_lower_yes_than_the_other_questions()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = (id, q) => id switch
+        {
+            "walk" => new NoulAnswer(0.55),
+            "lane" => FakeJev.Pick(q, "bot"),
+            _ => null,
+        };
+        for (var t = 100.0; t <= 100.9 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 50, Idle()));
+        Assert.HasCount(1, policy.DrainMoves(), "0.55 is under YesAt but over WalkYesAt");
+    }
+
+    [TestMethod]
     public void A_walk_that_falls_short_or_a_lane_they_stand_in_is_no_step()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, q) => id switch
         {
-            "walk" => new NoulAnswer(0.5),
+            "walk" => new NoulAnswer(0.45),
             "lane" => FakeJev.Pick(q, "bot"),
             _ => null,
         };
