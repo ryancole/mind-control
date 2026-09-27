@@ -271,8 +271,10 @@ public sealed class FeedMessageTests
              "world_bounds":null,"world_units_per_pixel":null}
             """;
 
+        // Schema 1, with the stride schema 2 dropped: an old timeline still parses and is accepted.
         var meta = JsonSerializer.Deserialize<Meta>(json, FeedJson.Options)!;
         Assert.AreEqual(1, meta.Schema);
+        FeedJson.EnsureSupported(meta);
         Assert.IsTrue(meta.HasLiveness);
         Assert.IsFalse(meta.HasNameplates);
         Assert.IsNull(meta.WorldUnitsPerPixel);
@@ -284,16 +286,25 @@ public sealed class FeedMessageTests
     public void Lane_stage_flags_parse()
     {
         const string json = """
-            {"t":"meta","schema":1,"source":"live","width":2560,"height":1440,
-             "stride":1,"created":"2026-09-25T20:30:00Z","has_game_time":true,
+            {"t":"meta","schema":2,"source":"live","width":2560,"height":1440,
+             "created":"2026-09-25T20:30:00Z","has_game_time":true,
              "has_liveness":true,"has_nameplates":true,
              "has_minions":true,"has_minion_dots":false,"has_last_hits":true,
              "world_bounds":null,"world_units_per_pixel":null}
             """;
 
         var meta = JsonSerializer.Deserialize<Meta>(json, FeedJson.Options)!;
+        Assert.AreEqual(2, meta.Schema);
+        FeedJson.EnsureSupported(meta);
         Assert.IsTrue(meta.HasMinions);
         Assert.IsFalse(meta.HasMinionDots);
         Assert.IsTrue(meta.HasLastHits);
+    }
+
+    [TestMethod]
+    public void A_schema_newer_than_understood_is_refused()
+    {
+        var meta = JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":3}""", FeedJson.Options)!;
+        Assert.ThrowsExactly<InvalidOperationException>(() => FeedJson.EnsureSupported(meta));
     }
 }

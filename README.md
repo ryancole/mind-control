@@ -26,7 +26,7 @@ Two rules keep it fair:
   last-known spots, no level or cast sensed through the fog.
 
 Input boundary: SSE feed at `http://127.0.0.1:8723`, wire format in
-`spectral-sight/docs/output-format.md` (schema 1).
+`spectral-sight/docs/output-format.md` (schema 2; schema 1 still accepted).
 
 ## Layout
 
