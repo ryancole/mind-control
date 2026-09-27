@@ -86,7 +86,7 @@ replay it:
 python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --from 140 --speed 4
 
 # terminal 2, here:
-etc/dev.ps1 -- --self Ezreal --audit data/audit.jsonl
+etc/dev.ps1 -- --self Ezreal   # audit on by default: data/audits/audit-<stamp>.jsonl
 ```
 
 Keep the replay speed modest: the coach asks its root question about the
@@ -223,7 +223,7 @@ read may jitter and still be the same spot (100); and `--model`, pinned to
 `jev-1.13.0` because a threshold tuned against one release's calibration
 should not move with `jev-latest`.
 
-`--audit <file>` records every question and its answer as JSONL: the state
+`--audit [file|none]` (on by default, to `data/audits/audit-<yyyyMMdd-HHmmss>.jsonl`) records every question and its answer as JSONL: the state
 the model saw, the questions as asked, and the answers exactly as returned.
 A press or a step in the log traces back to a probability there, and a
 silence to the one that fell short; it is also the record of what the model
@@ -299,7 +299,7 @@ press or step, keyed by video_time, a step toward somewhere carrying its
 `destination` on the map; a dodge is stamped at the bolt's first sighting, which is earlier
 than the event that reports it, so the trace is not in time order there).
 
-Add `--trace data/ghost-trace.jsonl --self <champion>` and open
+Add `--trace --self <champion>` (bare `--trace` writes `data/traces/trace-<stamp>.jsonl`) and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the coach's hands over the map: keys and steps sit on the tick strip as
 ⌨ and 🖱, jumpable, and while one is fresh a badge at the foot of the map
