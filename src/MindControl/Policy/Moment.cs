@@ -297,12 +297,15 @@ public sealed record BoltOccasion(
 /// and at no other. <see cref="CoachWatchingSinceLevel"/> is the level of the
 /// first point the coach saw this game: the points placed before it are in
 /// nobody's count. <see cref="HeldForSeconds"/> is how long the feed has
-/// shown the point waiting; zero when it has just appeared. Which buttons
+/// shown the point waiting; zero when it has just appeared.
+/// <see cref="Waiting"/> is how many points wait under the lit chevrons: one,
+/// and one more for every level gained while they stayed lit. Which buttons
 /// have been seen cast, and so certainly hold a point already, is in
 /// <see cref="Moment.Abilities"/>.
 /// </summary>
 public sealed record SkillPointFacts(
-    int? Level, IReadOnlyList<string> Lit, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds);
+    int? Level, IReadOnlyList<string> Lit, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds,
+    int Waiting);
 
 /// <summary>A shot of the player's that was seen leaving them with an enemy in front of it.</summary>
 public sealed record ShotOccasion(

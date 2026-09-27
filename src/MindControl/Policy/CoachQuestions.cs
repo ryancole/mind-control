@@ -68,7 +68,10 @@ public static class CoachQuestions
         + "first, at level one, in case the game opens with an invade: they hold it while the game clock has not "
         + "yet started or is in its first half minute and nobody is on the screen, and spend it the moment an "
         + "enemy shows up, they set off for lane, or the clock passes about a minute. Every point after that is "
-        + "spent at once, whoever is on the screen.";
+        + "spent at once, whoever is on the screen. The point is offered for as long as the HUD still lights it: "
+        + "`skill_point.waiting` above one means levels came while a point sat unspent, and each of them is spent "
+        + "at once too; and a point still lit after the coach already put it in (`coach` says \"put the point "
+        + "in ...\") is one the player has not spent, so it is spent again now, not left for later.";
 
     public const string Slot =
         "If the point were spent now, which ability does this champion's usual skill order put it into at this "
