@@ -17,64 +17,57 @@ public sealed record JevOptions
 
     /// <summary>
     /// How often, in video seconds, the coach is asked about the moment
-    /// itself (which buttons to press). One such question is in flight at a
-    /// time, so the model's own latency paces it too; this floor keeps a fast
-    /// replay inside the request budget. Events are asked about as they
-    /// come, on top of this.
+    /// itself: the root question, what a good player would do right now. One
+    /// is in flight at a time, so the model's own latency paces it too; this
+    /// floor keeps a fast replay inside the request budget. Events are asked
+    /// about as they come, on top of this.
     /// </summary>
     public double AskEverySeconds { get; init; } = 0.25;
 
     /// <summary>
-    /// A yes below this probability is a no. The model's yes/no answers are
-    /// calibrated probabilities, and the ghost acts on a yes with a margin,
-    /// because a key pressed or a step taken on a coin flip is not coaching.
-    /// On the fixture, a button the coach would throw sits at 0.55–0.85 and
-    /// one it would hold at 0.1–0.4, with a press dropping the next answer
-    /// to about 0.35 (the coach is told what it just did); a step it owes
-    /// sits at 0.75–0.86 and one it does not at 0.06–0.3.
+    /// The root question's pick is no order below this probability. Its
+    /// options share one distribution, so a pick split with a second option
+    /// sits well under a yes/no's margin; and <c>carry_on</c>, the no-order
+    /// option, is always among them to take up a moment with nothing to do.
+    /// Uncalibrated: nothing has yet been replayed through the root question.
+    /// </summary>
+    public double DecideAt { get; init; } = 0.4;
+
+    /// <summary>
+    /// A yes below this probability is a no, for the yes/no questions about
+    /// an event (a bolt, a shot). The model's yes/no answers are calibrated
+    /// probabilities, and the ghost acts on a yes with a margin, because a
+    /// step taken on a coin flip is not coaching. On the fixture, a step it
+    /// owes sits at 0.75–0.86 and one it does not at 0.06–0.3.
     /// </summary>
     public double YesAt { get; init; } = 0.6;
 
     /// <summary>
-    /// <see cref="YesAt"/> for the walk to a lane alone, set lower so the
-    /// coach walks the player back to the action more readily. On the
-    /// fixture, 898 asks: 310 at 0.6 or more, 41 more at 0.5–0.6 (mostly the
-    /// jungle or river with an enemy 900–1900 units off), and below 0.5 the
-    /// asks a step would be wrong for (standing in mid lane at 0.40–0.44, a
-    /// fight with Akali 182 units off at 0.44).
+    /// The least time, in video seconds, between two movement clicks: a step
+    /// toward a lane, back out of the enemy wave, to catch a wave at a turret
+    /// or into the brush (a dodge counts too). A good player moves in short
+    /// clicks, a fresh one about every second, so for this long after one the
+    /// root does not offer another, whether the player stands or walks; a
+    /// step still being walked is no reason to hold the next after it.
     /// </summary>
-    public double WalkYesAt { get; init; } = 0.5;
+    public double MoveEverySeconds { get; init; } = 1;
 
     /// <summary>
-    /// How often, in video seconds, each movement question is asked: should
-    /// they be heading to a lane, stepping back out of the enemy wave, going
-    /// to catch a wave at their turret, or stepping into the brush? A good
-    /// player moves in short clicks, a fresh one about every second, so each
-    /// is asked this often whether the player stands or walks, and whatever
-    /// the coach's last click was: a step still being walked is no reason to
-    /// hold the next. Each question has one in flight at a time, apart from
-    /// the others.
+    /// The least time, in video seconds, between two attack orders. One
+    /// right-click keeps a champion attacking its target, so this is the pace
+    /// of a new target, not of the attacks: for this long after one, the root
+    /// does not offer another.
     /// </summary>
-    public double MoveAskEverySeconds { get; init; } = 1;
+    public double AttackEverySeconds { get; init; } = 1;
 
     /// <summary>
-    /// How often, in video seconds, a skill point the HUD still shows waiting
-    /// is asked about again after the coach said to hold it. The first point
-    /// of a game is the one a good player holds, against an invade; when to
-    /// stop holding it is the model's call, put to it this often, with how
-    /// long the point has waited, until it says spend or the player spends
-    /// it themselves. One in flight at a time, apart from the other questions.
+    /// The least time, in video seconds, before the coach says again one of
+    /// the things its hands cannot yet do (run away, fall back to a turret,
+    /// recall, buy): for this long after it said one, the root does not offer
+    /// it, so a moment that goes on being right for it is not said four times
+    /// a second.
     /// </summary>
-    public double PointAskEverySeconds { get; init; } = 3;
-
-    /// <summary>
-    /// How often, in video seconds, a player with an enemy minion or champion
-    /// within reach of their basic attack is asked about: should they
-    /// right-click to attack something? One right-click keeps a champion
-    /// attacking its target, so this is the pace of a new target, not of the
-    /// attacks. One in flight at a time, apart from the other questions.
-    /// </summary>
-    public double AttackAskEverySeconds { get; init; } = 1;
+    public double SayEverySeconds { get; init; } = 5;
 
     /// <summary>
     /// How far, in game units, the player's model can drift and still be on
@@ -105,6 +98,19 @@ public sealed record Consultation(
 /// answered as a probability, a level or an option. Nothing here decides; it
 /// measures, asks, and turns the answer into the output the reactor already
 /// knows how to log, stream, trace and record.
+///
+/// <para><b>A tree, rooted in one question.</b> The moment itself is one
+/// question a quarter second, <c>decide</c>: of the things the state makes
+/// possible right now -- level up, run away, use an ability, attack, step
+/// back, fall back to a turret, hide in the brush, catch a wave, walk to
+/// lane, recall, buy, or carry on -- which would a good player do? Each
+/// branch offers its option only when it has something to do, and adds its
+/// own follow-up (which ability, which target, which lane, which brush) to
+/// the same request; only the picked branch's answers are read, so the
+/// coach does one thing at a time and a walk is never undone by an attack
+/// ordered the same second. The branches the ghost's hands cannot do yet
+/// (run away, fall back, recall, buy) are said as a cue. A bolt at the
+/// player and a shot of theirs are events, asked about as they come.</para>
 ///
 /// <para><b>What stays in code, and why.</b> Perception: which row is the
 /// player (<c>--self</c> or the is_self majority, with the pipeline's identity
@@ -204,20 +210,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // applied on the reactor's, in Settle.
     private readonly ConcurrentQueue<Action> _arrivals = new();
     private int _generation;
-    private bool _asking;
-    private double _lastAskAt = double.NegativeInfinity;
-    private bool _askingIdle;
-    private double _lastIdleAskAt = double.NegativeInfinity;
-    private bool _askingPoint;
-    private double _lastPointAskAt = double.NegativeInfinity;
-    private bool _askingWave;
-    private double _lastWaveAskAt = double.NegativeInfinity;
-    private bool _askingTend;
-    private double _lastTendAskAt = double.NegativeInfinity;
-    private bool _askingAttack;
-    private double _lastAttackAskAt = double.NegativeInfinity;
-    private bool _askingBrush;
-    private double _lastBrushAskAt = double.NegativeInfinity;
+    private bool _deciding;
+    private double _lastDecideAt = double.NegativeInfinity;
+
+    // What the coach last did, by kind, for the pace of the next.
+    private double _lastMoveAt = double.NegativeInfinity;
+    private double _lastAttackAt = double.NegativeInfinity;
+    private readonly Dictionary<string, double> _lastSaid = [];
+
     private bool _failing;
 
     // Questions on the wire, by occasion, oldest first. Touched from the
@@ -226,7 +226,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly Lock _wireLock = new();
 
     /// <summary>
-    /// The occasions ("now", "idle", "wave", "tend", "attack", "brush", "bolt", "shot", "level") of the questions
+    /// The occasions ("decide", "bolt", "shot") of the questions
     /// on their way to the model, oldest first, raised each time that changes: when one
     /// is sent and when its answer or failure comes back. It follows the
     /// network, not <see cref="Settle"/>, so it is raised on whichever thread
@@ -282,20 +282,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         // Every answer still on its way is about a past we have stopped
         // trusting; the generation check in Settle drops it.
         _generation++;
-        _asking = false;
-        _lastAskAt = double.NegativeInfinity;
-        _askingIdle = false;
-        _lastIdleAskAt = double.NegativeInfinity;
-        _askingPoint = false;
-        _lastPointAskAt = double.NegativeInfinity;
-        _askingWave = false;
-        _lastWaveAskAt = double.NegativeInfinity;
-        _askingTend = false;
-        _lastTendAskAt = double.NegativeInfinity;
-        _askingAttack = false;
-        _lastAttackAskAt = double.NegativeInfinity;
-        _askingBrush = false;
-        _lastBrushAskAt = double.NegativeInfinity;
+        _deciding = false;
+        _lastDecideAt = double.NegativeInfinity;
+        _lastMoveAt = double.NegativeInfinity;
+        _lastAttackAt = double.NegativeInfinity;
+        _lastSaid.Clear();
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -358,13 +349,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _health = health;
             TrackReach(frame, self);
             TrackStillness(frame, self);
-            AskNow(frame, self);
-            AskIdle(frame, self);
-            AskWave(frame, self);
-            AskTend(frame, self);
-            AskAttack(frame, self);
-            AskBrush(frame, self);
-            AskHeldPoint(frame, self);
+            TrackPoint(self);
+            AskDecide(frame, self);
         }
         Settle();
     }
@@ -400,42 +386,126 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         Settle();
     }
 
-    // --- The moment itself: which button a good player would press now ---
+    // --- The moment itself: what a good player would do now ---
 
     /// <summary>
-    /// Asks about the buttons that are up, when there is anything to ask: a
-    /// player who is alive, a button the HUD has shown come back, and an
-    /// enemy on the screen to throw it at. A dead player, a greyed button and
-    /// an empty screen are not questions. One question in flight at a time,
-    /// and no more often than <see cref="JevOptions.AskEverySeconds"/>.
+    /// The root's option for no new order. It is always offered, and offered
+    /// first, so a model that answers nothing useful gives no order.
     /// </summary>
-    private void AskNow(FrameEnvelope frame, ChampionRow self)
+    private const string CarryOn = "carry_on";
+
+    /// <summary>
+    /// One option of the root question: its name, its rubric as the option
+    /// says it, the follow-up it adds to the same request (which ability,
+    /// which lane, which target, which brush), and what a pick of it does.
+    /// </summary>
+    private sealed record Branch(
+        string Option, string Criterion, Action<Questions>? FollowUp, Action<SystemOneResponse> Act);
+
+    /// <summary>
+    /// Asks the root of the moment: of the things the state makes possible
+    /// right now, which would a good player do? Each branch offers its option
+    /// only when there is something for it to do (a button up with an enemy
+    /// on the screen, a target in reach, a point waiting, a patch of brush
+    /// near); when none does, nothing is asked. The follow-ups every offered
+    /// branch needs go in the same request, since the model answers each
+    /// question on its own and a second round trip would cost the coach a
+    /// tenth of a second; only the picked branch's are read. A pick below
+    /// <see cref="JevOptions.DecideAt"/>, or <see cref="CarryOn"/>, is no
+    /// order. One in flight at a time, and no more often than
+    /// <see cref="JevOptions.AskEverySeconds"/>.
+    /// </summary>
+    private void AskDecide(FrameEnvelope frame, ChampionRow self)
     {
-        if (_asking || frame.VideoTime - _lastAskAt < _options.AskEverySeconds)
+        if (_deciding || frame.VideoTime - _lastDecideAt < _options.AskEverySeconds)
             return;
+        var asked = frame.VideoTime;
+        var moment = Describe(frame, self, occasion: null, asked);
+        var branches = new[]
+        {
+            LevelUp(self, moment, asked),
+            RunAway(frame, self, moment, asked),
+            UseAbility(frame, self, moment, asked),
+            Attack(frame, self, asked),
+            StepBack(frame, self, moment, asked),
+            GoToTurret(frame, self, moment, asked),
+            HideInBrush(frame, self, moment, asked),
+            CatchWave(frame, self, moment, asked),
+            WalkToLane(frame, self, moment, asked),
+            Recall(frame, self, moment, asked),
+            Buy(frame, self, moment, asked),
+        }.OfType<Branch>().ToArray();
+        if (branches.Length == 0)
+            return;
+
+        var criteria = new ChoiceCriteria { [CarryOn] = CoachQuestions.CarryOnOption };
+        foreach (var branch in branches)
+            criteria[branch.Option] = branch.Criterion;
+        var questions = new Questions().Choice("decide", CoachQuestions.Decide, criteria);
+        foreach (var branch in branches)
+            branch.FollowUp?.Invoke(questions);
+
+        _deciding = true;
+        _lastDecideAt = asked;
+        Ask("decide", moment, questions, asked, NowRequest, released: () => _deciding = false, answered: response =>
+        {
+            if (!response.TryGet<ChoiceAnswer>("decide", out var decide) || decide!.Choice == CarryOn)
+                return;
+            if (decide.Probabilities.GetValueOrDefault(decide.Choice) < _options.DecideAt)
+                return;
+            branches.FirstOrDefault(b => b.Option == decide.Choice)?.Act(response);
+        });
+    }
+
+    /// <summary>
+    /// The pick of a follow-up choice: the one option when there was only
+    /// one (no question was asked), otherwise the model's, when it names one
+    /// of the options.
+    /// </summary>
+    private static string? Picked(SystemOneResponse response, string question, IReadOnlyCollection<string> options) =>
+        options.Count == 1 ? options.First()
+        : response.TryGet<ChoiceAnswer>(question, out var pick) && options.Contains(pick!.Choice) ? pick.Choice
+        : null;
+
+    /// <summary>Whether a movement click would come sooner than a good player's one a second after the last.</summary>
+    private bool Stepping(double now) => now - _lastMoveAt < _options.MoveEverySeconds;
+
+    // --- Buttons: which one a good player would throw now ---
+
+    /// <summary>
+    /// Offered while the player is alive and placed, a button the HUD has
+    /// shown come back is up, and an enemy is on the screen to throw it at.
+    /// A greyed button and an empty screen offer nothing. A pick is one key
+    /// press; with more than one button up, which is the follow-up's call.
+    /// </summary>
+    private Branch? UseAbility(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
         if (self.Alive == false || self is not { WorldX: not null, WorldY: not null })
-            return;
+            return null;
         var slots = _casts
             .Where(c => c.Value.Countdown is { } countdown && frame.VideoTime >= c.Value.At + countdown)
             .Select(c => c.Key)
             .Order()
             .ToArray();
-        if (slots.Length == 0)
-            return;
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        if (moment.VisibleEnemies.Count == 0)
-            return;
+        if (slots.Length == 0 || moment.VisibleEnemies.Count == 0)
+            return null;
 
-        _asking = true;
-        _lastAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("now", moment, CoachQuestions.Press(slots), asked, NowRequest, released: () => _asking = false, answered: response =>
+        var criteria = new ChoiceCriteria();
+        foreach (var slot in slots)
         {
-            var nearest = moment.VisibleEnemies[0];
-            foreach (var slot in slots)
+            var facts = moment.Abilities.First(a => a.Slot == slot);
+            var inside = moment.VisibleEnemies.Where(e => e.InRangeOf.Contains(slot)).Select(e => e.Champion).ToArray();
+            criteria[slot] = $"{slot}: {facts.Kind ?? "what it is is not on file"}, "
+                + (facts.Range is { } range ? $"reaching {range:0} units" : "its range not on file")
+                + (inside.Length > 0 ? $"; inside its range: {string.Join(", ", inside)}" : "; no visible enemy inside its range");
+        }
+        return new Branch("use_ability", CoachQuestions.UseAbilityOption(slots),
+            slots.Length > 1 ? q => q.Choice("ability", CoachQuestions.Ability, criteria) : null,
+            response =>
             {
-                if (!response.TryGet<NoulAnswer>($"press_{slot}", out var answer) || !answer!.IsYes(_options.YesAt))
-                    continue;
+                if (Picked(response, "ability", slots) is not { } slot)
+                    return;
+                var nearest = moment.VisibleEnemies[0];
                 var facts = moment.Abilities.First(a => a.Slot == slot);
                 var reason = facts.Range is { } range && nearest.DistanceUnits <= range
                     ? $"{nearest.Champion} has been in {slot} range ({nearest.DistanceUnits:0} units)"
@@ -444,241 +514,83 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     : $"{nearest.Champion} is {nearest.DistanceUnits:0} units away with {slot} up";
                 _keys.Add(new KeyPress(asked, slot, 2, reason));
                 Remember($"pressed {slot}", asked);
-            }
-        });
+            });
     }
 
-    // --- Away from the action: would a good player be heading to lane? ---
+    // --- A skill point waiting: which ability it goes into ---
 
     /// <summary>
-    /// Asks about a player away from the action, when there is something to
-    /// ask: alive, placed on the map, with a game clock running (before it
-    /// the player cannot move). Asked whether they stand or walk, and
-    /// whatever the coach's last step was. Whether they belong somewhere
-    /// else, and which lane a good player would be heading to, are the
-    /// model's calls; a yes is one short step on the ground toward where that
-    /// lane's waves meet when the minimap shows both, and otherwise toward
-    /// where the lane is played (<see cref="RiftMap.LaningSpot"/>). The trip
-    /// is a string of such steps, one a second, each asked afresh.
+    /// Offered while the HUD shows a skill point waiting that the coach has
+    /// not already pressed the chord for, alive or dead (a point goes in from
+    /// the death screen too). Whether to spend it now, or hold it -- the first
+    /// point of a game, against an invade -- is the root's call, from
+    /// <see cref="Moment.SkillPoint"/>; which ability takes it is the
+    /// follow-up's, a choice among exactly the slots the HUD lights, each
+    /// said with what it is, its place in the champion's usual skill order,
+    /// whether it has been seen cast, and how many points the coach itself
+    /// has put in it since it began watching. A pick is the level-up chord,
+    /// Ctrl and the slot. An answer that lands after the point was spent, or
+    /// announced anew with another set, is about nothing and is dropped.
     /// </summary>
-    private void AskIdle(FrameEnvelope frame, ChampionRow self)
+    private Branch? LevelUp(ChampionRow self, Moment moment, double asked)
     {
-        if (_askingIdle || frame.VideoTime - _lastIdleAskAt < _options.MoveAskEverySeconds)
-            return;
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || frame.GameTime is null)
-            return;
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        if (moment.Whereabouts is not { } whereabouts)
-            return;
+        if (_point is not { } point || _pressedFor.Count > 0 || moment.SkillPoint is not { } facts)
+            return null;
+        var again = _pointAsked;
+        _pointAsked = true;
+        var slots = point.Slots;
 
         var criteria = new ChoiceCriteria();
-        foreach (var lane in whereabouts.Lanes)
+        foreach (var slot in slots)
         {
-            var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
-            criteria[lane.Lane] = (lane.ScreenDirection is { } direction
-                ? $"{lane.Lane} lane: {lane.DistanceUnits:0} units away, {direction} on the screen; allies there: {allies}"
-                : $"{lane.Lane} lane: the player is standing in it; allies there: {allies}")
-                + DescribeWave(lane.Wave);
-        }
-        var questions = new Questions()
-            .Noul("walk", CoachQuestions.Walk,
-                yes: "they are away from the action and a good player would be on the way to a lane's minion wave, or to their team, by now",
-                no: "they are in a lane, held where they are by something on the screen, or still shopping")
-            .Choice("lane", CoachQuestions.Lane, criteria);
-
-        _askingIdle = true;
-        _lastIdleAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("idle", moment, questions, asked, NowRequest, released: () => _askingIdle = false, answered: response =>
-        {
-            if (!response.TryGet<NoulAnswer>("walk", out var walk) || !walk!.IsYes(_options.WalkYesAt))
-                return;
-            if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
-                return;
-            // A step toward where the lane's waves meet when the minimap shows
-            // both, toward the enemy's front when it is alone at one of their
-            // turrets, and otherwise toward where the lane is played -- never
-            // its nearest point, which from base is only its mouth.
-            var facts = whereabouts.Lanes.First(l => l.Lane == lane.Choice).Wave;
-            var wave = facts?.MeetAt
-                ?? (facts?.TheirFront is { } front && RiftMap.AtOurTurret(lane.Choice, front) ? front : null);
-            var spot = wave is { } at ? RiftMap.At(lane.Choice, at) : RiftMap.LaningSpot(lane.Choice);
-            // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (spot.X - x, -(spot.Y - y));
-            var length = double.Hypot(dx, dy);
-            if (length <= RiftMap.LaneHalfWidth)
-                return;   // already where the walk would go: nothing to demonstrate
-            var direction = ScreenDirections.Name(dx, dy);
-            var clock = moment.GameClock is { } time ? $" at {time}" : "";
-            var to = wave is null ? $"{lane.Choice} lane" : $"{lane.Choice} lane's minion wave";
-            var where = whereabouts.StoodStillForSeconds >= 1
-                ? $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}"
-                : $"you are in {whereabouts.Place}{clock}";
-            var reason = $"{where}; a good player would be on the way to {to} ({length:0} units {direction})";
-            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+            var points = _pointsPlaced.GetValueOrDefault(slot);
+            var known = AbilityKits.For(self.Champion, slot);
+            var what = known?.Kind ?? "what it is is not on file";
+            var order = known?.UsuallyMaxed is { } place
+                ? $"the ability this champion usually maxes {place}"
+                : slot == "R" ? "the ultimate, which takes a point at levels 6, 11 and 16, and the HUD offers it now: it comes before any other ability"
+                : "its place in this champion's usual skill order is not on file";
+            var seen = _casts.ContainsKey(slot)
+                ? "seen cast this game, so it holds a point already"
+                : "never seen cast this game, so it may hold no point yet";
+            var placed = points switch
             {
-                Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
-            });
-            Remember($"stepped toward {lane.Choice} lane", asked);
-        });
-    }
-
-    /// <summary>A lane's minimap minions, as an option of the lane question says them.</summary>
-    private static string DescribeWave(WaveFacts? wave)
-    {
-        if (wave is null)
-            return "";
-        if (wave is { OurMinions: 0, TheirMinions: 0 })
-            return "; the minimap shows no minions in it";
-        var said = $"; minions on the minimap: {wave.OurMinions} ours, {wave.TheirMinions} theirs";
-        if (wave.TheirFrontPlace is { } place)
-            said += $", theirs {place}";
-        if (wave.MeetAt is { } meet)
-            return said + $", meeting {meet:0.00} of the way to the enemy nexus, "
-                + (wave.MeetScreenDirection is { } way ? $"{wave.MeetUnitsAway:0} units away, {way} on the screen" : "where the player stands");
-        return said + (wave.OurFront is { } ours ? $", ours pushed {ours:0.00} of the way" : $", theirs pushed to {wave.TheirFront:0.00} of the way");
-    }
-
-    // --- A wave at the player's turret: go and catch it ---
-
-    /// <summary>
-    /// How near an enemy wave the player already is when they are at it: about
-    /// a screen's width, inside which the wave is already in view.
-    /// </summary>
-    private const double AtTheWaveUnits = 1500;
-
-    /// <summary>
-    /// Asks about a player away from an enemy wave that the minimap shows at
-    /// one of their own turrets, when there is something to ask: alive,
-    /// placed on the map, and such a wave more than
-    /// <see cref="AtTheWaveUnits"/> away. Asked whether they stand or walk,
-    /// since a roaming player is exactly who leaves a wave alone. Whether it
-    /// is theirs to catch, and which one when more than one lane is crashing,
-    /// are the model's calls; a yes is one short step on the ground toward
-    /// that wave's front, and the next second is asked afresh.
-    /// </summary>
-    private void AskTend(FrameEnvelope frame, ChampionRow self)
-    {
-        if (_askingTend || frame.VideoTime - _lastTendAskAt < _options.MoveAskEverySeconds)
-            return;
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
-            return;
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        if (moment.Whereabouts is not { } whereabouts)
-            return;
-        var crashing = whereabouts.Lanes
-            .Where(l => l.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits }
-                && RiftMap.AtOurTurret(l.Lane, front))
-            .ToArray();
-        if (crashing.Length == 0)
-            return;
-
-        var questions = new Questions().Noul("tend", CoachQuestions.Tend,
-            yes: "the wave at their turret is theirs to catch, nobody is there to, and nothing on the screen holds them",
-            no: "an ally has it, their own lane needs them, or a fight holds them");
-        if (crashing.Length > 1)
-        {
-            var criteria = new ChoiceCriteria();
-            foreach (var lane in crashing)
-            {
-                var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
-                criteria[lane.Lane] = $"{lane.Lane} lane: the enemy wave is {lane.Wave!.TheirFrontPlace}, "
-                    + $"{lane.Wave.TheirFrontUnitsAway:0} units away, {lane.Wave.TheirFrontScreenDirection} on the screen; allies there: {allies}";
-            }
-            questions.Choice("tend_lane", CoachQuestions.TendLane, criteria);
+                0 => "the coach has put no point in it since it began watching",
+                1 => "the coach has put 1 point in it since it began watching",
+                var n => $"the coach has put {n} points in it since it began watching",
+            };
+            criteria[slot] = $"{slot}: {what}; {order}; {seen}; {placed}";
         }
 
-        _askingTend = true;
-        _lastTendAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("tend", moment, questions, asked, NowRequest, released: () => _askingTend = false, answered: response =>
-        {
-            if (!response.TryGet<NoulAnswer>("tend", out var tend) || !tend!.IsYes(_options.YesAt))
-                return;
-            var chosen = crashing.Length == 1 ? crashing[0].Lane
-                : response.TryGet<ChoiceAnswer>("tend_lane", out var pick) ? pick!.Choice : null;
-            if (crashing.FirstOrDefault(l => l.Lane == chosen) is not { Wave: { TheirFront: { } front } wave } lane)
-                return;
-            var spot = RiftMap.At(lane.Lane, front);
-            // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (spot.X - x, -(spot.Y - y));
-            var length = double.Hypot(dx, dy);
-            var direction = ScreenDirections.Name(dx, dy);
-            var alone = lane.AlliesThere.Count == 0 ? " with none of your team there" : "";
-            var reason = $"the enemy wave is {wave.TheirFrontPlace} in {lane.Lane} lane{alone}; "
-                + $"a good player would be on the way to catch it ({length:0} units {direction})";
-            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+        var clock = moment.GameClock is { } time ? $" at {time}" : "";
+        var since = facts.Level is { } l ? $"level {l}" : "your last level";
+        return new Branch("level_up", CoachQuestions.LevelUpOption,
+            slots.Length > 1 ? q => q.Choice("slot", CoachQuestions.Slot, criteria) : null,
+            response =>
             {
-                Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
+                if (_point?.Id != point.Id)
+                    return;   // spent, or announced anew with another set, since it was asked
+                if (Picked(response, "slot", slots) is not { } slot)
+                    return;
+                var note = AbilityKits.For(self.Champion, slot) is { } known ? $" ({known.Kind})" : "";
+                var reason = again
+                    ? $"you have held the point from {since} for {facts.HeldForSeconds:0.0}s{clock}; a good player would put it in {slot}{note} by now"
+                    : $"you reached {since}{clock}; a good player would put the point in {slot}{note}";
+                _keys.Add(new KeyPress(asked, slot, 2, reason) { WithControl = true });
+                _pressedFor.Add(slot);
+                Remember($"put the point in {slot}", asked);
             });
-            Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);
-        });
     }
 
-    // --- In the lane: out of the enemy wave ---
-
-    /// <summary>
-    /// How far back down the lane a step out of the enemy wave aims. The
-    /// recording clicks a sidestep a fixed distance from the player's model,
-    /// so this sets only the direction: along the lane toward home, not
-    /// straight at the nexus across the map.
-    /// </summary>
-    private const double BackStepUnits = 500;
-
-    /// <summary>
-    /// Asks about a player standing in a lane with enemy minions on their
-    /// screen, when there is something to ask: alive, placed on the map, in a
-    /// lane, and an enemy minion's bar read and placed near them. Whether they
-    /// stand too far forward is the model's call, from the counts and
-    /// distances in <see cref="Moment.Minions"/>; a yes is one sidestep back
-    /// down the lane toward their own nexus. One in flight at a time, and no
-    /// more often than <see cref="JevOptions.MoveAskEverySeconds"/>.
-    /// </summary>
-    private void AskWave(FrameEnvelope frame, ChampionRow self)
+    /// <summary>The skill point the HUD shows waiting, as the state tells it; null when none is.</summary>
+    private SkillPointFacts? SkillPointNow(ChampionRow? self, double now)
     {
-        if (_askingWave || frame.VideoTime - _lastWaveAskAt < _options.MoveAskEverySeconds)
-            return;
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || RiftMap.LaneOf(x, y) is not { } lane)
-            return;
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        if (moment.Minions is not { NearestTheirsUnits: { } nearest } minions)
-            return;
-
-        var questions = new Questions().Noul("back", CoachQuestions.Back,
-            yes: "they stand in front of their own minions, or among the enemy's with none of their own, with enemy minions in reach",
-            no: "they stand behind their own minions' front, no enemy minion is in reach, or a fight with an enemy champion decides where they stand");
-
-        _askingWave = true;
-        _lastWaveAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("wave", moment, questions, asked, NowRequest, released: () => _askingWave = false, answered: response =>
-        {
-            if (!response.TryGet<NoulAnswer>("back", out var back) || !back!.IsYes(_options.YesAt))
-                return;
-            var (_, progress) = RiftMap.Along(lane, x, y);
-            var behind = RiftMap.At(lane, progress - BackStepUnits / RiftMap.Length(lane));
-            // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (behind.X - x, -(behind.Y - y));
-            var length = double.Hypot(dx, dy);
-            if (length == 0)
-                return;
-            var direction = ScreenDirections.Name(dx, dy);
-            var reach = minions.TheirsWithinCasterRange switch
-            {
-                0 => $"the nearest enemy minion is {nearest:0} units away",
-                1 => "an enemy minion is within a caster minion's reach of you",
-                var n => $"{n} enemy minions are within a caster minion's reach of you",
-            };
-            var stand = minions.AheadOfOurFrontUnits switch
-            {
-                > 0 and var ahead => $" and you stand {ahead:0} units in front of your own minions",
-                null when minions.Ours == 0 => " and none of your own minions is on the screen to take the hits",
-                _ => "",
-            };
-            var reason = $"{reach}{stand}; a good player stands behind their own minions' front";
-            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason));
-            Remember($"stepped back {direction}, out of the enemy minions", asked);
-        });
+        if (_point is not { } point)
+            return null;
+        var level = self?.Level;
+        _firstLevelAsked ??= level;
+        return new SkillPointFacts(level, point.Slots, point.Slots.Contains("R"), _firstLevelAsked,
+            Math.Max(0, Math.Round(now - point.Since, 1)));
     }
 
     // --- Basic attacks: a last hit, or a trade ---
@@ -697,22 +609,22 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private const int MinionTargets = 4;
 
     /// <summary>
-    /// Asks about a player with something to attack, when there is something
-    /// to ask: alive, placed on the map, and an enemy minion whose bar was
-    /// read or a visible enemy champion within (or a step or two beyond) the
-    /// player's basic-attack range. Whether an attack is worth it -- a last
-    /// hit, a trade, clearing the wave -- and on which target are the model's
-    /// calls, from the bars, distances and healths in the state; a yes is one
-    /// right-click on the target, the order that has the champion attack it.
-    /// One in flight at a time, and no more often than
-    /// <see cref="JevOptions.AttackAskEverySeconds"/>.
+    /// Offered while the player is alive and placed with something to
+    /// attack: an enemy minion whose bar was read, or a visible enemy
+    /// champion, within (or a step or two beyond) the player's basic-attack
+    /// range. Not offered for <see cref="JevOptions.AttackEverySeconds"/>
+    /// after the coach's last attack, which the champion is still carrying
+    /// out. Whether an attack is worth it -- a last hit, a trade, clearing the
+    /// wave -- is the root's call, and which target the follow-up's; a pick
+    /// is one right-click on the target, the order that has the champion
+    /// attack it.
     /// </summary>
-    private void AskAttack(FrameEnvelope frame, ChampionRow self)
+    private Branch? Attack(FrameEnvelope frame, ChampionRow self, double asked)
     {
-        if (_askingAttack || frame.VideoTime - _lastAttackAskAt < _options.AttackAskEverySeconds)
-            return;
         if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
-            return;
+            return null;
+        if (frame.VideoTime - _lastAttackAt < _options.AttackEverySeconds)
+            return null;
         var range = AbilityKits.AttackRange(self.Champion);
         var reach = (range ?? ReachWithoutARange) + ApproachUnits;
 
@@ -747,34 +659,24 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 $"{champion} is {distance:0} units {Direction(self, row)} with {health}, {InReach(inRange)}; a good player would attack them now");
         }
         if (targets.Count == 0)
-            return;
+            return null;
 
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        var questions = new Questions().Noul("attack", CoachQuestions.Attack,
-            yes: "a good player would right-click an enemy now: a minion one attack finishes, a trade that is theirs, or a wave to clear",
-            no: "nothing in reach is worth an attack yet, the trade is not theirs, or the coach just ordered this attack");
-        if (targets.Count > 1)
-            questions.Choice("target", CoachQuestions.AttackTarget, criteria);
-
-        _askingAttack = true;
-        _lastAttackAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("attack", moment, questions, asked, NowRequest, released: () => _askingAttack = false, answered: response =>
-        {
-            if (!response.TryGet<NoulAnswer>("attack", out var attack) || !attack!.IsYes(_options.YesAt))
-                return;
-            var chosen = targets.Count == 1 ? targets.Keys.Single()
-                : response.TryGet<ChoiceAnswer>("target", out var pick) ? pick!.Choice : null;
-            if (chosen is null || !targets.TryGetValue(chosen, out var target))
-                return;
-            // World y grows north, screen y grows down: flip for the click.
-            var (dx, dy) = (target.X - x, -(target.Y - y));
-            var length = double.Hypot(dx, dy);
-            var (ux, uy) = length < 1 ? (0.0, 0.0) : (dx / length, dy / length);
-            var direction = length < 1 ? "where you stand" : ScreenDirections.Name(dx, dy);
-            _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target });
-            Remember($"attacked {target.Target.Name}", asked);
-        });
+        return new Branch("attack", CoachQuestions.AttackOption,
+            targets.Count > 1 ? q => q.Choice("target", CoachQuestions.AttackTarget, criteria) : null,
+            response =>
+            {
+                if (Picked(response, "target", targets.Keys) is not { } chosen)
+                    return;
+                var target = targets[chosen];
+                // World y grows north, screen y grows down: flip for the click.
+                var (dx, dy) = (target.X - x, -(target.Y - y));
+                var length = double.Hypot(dx, dy);
+                var (ux, uy) = length < 1 ? (0.0, 0.0) : (dx / length, dy / length);
+                var direction = length < 1 ? "where you stand" : ScreenDirections.Name(dx, dy);
+                _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target });
+                _lastAttackAt = asked;
+                Remember($"attacked {target.Target.Name}", asked);
+            });
 
         static string InReach(bool? inRange) => inRange switch
         {
@@ -788,7 +690,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// The enemy minions on the player's screen near enough to attack, or a
     /// step or two beyond, whose bars could be read, lowest bar first, with
     /// where each stands in world units. Named "minion 1" and on in that
-    /// order: the names the attack question's options and the state share.
+    /// order: the names the attack follow-up's options and the state share.
     /// </summary>
     private (MinionTarget Fact, double X, double Y)[] NearMinions(FrameEnvelope frame, ChampionRow self)
     {
@@ -817,6 +719,203 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             .ToArray();
     }
 
+    // --- In the lane: out of the enemy wave ---
+
+    /// <summary>
+    /// How far back down the lane a step out of the enemy wave aims. The
+    /// recording clicks a sidestep a fixed distance from the player's model,
+    /// so this sets only the direction: along the lane toward home, not
+    /// straight at the nexus across the map.
+    /// </summary>
+    private const double BackStepUnits = 500;
+
+    /// <summary>
+    /// Offered while the player is alive, standing in a lane, with an enemy
+    /// minion's bar read and placed near them, and no movement click in the
+    /// last <see cref="JevOptions.MoveEverySeconds"/>. Whether they stand
+    /// too far forward is the root's call, from <see cref="Moment.Minions"/>;
+    /// a pick is one sidestep back down the lane toward their own nexus.
+    /// </summary>
+    private Branch? StepBack(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || RiftMap.LaneOf(x, y) is not { } lane)
+            return null;
+        if (Stepping(frame.VideoTime) || moment.Minions is not { NearestTheirsUnits: { } nearest } minions)
+            return null;
+
+        return new Branch("step_back", CoachQuestions.StepBackOption, null, _ =>
+        {
+            var (_, progress) = RiftMap.Along(lane, x, y);
+            var behind = RiftMap.At(lane, progress - BackStepUnits / RiftMap.Length(lane));
+            // World y grows north, screen y grows down: flip for the step.
+            var (dx, dy) = (behind.X - x, -(behind.Y - y));
+            var length = double.Hypot(dx, dy);
+            if (length == 0)
+                return;
+            var direction = ScreenDirections.Name(dx, dy);
+            var reach = minions.TheirsWithinCasterRange switch
+            {
+                0 => $"the nearest enemy minion is {nearest:0} units away",
+                1 => "an enemy minion is within a caster minion's reach of you",
+                var n => $"{n} enemy minions are within a caster minion's reach of you",
+            };
+            var stand = minions.AheadOfOurFrontUnits switch
+            {
+                > 0 and var ahead => $" and you stand {ahead:0} units in front of your own minions",
+                null when minions.Ours == 0 => " and none of your own minions is on the screen to take the hits",
+                _ => "",
+            };
+            var reason = $"{reach}{stand}; a good player stands behind their own minions' front";
+            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason));
+            _lastMoveAt = asked;
+            Remember($"stepped back {direction}, out of the enemy minions", asked);
+        });
+    }
+
+    // --- Away from the action: would a good player be heading to lane? ---
+
+    /// <summary>
+    /// Offered while the player is alive and placed on the map, the game
+    /// clock is running (before it the player cannot move), and no movement
+    /// click came in the last <see cref="JevOptions.MoveEverySeconds"/>:
+    /// whether they stand or walk, and whatever the coach's last step was.
+    /// Whether they belong somewhere else is the root's call and which lane
+    /// the follow-up's; a pick is one step on the ground toward where that
+    /// lane's waves meet when the minimap shows both, toward the enemy's
+    /// front when it is alone at one of the player's turrets, and otherwise
+    /// toward where the lane is played (<see cref="RiftMap.LaningSpot"/>).
+    /// The trip is a string of such steps, one a second, each decided afresh.
+    /// </summary>
+    private Branch? WalkToLane(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || frame.GameTime is null)
+            return null;
+        if (Stepping(frame.VideoTime) || moment.Whereabouts is not { } whereabouts)
+            return null;
+
+        var criteria = new ChoiceCriteria();
+        foreach (var lane in whereabouts.Lanes)
+        {
+            var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
+            criteria[lane.Lane] = (lane.ScreenDirection is { } direction
+                ? $"{lane.Lane} lane: {lane.DistanceUnits:0} units away, {direction} on the screen; allies there: {allies}"
+                : $"{lane.Lane} lane: the player is standing in it; allies there: {allies}")
+                + DescribeWave(lane.Wave);
+        }
+        return new Branch("walk_to_lane", CoachQuestions.WalkToLaneOption,
+            q => q.Choice("lane", CoachQuestions.Lane, criteria),
+            response =>
+            {
+                if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
+                    return;
+                // A step toward where the lane's waves meet when the minimap shows
+                // both, toward the enemy's front when it is alone at one of the
+                // player's turrets, and otherwise toward where the lane is played --
+                // never its nearest point, which from base is only its mouth.
+                var facts = whereabouts.Lanes.First(l => l.Lane == lane.Choice).Wave;
+                var wave = facts?.MeetAt
+                    ?? (facts?.TheirFront is { } front && RiftMap.AtOurTurret(lane.Choice, front) ? front : null);
+                var spot = wave is { } at ? RiftMap.At(lane.Choice, at) : RiftMap.LaningSpot(lane.Choice);
+                // World y grows north, screen y grows down: flip for the step.
+                var (dx, dy) = (spot.X - x, -(spot.Y - y));
+                var length = double.Hypot(dx, dy);
+                if (length <= RiftMap.LaneHalfWidth)
+                    return;   // already where the walk would go: nothing to demonstrate
+                var direction = ScreenDirections.Name(dx, dy);
+                var clock = moment.GameClock is { } time ? $" at {time}" : "";
+                var to = wave is null ? $"{lane.Choice} lane" : $"{lane.Choice} lane's minion wave";
+                var where = whereabouts.StoodStillForSeconds >= 1
+                    ? $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}"
+                    : $"you are in {whereabouts.Place}{clock}";
+                var reason = $"{where}; a good player would be on the way to {to} ({length:0} units {direction})";
+                _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+                {
+                    Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
+                    DistanceUnits = length,
+                });
+                _lastMoveAt = asked;
+                Remember($"stepped toward {lane.Choice} lane", asked);
+            });
+    }
+
+    /// <summary>A lane's minimap minions, as an option of the lane follow-up says them.</summary>
+    private static string DescribeWave(WaveFacts? wave)
+    {
+        if (wave is null)
+            return "";
+        if (wave is { OurMinions: 0, TheirMinions: 0 })
+            return "; the minimap shows no minions in it";
+        var said = $"; minions on the minimap: {wave.OurMinions} ours, {wave.TheirMinions} theirs";
+        if (wave.TheirFrontPlace is { } place)
+            said += $", theirs {place}";
+        if (wave.MeetAt is { } meet)
+            return said + $", meeting {meet:0.00} of the way to the enemy nexus, "
+                + (wave.MeetScreenDirection is { } way ? $"{wave.MeetUnitsAway:0} units away, {way} on the screen" : "where the player stands");
+        return said + (wave.OurFront is { } ours ? $", ours pushed {ours:0.00} of the way" : $", theirs pushed to {wave.TheirFront:0.00} of the way");
+    }
+
+    // --- A wave at the player's turret: go and catch it ---
+
+    /// <summary>
+    /// How near an enemy wave the player already is when they are at it: about
+    /// a screen's width, inside which the wave is already in view.
+    /// </summary>
+    private const double AtTheWaveUnits = 1500;
+
+    /// <summary>
+    /// Offered while the player is alive and placed, an enemy wave the
+    /// minimap shows at one of their own turrets is more than
+    /// <see cref="AtTheWaveUnits"/> away, and no movement click came in the
+    /// last <see cref="JevOptions.MoveEverySeconds"/>. Whether it is theirs
+    /// to catch is the root's call, and which one when more than one lane is
+    /// crashing the follow-up's; a pick is one step on the ground toward that
+    /// wave's front, and the next is decided afresh.
+    /// </summary>
+    private Branch? CatchWave(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
+            return null;
+        if (Stepping(frame.VideoTime) || moment.Whereabouts is not { } whereabouts)
+            return null;
+        var crashing = whereabouts.Lanes
+            .Where(l => l.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits }
+                && RiftMap.AtOurTurret(l.Lane, front))
+            .ToArray();
+        if (crashing.Length == 0)
+            return null;
+
+        var criteria = new ChoiceCriteria();
+        foreach (var lane in crashing)
+        {
+            var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
+            criteria[lane.Lane] = $"{lane.Lane} lane: the enemy wave is {lane.Wave!.TheirFrontPlace}, "
+                + $"{lane.Wave.TheirFrontUnitsAway:0} units away, {lane.Wave.TheirFrontScreenDirection} on the screen; allies there: {allies}";
+        }
+        return new Branch("catch_wave", CoachQuestions.CatchWaveOption,
+            crashing.Length > 1 ? q => q.Choice("tend_lane", CoachQuestions.TendLane, criteria) : null,
+            response =>
+            {
+                var chosen = Picked(response, "tend_lane", crashing.Select(l => l.Lane).ToArray());
+                if (crashing.FirstOrDefault(l => l.Lane == chosen) is not { Wave: { TheirFront: { } front } wave } lane)
+                    return;
+                var spot = RiftMap.At(lane.Lane, front);
+                // World y grows north, screen y grows down: flip for the step.
+                var (dx, dy) = (spot.X - x, -(spot.Y - y));
+                var length = double.Hypot(dx, dy);
+                var direction = ScreenDirections.Name(dx, dy);
+                var alone = lane.AlliesThere.Count == 0 ? " with none of your team there" : "";
+                var reason = $"the enemy wave is {wave.TheirFrontPlace} in {lane.Lane} lane{alone}; "
+                    + $"a good player would be on the way to catch it ({length:0} units {direction})";
+                _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+                {
+                    Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
+                    DistanceUnits = length,
+                });
+                _lastMoveAt = asked;
+                Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);
+            });
+    }
+
     // --- Brush: out of sight ---
 
     /// <summary>
@@ -830,73 +929,131 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private const int BrushOptions = 3;
 
     /// <summary>
-    /// Asks about a player outside the brush, when there is something to ask:
-    /// alive, placed on the map, with a game clock running, standing in no
-    /// patch, and one within <see cref="BrushNearUnits"/>. Asked whether they
-    /// stand or walk. Whether hiding is worth it -- out of an enemy laner's
-    /// sight, breaking a chase, waiting out of the open -- and which patch are
-    /// the model's calls, from <see cref="Moment.Brush"/>; a yes is one short
-    /// step on the ground toward the nearest point well inside the grass, and
-    /// the next second is asked afresh. One in flight at a time, and no more often
-    /// than <see cref="JevOptions.MoveAskEverySeconds"/>.
+    /// Offered while the player is alive and placed outside the brush, the
+    /// game clock is running, a patch lies within <see cref="BrushNearUnits"/>,
+    /// and no movement click came in the last
+    /// <see cref="JevOptions.MoveEverySeconds"/>. Whether hiding is worth it
+    /// -- out of an enemy laner's sight, breaking a chase, waiting out of the
+    /// open -- is the root's call, from <see cref="Moment.Brush"/>, and which
+    /// patch the follow-up's; a pick is one step on the ground toward the
+    /// nearest point well inside the grass, and the next is decided afresh.
     /// </summary>
-    private void AskBrush(FrameEnvelope frame, ChampionRow self)
+    private Branch? HideInBrush(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (_askingBrush || frame.VideoTime - _lastBrushAskAt < _options.MoveAskEverySeconds)
-            return;
         if (self.Alive == false || frame.GameTime is null || self is not { WorldX: { } x, WorldY: { } y })
-            return;
-        if (RiftBrush.At(x, y) is not null)
-            return;
+            return null;
+        if (Stepping(frame.VideoTime) || RiftBrush.At(x, y) is not null)
+            return null;
         var near = NearBrushes(frame, self);
         if (near.Length == 0)
-            return;
+            return null;
 
-        var moment = Describe(frame, self, occasion: null, frame.VideoTime);
-        var questions = new Questions().Noul("hide", CoachQuestions.Hide,
-            yes: "a good player would be standing in that brush now, out of the enemy's sight, at no cost",
-            no: "every patch near is a face-check, they are on their way somewhere, or nobody is there to hide from");
-        if (near.Length > 1)
-        {
-            var criteria = new ChoiceCriteria();
-            foreach (var (fact, _) in near)
-                criteria[fact.Name] = DescribeBrush(fact);
-            questions.Choice("brush", CoachQuestions.WhichBrush, criteria);
-        }
-
-        _askingBrush = true;
-        _lastBrushAskAt = frame.VideoTime;
-        var asked = frame.VideoTime;
-        Ask("brush", moment, questions, asked, NowRequest, released: () => _askingBrush = false, answered: response =>
-        {
-            if (!response.TryGet<NoulAnswer>("hide", out var hide) || !hide!.IsYes(_options.YesAt))
-                return;
-            var chosen = near.Length == 1 ? near[0].Fact.Name
-                : response.TryGet<ChoiceAnswer>("brush", out var pick) ? pick!.Choice : null;
-            if (near.FirstOrDefault(n => n.Fact.Name == chosen) is not { Patch: { } patch } brush)
-                return;
-            var spot = patch.Inside(x, y);
-            // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (spot.X - x, -(spot.Y - y));
-            var length = double.Hypot(dx, dy);
-            if (length < 1)
-                return;
-            var direction = ScreenDirections.Name(dx, dy);
-            var seen = moment.VisibleEnemies.Count switch
+        var criteria = new ChoiceCriteria();
+        foreach (var (fact, _) in near)
+            criteria[fact.Name] = DescribeBrush(fact);
+        return new Branch("hide_in_brush", CoachQuestions.HideInBrushOption,
+            near.Length > 1 ? q => q.Choice("brush", CoachQuestions.WhichBrush, criteria) : null,
+            response =>
             {
-                0 => "",
-                1 => $" and {moment.VisibleEnemies[0].Champion} can see you out here",
-                _ => $" and {string.Join(", ", moment.VisibleEnemies.Select(e => e.Champion))} can see you out here",
-            };
-            if (seen.Length == 0 && moment.Whereabouts is { StoodStillForSeconds: >= 2 and var still })
-                seen = $" and you have stood in the open for {still:0.0}s";
-            var reason = $"{patch.Name} is {brush.Fact.DistanceUnits:0} units {direction}{seen}; "
-                + "a good player would stand in the brush, where no enemy outside it can see them";
-            _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
-            {
-                Destination = new Destination(patch.Name, spot.X, spot.Y),
+                var chosen = Picked(response, "brush", near.Select(n => n.Fact.Name).ToArray());
+                if (near.FirstOrDefault(n => n.Fact.Name == chosen) is not { Patch: { } patch } brush)
+                    return;
+                var spot = patch.Inside(x, y);
+                // World y grows north, screen y grows down: flip for the step.
+                var (dx, dy) = (spot.X - x, -(spot.Y - y));
+                var length = double.Hypot(dx, dy);
+                if (length < 1)
+                    return;
+                var direction = ScreenDirections.Name(dx, dy);
+                var seen = moment.VisibleEnemies.Count switch
+                {
+                    0 => "",
+                    1 => $" and {moment.VisibleEnemies[0].Champion} can see you out here",
+                    _ => $" and {string.Join(", ", moment.VisibleEnemies.Select(e => e.Champion))} can see you out here",
+                };
+                if (seen.Length == 0 && moment.Whereabouts is { StoodStillForSeconds: >= 2 and var still })
+                    seen = $" and you have stood in the open for {still:0.0}s";
+                var reason = $"{patch.Name} is {brush.Fact.DistanceUnits:0} units {direction}{seen}; "
+                    + "a good player would stand in the brush, where no enemy outside it can see them";
+                _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+                {
+                    Destination = new Destination(patch.Name, spot.X, spot.Y),
+                    DistanceUnits = length,
+                });
+                _lastMoveAt = asked;
+                Remember($"stepped toward {patch.Name}", asked);
             });
-            Remember($"stepped toward {patch.Name}", asked);
+    }
+
+    // --- Said, not yet done: running, falling back, recalling, buying ---
+
+    /// <summary>
+    /// Offered while the player is alive and placed with an enemy champion on
+    /// the screen. The ghost's hands have no move for it yet, so a pick is a
+    /// cue naming it, said no more often than
+    /// <see cref="JevOptions.SayEverySeconds"/>.
+    /// </summary>
+    private Branch? RunAway(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
+        self.Alive != false && self is { WorldX: not null, WorldY: not null } && moment.VisibleEnemies.Count > 0
+            ? Said(frame, "run_away", CoachQuestions.RunAwayOption, "run away", moment, asked)
+            : null;
+
+    /// <summary>
+    /// Offered while the player is alive and placed out of their base with an
+    /// enemy champion on the screen. Said, not yet clicked, as for
+    /// <see cref="RunAway"/>.
+    /// </summary>
+    private Branch? GoToTurret(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
+        self.Alive != false && moment.VisibleEnemies.Count > 0 && moment.Whereabouts is { } where && !AtHome(where.Place)
+            ? Said(frame, "go_to_turret", CoachQuestions.GoToTurretOption, "fallen back to a turret", moment, asked)
+            : null;
+
+    /// <summary>
+    /// Offered while the player is alive and placed out of their base, with
+    /// the game clock running. Said, not yet keyed, as for <see cref="RunAway"/>.
+    /// </summary>
+    private Branch? Recall(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
+        self.Alive != false && frame.GameTime is not null && moment.Whereabouts is { } where && !AtHome(where.Place)
+            ? Said(frame, "recall", CoachQuestions.RecallOption, "recalled", moment, asked)
+            : null;
+
+    /// <summary>
+    /// Offered while the player is alive in the fountain, where the shop is.
+    /// Said, not yet done, as for <see cref="RunAway"/>.
+    /// </summary>
+    private Branch? Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
+        self.Alive != false && moment.Whereabouts is { Place: RiftMap.FountainPlace }
+            ? Said(frame, "buy", CoachQuestions.BuyOption, "bought", moment, asked)
+            : null;
+
+    private static bool AtHome(string place) => place is RiftMap.FountainPlace or RiftMap.BasePlace;
+
+    /// <summary>
+    /// A branch the ghost's hands have no move for yet: a pick is a cue
+    /// naming what a good player would have done, with where the player is
+    /// and what they face, and the coach remembers saying it. Not offered for
+    /// <see cref="JevOptions.SayEverySeconds"/> after it was last said, so a
+    /// moment that goes on being right for it is not said four times a second.
+    /// </summary>
+    private Branch? Said(FrameEnvelope frame, string option, string criterion, string done, Moment moment, double asked)
+    {
+        if (_lastSaid.TryGetValue(option, out var at) && frame.VideoTime - at < _options.SayEverySeconds)
+            return null;
+        return new Branch(option, criterion, null, _ =>
+        {
+            List<string> facts = [];
+            if (moment.Whereabouts is { } where)
+                facts.Add($"you are in {where.Place}{(moment.GameClock is { } time ? $" at {time}" : "")}");
+            if (moment.Player?.Health is { } health)
+                facts.Add($"{health:0%} health");
+            facts.Add(moment.VisibleEnemies.Count switch
+            {
+                0 => "no enemy on the screen",
+                _ => string.Join(", ", moment.VisibleEnemies.Select(e => $"{e.Champion} {e.DistanceUnits:0} units {e.ScreenDirection}")),
+            });
+            _cues.Add(new CoachCue(asked, 2, $"coach would have {done} here: {string.Join("; ", facts)}"));
+            _lastSaid[option] = asked;
+            Remember($"said {option.Replace('_', ' ')}", asked);
         });
     }
 
@@ -1053,6 +1210,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 || !response.TryGet<ChoiceAnswer>("side", out var side) || !sides.TryGetValue(side!.Choice, out var way))
                 return;
             _moves.Add(new MoveStep(stamp, side.Choice, way.Dx, way.Dy, 3, sentence));
+            _lastMoveAt = Math.Max(_lastMoveAt, stamp);
             Remember($"stepped {side.Choice}", stamp);
         });
     }
@@ -1152,19 +1310,17 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             });
     }
 
-    // --- A skill point waiting: which ability it goes into ---
+    // --- A skill point waiting: noted for the root to offer ---
 
     /// <summary>
     /// The HUD's level-up chevrons lighting: a point to spend, and the slots
     /// the game would accept it in, read off the buttons themselves (the
-    /// ultimate lights only at 6, 11 and 16, and a full ability never). Whether
-    /// to spend it now and which ability takes it are the model's calls; the
-    /// code offers exactly the lit slots, says of each what it is, whether it
-    /// has been seen cast, and how many points the coach itself has put in it
-    /// since it began watching, and turns a yes into the level-up chord, Ctrl
-    /// and the slot. A point announced again with a new set (the ultimate
-    /// lighting at 6 under a point still held) is a new question; the set
-    /// the coach already knows, announced again, is not.
+    /// ultimate lights only at 6, 11 and 16, and a full ability never). It is
+    /// noted, not asked about: the root offers <c>level_up</c> while it waits
+    /// (<see cref="LevelUp"/>). A point announced again with a new set (the
+    /// ultimate lighting at 6 under a point still held) is a new point, and an
+    /// answer about the old one is dropped; the set the coach already knows,
+    /// announced again, changes nothing.
     /// </summary>
     private void OnSkillPoint(GameEvent evt)
     {
@@ -1175,96 +1331,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             return;
         _point = (_point?.Since ?? evt.VideoTime, slots, ++_pointId);
         _pointAsked = false;
-        AskPoint(evt.VideoTime, slots, again: false);
     }
 
     /// <summary>
-    /// A point the HUD still shows waiting after the coach said to hold it --
-    /// the first point of a game, against an invade -- is asked about again
-    /// every <see cref="JevOptions.PointAskEverySeconds"/>, with how long it
-    /// has waited, until the coach says spend or the player spends it. Once
-    /// the coach has pressed the chord it has said its piece. The slots come
-    /// off the row when it carries them, since the set can change under a
-    /// held point before the feed announces it. A point taken from a resync
-    /// baseline, which the feed will not announce, is first asked about here.
+    /// The slots a waiting point lights, off the self row when it carries
+    /// them, since the set can change under a held point before the feed
+    /// announces it. A new set is a new point.
     /// </summary>
-    private void AskHeldPoint(FrameEnvelope frame, ChampionRow self)
+    private void TrackPoint(ChampionRow self)
     {
-        if (_point is not { } point || _pressedFor.Count > 0)
+        if (_point is not { } point || LitSlots(self.Learnable) is not { Length: > 0 } lit || lit.SequenceEqual(point.Slots))
             return;
-        if (_askingPoint || frame.VideoTime - _lastPointAskAt < _options.PointAskEverySeconds)
-            return;
-        var slots = LitSlots(self.Learnable) is { Length: > 0 } lit ? lit : point.Slots;
-        if (!slots.SequenceEqual(point.Slots))
-            _point = point with { Slots = slots };
-        AskPoint(frame.VideoTime, slots, again: _pointAsked);
+        _point = (point.Since, lit, ++_pointId);
     }
 
     /// <summary>The feed's slot strings in the HUD's order, anything unrecognised left out.</summary>
     private static string[] LitSlots(string[]? slots) =>
         slots is null ? [] : AbilityKits.Slots.Where(slots.Contains).ToArray();
-
-    private void AskPoint(double videoTime, string[] slots, bool again)
-    {
-        var point = _point!.Value;
-        var self = Self();
-        var level = self?.Level;
-        _firstLevelAsked ??= level;
-        var held = Math.Round(videoTime - point.Since, 1);
-        var occasion = new LevelOccasion(
-            again ? "you have held an ability point" : "you have an ability point to spend",
-            level, slots.Contains("R"), _firstLevelAsked, held);
-        var moment = Describe(_frame, self, occasion, videoTime);
-
-        var criteria = new ChoiceCriteria();
-        foreach (var slot in slots)
-        {
-            var points = _pointsPlaced.GetValueOrDefault(slot);
-            var known = AbilityKits.For(self?.Champion, slot);
-            var what = known?.Kind ?? "what it is is not on file";
-            var order = known?.UsuallyMaxed is { } place
-                ? $"the ability this champion usually maxes {place}"
-                : slot == "R" ? "the ultimate, which takes a point at levels 6, 11 and 16, and the HUD offers it now: it comes before any other ability"
-                : "its place in this champion's usual skill order is not on file";
-            var seen = _casts.ContainsKey(slot)
-                ? "seen cast this game, so it holds a point already"
-                : "never seen cast this game, so it may hold no point yet";
-            var placed = points switch
-            {
-                0 => "the coach has put no point in it since it began watching",
-                1 => "the coach has put 1 point in it since it began watching",
-                var n => $"the coach has put {n} points in it since it began watching",
-            };
-            criteria[slot] = $"{slot}: {what}; {order}; {seen}; {placed}";
-        }
-        var questions = new Questions()
-            .Noul("spend", CoachQuestions.Spend,
-                yes: "a good player would put the point into an ability right now",
-                no: "a good player would hold the point, which after level one they do not")
-            .Choice("slot", CoachQuestions.Slot, criteria);
-
-        var clock = moment.GameClock is { } time ? $" at {time}" : "";
-        var since = level is { } l ? $"level {l}" : "your last level";
-        _askingPoint = true;
-        _pointAsked = true;
-        _lastPointAskAt = videoTime;
-        Ask("level", moment, questions, videoTime, OccasionRequest, released: () => _askingPoint = false, answered: response =>
-        {
-            if (_point?.Id != point.Id)
-                return;   // spent, or announced anew with another set, since it was asked
-            if (!response.TryGet<NoulAnswer>("spend", out var spend) || !spend!.IsYes(_options.YesAt))
-                return;
-            if (!response.TryGet<ChoiceAnswer>("slot", out var slot) || !criteria.ContainsKey(slot!.Choice))
-                return;
-            var note = AbilityKits.For(self?.Champion, slot.Choice) is { } known ? $" ({known.Kind})" : "";
-            var reason = again
-                ? $"you have held the point from {since} for {held:0.0}s{clock}; a good player would put it in {slot.Choice}{note} by now"
-                : $"you reached {since}{clock}; a good player would put the point in {slot.Choice}{note}";
-            _keys.Add(new KeyPress(videoTime, slot.Choice, 2, reason) { WithControl = true });
-            _pressedFor.Add(slot.Choice);
-            Remember($"put the point in {slot.Choice}", videoTime);
-        });
-    }
 
     /// <summary>
     /// The chevrons clearing: the point went in. If the coach pressed the
@@ -1458,7 +1541,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                         : null,
                 };
             }
-            foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
+            // An enemy is told by its distance and direction from the player,
+            // so a player with no place on the map is told of none.
+            var placed = self is { WorldX: not null, WorldY: not null };
+            foreach (var row in (placed ? Visible(frame, self) : []).OrderBy(r => Distance(self, r)))
             {
                 var distance = Distance(self, row)!.Value;
                 var inRange = AbilityKits.Slots
@@ -1493,6 +1579,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Brush = brush,
             Coach = _recent.Select(r => new RecentAction(r.Did, Math.Round(now - r.At, 1))).ToArray(),
             Occasion = occasion,
+            SkillPoint = SkillPointNow(self, now),
         };
     }
 

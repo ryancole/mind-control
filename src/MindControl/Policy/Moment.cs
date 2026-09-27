@@ -30,7 +30,8 @@ public sealed record Moment
         + "enemy is standing in it is not). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
-        + "have already done recently, so you do not repeat yourself.";
+        + "have already done recently, so you do not repeat yourself; `skill_point`, when present, is an "
+        + "ability point waiting on their HUD to be spent.";
 
     /// <summary>How a state is written on the wire: snake_case, nothing null, nothing escaped that need not be.</summary>
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -52,6 +53,9 @@ public sealed record Moment
     public AttackFacts? Attack { get; init; }
     public BrushFacts? Brush { get; init; }
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
+
+    /// <summary>The ability point the HUD shows waiting, when one is.</summary>
+    public SkillPointFacts? SkillPoint { get; init; }
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
     public object? Occasion { get; init; }
@@ -236,17 +240,18 @@ public sealed record BoltOccasion(
 /// <summary>
 /// A skill point waiting on the player's own HUD: a point to spend.
 /// <see cref="Level"/> is off their nameplate, null when it was not read.
-/// <see cref="UltimateTakesAPoint"/> is whether the ultimate is among the
-/// buttons the HUD lights for it, which it does at levels 6, 11 and 16 and
-/// at no other. <see cref="CoachWatchingSinceLevel"/> is the level of the
+/// <see cref="Lit"/> is the buttons the HUD lights for it, the game's own
+/// answer to which abilities can take it; <see cref="UltimateTakesAPoint"/>
+/// is whether the ultimate is among them, which it is at levels 6, 11 and 16
+/// and at no other. <see cref="CoachWatchingSinceLevel"/> is the level of the
 /// first point the coach saw this game: the points placed before it are in
 /// nobody's count. <see cref="HeldForSeconds"/> is how long the feed has
 /// shown the point waiting; zero when it has just appeared. Which buttons
 /// have been seen cast, and so certainly hold a point already, is in
 /// <see cref="Moment.Abilities"/>.
 /// </summary>
-public sealed record LevelOccasion(
-    string Kind, int? Level, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds);
+public sealed record SkillPointFacts(
+    int? Level, IReadOnlyList<string> Lit, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds);
 
 /// <summary>A shot of the player's that was seen leaving them with an enemy in front of it.</summary>
 public sealed record ShotOccasion(

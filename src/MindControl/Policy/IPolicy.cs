@@ -54,9 +54,9 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// screen space, y down; the recording turns it into a click a fixed distance
 /// from the player's model, which sits at one place on their screen because
 /// the camera is locked. A step with a <see cref="Destination"/> is one leg
-/// of a trip somewhere farther (a lane, a wave, a patch of brush): the same
-/// short click on the ground, aimed that way, and the next leg is asked a
-/// second later. A step with a
+/// of a trip somewhere farther (a lane, a wave, a patch of brush): a longer
+/// click on the ground, aimed that way, or on the place itself once it is
+/// nearer than that, and the next leg is asked a second later. A step with a
 /// <see cref="Target"/> is an attack: the same right-click, on the enemy
 /// minion or champion itself, which the game reads as an order to attack it.
 /// </summary>
@@ -64,6 +64,14 @@ public sealed record MoveStep(double VideoTime, string Direction, double Dx, dou
 {
     /// <summary>Where the coach is heading, when the step is a leg of a trip; null for a sidestep.</summary>
     public Destination? Destination { get; init; }
+
+    /// <summary>
+    /// How far the <see cref="Destination"/> is from the player's model in
+    /// game units when the step is taken; null for a sidestep, or when not
+    /// measured. A leg shorter than a walk's click lands on the place itself
+    /// rather than past it.
+    /// </summary>
+    public double? DistanceUnits { get; init; }
 
     /// <summary>What the coach attacks, when the click is on an enemy; null for a move.</summary>
     public AttackTarget? Target { get; init; }

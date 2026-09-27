@@ -82,9 +82,11 @@ python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --f
 etc/dev.ps1 -- --self Ezreal --audit data/audit.jsonl
 ```
 
-Keep the replay speed modest: the coach asks a question about the moment up
-to four times a video-second and one per event, and Jev's limit is 1,200
-requests a minute. A run at `--speed 4` sits around a third of that.
+Keep the replay speed modest: the coach asks its root question about the
+moment up to four times a video-second, one in flight at a time, and one
+question per event, and Jev's limit is 1,200 requests a minute. With one in
+flight, the root runs at most as fast as Jev answers (about six a wall-second
+at its median latency), whatever the speed.
 
 While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
@@ -92,7 +94,7 @@ turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
 open `http://127.0.0.1:8723/` and the cues appear next to the event log. Every line
 that is advice carries `model`, the Jev release whose answer it is, and the
 panel marks those with a ✦; status and roster lines are the code's own and
-go unmarked. An `asking` line — `{"t":"asking","occasions":["now","bolt"]}` —
+go unmarked. An `asking` line — `{"t":"asking","occasions":["decide","bolt"]}` —
 says which questions are on their way to Jev right now, oldest first, and
 `occasions` is empty once they are all back; it tracks the network, not the
 coaching, so a panel can light a "thinking" indicator off it. It changes
@@ -101,18 +103,78 @@ connected client gets only the latest one. The stream is output-only, like the c
 
 ## Coaching by Jev
 
-Five questions, each asked when there is something to ask about:
+The coaching is a tree of questions with one root. Every quarter of a
+video-second (`AskEverySeconds`), one question in flight at a time, the
+coach is asked *what would a good player do right now?* — a choice among
+the things the moment makes possible:
 
-- **Which button, now.** Whenever the player is alive, an enemy is on their
-  screen, and a button the HUD has shown a cooldown for has counted down, the
-  coach is asked one yes/no per such button: *would a good player press it
-  right now?* A clear yes is a key press:
+| Option | Offered when | A pick is |
+|---|---|---|
+| `level_up` | the HUD shows a skill point waiting (alive or dead) | the level-up chord, Ctrl and the slot |
+| `run_away` | an enemy champion is on the screen | said, not yet done |
+| `use_ability` | a button the HUD has shown come back is up, with an enemy on the screen | a key press |
+| `attack` | an enemy minion or champion is within (or a step past) basic-attack range | a right-click on it |
+| `step_back` | in a lane with an enemy minion near | a sidestep back down the lane |
+| `go_to_turret` | an enemy champion is on the screen, out of the base | said, not yet done |
+| `hide_in_brush` | a patch of brush is near and they stand in none | a step into it |
+| `catch_wave` | an enemy wave is at one of their turrets, away from them | a step toward it |
+| `walk_to_lane` | the game clock is running | a step toward the lane's wave |
+| `recall` | out of the base, with the clock running | said, not yet done |
+| `buy` | in the fountain | said, not yet done |
+| `carry_on` | always, first | no order |
 
-  ```
-  key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up  recorded: KeyDown Q (0x14), KeyUp Q (0x14)
-  ```
+Each option carries its own rubric (the `*Option` texts in
+`CoachQuestions`), and the root's rubric says which wins where more than one
+is right, in the order of the table. The follow-ups a branch needs — *which
+ability?*, *which target?*, *which lane?*, *which lane's wave?*, *which
+brush?*, *which ability takes the point?* — go in the same request, answered
+whatever the root picks and read only for the branch it picked, since Jev
+answers every question on its own and a second round trip would cost a
+tenth of a second. So the coach does one thing at a time: a walk is never
+undone by an attack ordered the same second. A pick below `DecideAt` (0.4)
+is no order.
 
-  Asked at most four times a video-second, one question in flight at a time.
+```
+key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up  recorded: KeyDown Q (0x14), KeyUp Q (0x14)
+step[p2]: coach would have stepped right toward bot lane here: you are in the fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, MouseButtons Right, MouseButtons None
+key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
+cue[p2]: coach would have recalled here: you are in bot lane at 5:00; 20% health; no enemy on the screen
+```
+
+Movement is paced like a player's: a good player gets around in short
+right-clicks on the ground, a fresh one about every second, so for
+`MoveEverySeconds` (1) after a step (a dodge included) no other step is
+offered, and then one is again whether the player stands or walks — a step
+still being walked is no reason to hold the next. A walk's click lands 300px
+from the player's model at 1080p, or on the spot itself once it is nearer, in
+the game window, never on the minimap. An attack is not offered again for
+`AttackEverySeconds` (1), since one right-click keeps a champion attacking;
+and what the ghost's hands cannot yet do is not said again for
+`SayEverySeconds` (5). A walk to lane goes where the lane's waves meet when
+the minimap shows both, to the enemy's front when it is alone at one of the
+player's turrets, and otherwise to where the lane is played. Whether standing
+somewhere is idling (in the fountain after the clock has started, yes; in lane
+waiting for minions, no) is the rubric's call, not a threshold in code. The
+walks need a world-calibrated feed, since the map is read in game units.
+
+A skill point (`skill_point` events, off the level-up chevrons the HUD draws
+above Q/W/E/R) is noted and offered as `level_up` while it waits, with
+*which ability takes it?* a choice among exactly the buttons the HUD lights —
+the game's own answer to which abilities can take a point, so the ultimate is
+offered at 6, 11 and 16 and a full ability never — each described by what the
+ability is, its place in the champion's usual skill order when `AbilityKits`
+has one, whether it has been seen cast this game, and how many points the
+coach has put in it since it began watching. Holding the first point of a
+game, against an invade, is the rubric's call: the root is asked again every
+quarter second with how long the point has waited. The coach's own placement
+is counted only when the HUD shows the point gone in (`skill_spent`, whose
+`held_for` is logged as a cue); a point the player spends themselves is in
+nobody's count, and an answer that arrives after the player has already spent
+the point is dropped. The reader is off while the player is dead, so a point
+spent from the death screen is reported on respawn.
+
+Two events are asked about as they come, on top of the root:
+
 - **A bolt at the player** (spectral-sight's `threat` events): *is this worth
   a remark?* and *would a good player have stepped?*, plus *which way?* as a
   choice between the two sides of the bolt's line, each described by whether
@@ -126,56 +188,6 @@ Five questions, each asked when there is something to ask about:
 - **A shot of the player's** (`skillshot` events, only those seen leaving
   them with an enemy in front): *given the recent shots, is aim worth a word?*
   A yes is a cue naming where the bolt passed and the run it made.
-- **Away from the action.** Every second with the game clock running,
-  whether the player stands or walks, the coach is asked *would a good
-  player be heading to a lane right now, from here?* and *which lane?*, a
-  choice among the three, each described by its distance and screen
-  direction from where they are and the allies already in it. A yes is one
-  short step toward that lane's wave (or where the lane is played): a
-  right-click on the ground 200px from the player's model, in the game
-  window, never on the minimap. A good player gets around in short clicks, a
-  fresh one about every second, so the next second is asked afresh and a
-  step still being walked is no reason to hold the next one:
-
-  ```
-  step[p2]: coach would have stepped right toward bot lane here: you are in the fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, MouseButtons Right, MouseButtons None
-  ```
-
-  The other movement questions (step back out of the enemy wave, catch a
-  wave at your turret, step into the brush) run on the same one-second
-  pace (`MoveAskEverySeconds`) and click the same short steps.
-
-  Whether standing somewhere is idling (in the fountain after the clock has
-  started, yes; in lane waiting for minions, no) is the rubric's call, not a
-  threshold in code. Needs a world-calibrated feed, since the map is read
-  in game units.
-- **A skill point waiting** (`skill_point` events, off the level-up
-  chevrons the HUD draws above Q/W/E/R): *would a good player spend the
-  point right now?* and *which ability takes it?*, a choice among exactly
-  the buttons the HUD lights — the game's own answer to which abilities can
-  take a point, so the ultimate is offered at 6, 11 and 16 and a full
-  ability never — each described by what the ability is, its place in the
-  champion's usual skill order when `AbilityKits` has one, whether it has
-  been seen cast this game (one never seen cast may hold no point yet), and
-  how many points the coach has put in it since it began watching. A yes is
-  the level-up chord, Ctrl held around the slot:
-
-  ```
-  key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
-  ```
-
-  Which ability takes the point, and whether to hold it, are the rubric's
-  calls. A point the coach said to hold — the first of a game, at level one,
-  against an invade — is asked about again every few seconds
-  (`PointAskEverySeconds`) with how long it has waited, until the coach says
-  spend or the player spends it. The coach's own placement is counted only
-  when the HUD shows the point gone in (`skill_spent`, whose `held_for` is
-  logged as a cue); a point the player spends themselves is in nobody's
-  count, and an answer that arrives after the player has already spent the
-  point is dropped. The level is the self row's, off the nameplate, told to
-  the model when it was read; the point itself needs only the ability HUD.
-  The reader is off while the player is dead, so a point spent from the
-  death screen is reported on respawn.
 
 What the model is told is the `Moment`: the player's champion, health, mana
 and level; each button's status with what it is and how far it reaches
@@ -185,21 +197,21 @@ player's own team; where the player stands on the map and how long they have
 stood there, with each lane's distance, direction and allies (`RiftMap`, the
 lanes as the lines their turrets lie on -- geometry, not a gate); what the
 coach itself did in the last few seconds; and the event in question, with its
-measurements (for a waiting point: the level, whether the ultimate is among
-the buttons the HUD lights, and how long it has waited). Everything is a measurement the
+measurements; and a skill point waiting, when one is (the level, the buttons
+the HUD lights for it, whether the ultimate is among them, and how long it has
+waited). Everything is a measurement the
 code made — the model is asked for judgement, never for arithmetic — and the
 fair-play boundary is that this state is built from visible rows only.
 
 The rubrics are the text in `CoachQuestions`; the thresholds that used to be
 code (how long an enemy sits in range before a throw, how many wide shots
-make a run) are sentences there now. The knobs that remain are plumbing: `YesAt`,
-the probability below which a yes is a no (0.6 — a yes with a margin, and
-since the coach is told what it just did, a press drops the next answer to
-about 0.35, so a lower bar does not mean a spammed key); `AskEverySeconds`,
-the floor between questions about the moment (0.25); `MoveAskEverySeconds`,
-the same for each movement question, asked whether the player stands or
-walks (1); `StillRadiusUnits`, how far the minimap read
-may jitter and still be the same spot (100); and `--model`, pinned to
+make a run) are sentences there now. The knobs that remain are plumbing:
+`DecideAt`, the probability below which the root's pick is no order (0.4,
+uncalibrated); `YesAt`, the same for the events' yes/no questions (0.6 — a yes
+with a margin); `AskEverySeconds`, the floor between root questions (0.25);
+`MoveEverySeconds`, `AttackEverySeconds` and `SayEverySeconds`, the pace of
+steps, attacks and cues (1, 1 and 5); `StillRadiusUnits`, how far the minimap
+read may jitter and still be the same spot (100); and `--model`, pinned to
 `jev-1.13.0` because a threshold tuned against one release's calibration
 should not move with `jev-latest`.
 
@@ -236,8 +248,11 @@ direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
 place, the camera being locked; `--anchor <x,y>` names it (default: the
 screen's centre). A step toward somewhere farther — a lane, a wave, a
-patch of brush — is the same short click, aimed that way: the coach walks
-in steps, one a second, and never clicks the minimap. It is a recording, not a connection: this tool never opens
+patch of brush — is a longer click aimed that way, 300px at a screen 1080
+tall and scaled by height (400 units, more than a second's walk, so the
+model does not stop between clicks), or on the place itself once it is
+nearer than that: the coach walks in steps, one a second, and never clicks
+the minimap. It is a recording, not a connection: this tool never opens
 the device. The file stays open for the run, shared for reading, and the
 library's reader opens a file a writer still holds, so misdirection can play
 the recording by path while a run is still appending to it: a read sees every
