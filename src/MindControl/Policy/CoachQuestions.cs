@@ -31,13 +31,15 @@ public static class CoachQuestions
     }
 
     /// <summary>
-    /// Asked while the player stands on one spot: should they be walking to a
-    /// lane instead? The still time, the place and the lanes are in
-    /// `whereabouts`; what counts as idling is decided here, in words.
+    /// Asked every second, standing or walking: should the player be heading
+    /// to a lane from where they are? The still time, the place and the lanes
+    /// are in `whereabouts`; what counts as away from the action is decided
+    /// here, in words.
     /// </summary>
     public const string Walk =
-        "The player has been standing on one spot; `whereabouts` says where, for how long, and how far "
-        + "each lane is. Would a good player in this seat be walking to a lane right now instead? A good "
+        "`whereabouts` says where the player is, how long they have stood on that spot (0 while they move), "
+        + "and how far each lane is. Would a good player in this seat be heading to a lane right now, from "
+        + "here? A good "
         + "player is always near the action: first at the minion wave, where the gold is farmed, and "
         + "otherwise where their team is; standing anywhere else is gold and experience left on the table. "
         + "From about 1:05 the minions march down every lane, a new wave each half minute, so a lane always "
@@ -46,22 +48,21 @@ public static class CoachQuestions
         + "enemy's, the middle of the lane about 0.5) and where the two waves meet, and how far that is from "
         + "the player; an empty one is a lane the minimap shows no minions in. When the lanes carry no `wave`, "
         + "the minions were not read, so read a lane as its wave. Yes when "
-        + "they are idling in the fountain or their own base and nothing keeps them there. At the start of "
+        + "they are in the fountain or their own base and nothing keeps them there. At the start of "
         + "the game a good player spends the first half minute or so buying and is on the way to lane by "
         + "about 0:45, well before the first minions meet around 1:30: standing in the fountain before then, "
         + "with the allies still in base too, is shopping, not idling, and after it is. After a recall or a "
         + "respawn later in the game they buy in a few seconds and walk straight back out. Yes when "
-        + "they stand in the jungle or river with no enemy on the screen and nothing to do there. No when "
-        + "they are already in a lane: standing in lane, waiting for the minions or holding ground against a "
+        + "they are in the jungle or river with no enemy on the screen and nothing to do there. No when "
+        + "they are already in a lane: being in lane, waiting for the minions or holding ground against a "
         + "visible enemy, is laning, not idling. The one exception is a lane whose `wave` meets far up it from "
-        + "where they stand, thousands of units off with no enemy on the screen: that is waiting at the "
+        + "where they are, thousands of units off with no enemy on the screen: that is waiting at the "
         + "wrong end of the lane, and yes. No when an enemy is on the screen near them, because then "
-        + "the moment is about that enemy. No when the still time is only a couple of seconds: a pause is not "
-        + "idling. A good player moves with the broadest order that gets them there: one right-click on the "
-        + "minimap sends the champion the whole way to the lane, and that is the walk the coach demonstrates, "
-        + "never a string of short steps toward it. So one order is the whole demonstration: when "
-        + "`whereabouts.coach_sent_them_to` names a lane, the coach has already sent them there from this very "
-        + "spot, and ordering the walk again would only repeat that click; answer no.";
+        + "the moment is about that enemy. Whether they stand or are already walking makes no difference, "
+        + "and neither does a step the coach gave a moment ago (`coach`): a good player gets around in short "
+        + "right-clicks on the ground a little way ahead of their champion, a fresh one about every second, "
+        + "each steering toward where they are going, so the coach demonstrates the next of those clicks each "
+        + "time it is asked, and a step still being walked is no reason to hold this one.";
 
     public const string Lane =
         "Which lane would a good player in this seat be walking to? Each option gives its distance and "
@@ -93,9 +94,10 @@ public static class CoachQuestions
         + "roaming, in the jungle or river, in another lane, or dawdling in base after buying. No when an ally "
         + "is already in that lane to catch it; no when it is not their lane and their own needs them; no when "
         + "an enemy champion is close on the screen and the moment is a fight with them; no when the wave is "
-        + "too far to reach before the turret kills it and their own lane has its own wave; and "
-        + "no when the coach walked them toward that lane moments ago (`coach`): one minimap click is the "
-        + "whole demonstration.";
+        + "too far to reach before the turret kills it and their own lane has its own wave. Whether they are "
+        + "already on their way, of their own accord or on a step the coach gave a moment ago (`coach`), makes "
+        + "no difference: a good player gets there in short right-clicks on the ground, a fresh one about every "
+        + "second, so a yes is the next of those clicks.";
 
     public const string TendLane =
         "Which lane's wave would a good player in this seat go to? Each option is a lane whose enemy wave is at "
@@ -120,8 +122,9 @@ public static class CoachQuestions
         + "own minions with enemy minions in reach, or among enemy minions with none of their own on the "
         + "screen to take the hits. No when they are behind their own front, or no enemy minion is in reach. "
         + "No when an enemy champion is close on the screen and the moment is a fight with them: the fight "
-        + "decides where they stand, not the minions. No when the coach stepped them back a moment ago "
-        + "(`coach`) and they have not walked back in since.";
+        + "decides where they stand, not the minions. A step back the coach gave a moment ago (`coach`) is no "
+        + "reason to hold this one: a good player gives a fresh short click about every second, so while they "
+        + "still stand too far forward, the answer is yes again.";
 
     /// <summary>
     /// Asked while an enemy minion with a readable bar, or a visible enemy
@@ -194,20 +197,21 @@ public static class CoachQuestions
         + "or track a champion they cannot see, and does not know where they will come from. So a good player "
         + "stands in brush whenever it costs them nothing, and treats the open ground beside a patch as wasted "
         + "cover. But brush hides enemies too, and an enemy the player cannot see may be standing in any patch. "
+        + "A step toward a patch the coach gave a moment ago (`coach`) is no reason to hold this one: a good "
+        + "player gets into the grass in short right-clicks, a fresh one about every second, so a yes is the "
+        + "next of those clicks. "
         + "Go by these rules in order; the first that applies decides. "
-        + "First: `coach` has an entry that begins \"walked into\" with `seconds_ago` under 6: no, whatever else "
-        + "holds, since that order is still being carried out and one click is the whole demonstration. "
-        + "Second: every patch in `brush.near` has `face_check` set: no, since walking blind into brush where an "
+        + "First: every patch in `brush.near` has `face_check` set: no, since walking blind into brush where an "
         + "enemy may wait is how a player is caught. "
-        + "Third: the player's own health is about 0.35 or less and an enemy champion is on the screen: yes, into "
+        + "Second: the player's own health is about 0.35 or less and an enemy champion is on the screen: yes, into "
         + "a patch with `toward_your_base` true, which breaks the enemy's sight of them and any chase. "
-        + "Fourth: an enemy champion in `visible_enemies` has `distance_units` under about 600: no, the two are "
+        + "Third: an enemy champion in `visible_enemies` has `distance_units` under about 600: no, the two are "
         + "already trading blows and the fight decides where the player stands, not the brush. "
-        + "Fifth: `whereabouts.place` names a lane, an enemy champion is on the screen, and a patch of that lane "
+        + "Fourth: `whereabouts.place` names a lane, an enemy champion is on the screen, and a patch of that lane "
         + "without `face_check` has `nearest_enemy_minion_units` under about 700, or no enemy minion is on the "
         + "screen: yes. Standing in the lane's brush beside the wave hides them from the enemy laner, who cannot "
         + "poke what they cannot see, while they still last-hit from its edge. "
-        + "Sixth: `whereabouts.place` names a lane, `whereabouts.stood_still_for_seconds` is 2 or more, and a patch "
+        + "Fifth: `whereabouts.place` names a lane, `whereabouts.stood_still_for_seconds` is 2 or more, and a patch "
         + "of that lane is without `face_check`: yes. A laner standing still in their "
         + "lane, for the first wave or for the next, waits in the lane's brush rather than out in the open, so the "
         + "enemy laner arrives not knowing where they are. "

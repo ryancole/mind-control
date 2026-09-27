@@ -51,17 +51,16 @@ public sealed record KeyPress(double VideoTime, string Key, int Priority, string
 /// (<see cref="Dx"/>, <see cref="Dy"/>) the same as a unit vector in their
 /// screen space, y down; the recording turns it into a click a fixed distance
 /// from the player's model, which sits at one place on their screen because
-/// the camera is locked. A step with a <see cref="Destination"/> is a walk
-/// across the map rather than a sidestep: the ground in view is too small a
-/// canvas for a trip to lane, so the recording turns it into one right-click
-/// on the minimap at that point, the order a player gives to go somewhere
-/// far, and the direction then only says which way that is. A step with a
+/// the camera is locked. A step with a <see cref="Destination"/> is one leg
+/// of a trip somewhere farther (a lane, a wave, a patch of brush): the same
+/// short click on the ground, aimed that way, and the next leg is asked a
+/// second later. A step with a
 /// <see cref="Target"/> is an attack: the same right-click, on the enemy
 /// minion or champion itself, which the game reads as an order to attack it.
 /// </summary>
 public sealed record MoveStep(double VideoTime, string Direction, double Dx, double Dy, int Priority, string Reason)
 {
-    /// <summary>Where the coach is going, when the move is a walk across the map; null for a sidestep on the ground.</summary>
+    /// <summary>Where the coach is heading, when the step is a leg of a trip; null for a sidestep.</summary>
     public Destination? Destination { get; init; }
 
     /// <summary>What the coach attacks, when the click is on an enemy; null for a move.</summary>
@@ -70,7 +69,7 @@ public sealed record MoveStep(double VideoTime, string Direction, double Dx, dou
     /// <summary>The line as the player reads it, wherever it is shown.</summary>
     public string Sentence => (Destination, Target) switch
     {
-        ({ } to, _) => $"coach would have walked {Direction} to {to.Name} here: {Reason}",
+        ({ } to, _) => $"coach would have stepped {Direction} toward {to.Name} here: {Reason}",
         (_, { } target) => $"coach would have attacked {target.Name} {Direction} here: {Reason}",
         _ => $"coach would have stepped {Direction} here: {Reason}",
     };
