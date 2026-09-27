@@ -1861,26 +1861,134 @@ public sealed class JevPolicyTests
     }
 
 
+    // --- Running back to cover ---
+
+    /// <summary>The player 1000 units in front of their minion on bot's straight, Karma 1000 units further on.</summary>
+    private static FrameEnvelope OutAhead(double videoTime, params ChampionRow[] others) =>
+        Clocked(videoTime, 300, [
+            InLane(Bar(MinionTeam.Blue, 8000, 1400)),
+            Enemy() with { WorldX = 10000, WorldY = 1400 },
+            .. others,
+        ]);
+
+    [TestMethod]
+    public void Out_ahead_of_the_wave_with_an_enemy_near_the_refuges_are_offered_nearest_first()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(OutAhead(200, Ally(3, 6000, 1400)));
+
+        var ask = Offering(jev, "run_away").Single();
+        StringAssert.StartsWith(Criterion(ask, "run_away"), "run_away: a step back to cover");
+        var retreat = ask.State.Cover!;
+        Assert.AreEqual(0, retreat.AlliesNearerTheEnemy, "the ally is behind them");
+        CollectionAssert.AreEqual(new[] { "your bot outer turret", "behind your minions", "champ3" },
+            retreat.Refuges.Select(r => r.Name).ToArray());
+        CollectionAssert.AreEqual(new[] { "turret", "minions", "ally" }, retreat.Refuges.Select(r => r.Kind).ToArray());
+        Assert.IsFalse(retreat.Refuges[0].TowardYourBase, "the outer turret lies up the lane from them");
+        Assert.IsLessThan(1000, retreat.Refuges[0].NearestEnemyUnits!.Value, "and Karma stands nearer it than they do");
+        Assert.IsTrue(retreat.Refuges[1].TowardYourBase);
+        CollectionAssert.AreEqual(retreat.Refuges.Select(r => r.Name).ToArray(),
+            ((ChoiceQuestion)ask.Questions["refuge"]).Options.ToArray(), "the follow-up offers the same refuges");
+    }
+
+    [TestMethod]
+    public void A_pick_steps_toward_the_chosen_refuge()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("run_away", ("refuge", "behind your minions"));
+        policy.OnFrame(OutAhead(200));
+        policy.OnFrame(OutAhead(200.3));
+
+        var step = policy.DrainMoves().Single();
+        Assert.AreEqual(200.0, step.VideoTime);
+        Assert.AreEqual("left", step.Direction, "back down bot's straight toward home");
+        Assert.AreEqual("behind your minions", step.Destination!.Name);
+        Assert.IsLessThan(8000, step.Destination.X, "behind the foremost minion, not on it");
+        StringAssert.Contains(step.Reason, "Karma is 1000 units right and you stand");
+        StringAssert.Contains(step.Reason, "a good player would run back to behind your minions");
+        Assert.AreEqual("ran back toward behind your minions", jev.Last.State.Coach[^1].Did);
+        CollectionAssert.DoesNotContain(Offered(jev.Last), "run_away", "a step 0.3s ago");
+    }
+
+    [TestMethod]
+    public void With_no_enemy_on_the_screen_there_is_nothing_to_run_from()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Blue, 8000, 1400))));
+        Assert.IsEmpty(Offering(jev, "run_away"));
+        var cover = jev.Last.State.Cover!;
+        Assert.IsNull(cover.AlliesNearerTheEnemy, "nobody to be nearer to");
+        Assert.AreEqual("behind your minions", cover.Refuges.Single(r => r.Kind == "minions").Name,
+            "the cover is told either way; only the run needs an enemy");
+        Assert.IsNull(cover.Refuges[0].NearestEnemyUnits);
+    }
+
+    // --- Recall ---
+
+    [TestMethod]
+    public void A_recall_pick_presses_B_and_holds_still_through_the_channel()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("recall");
+        var hurt = Self(x: 9000, y: 1400) with { Health = 0.2 };
+        for (var t = 200.0; t <= 209.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, hurt));
+
+        var keys = policy.DrainKeys();
+        CollectionAssert.AreEqual(new[] { 200.0, 208.0 }, keys.Select(k => k.VideoTime).ToArray(),
+            "again only once the channel is done, and the player still stands there");
+        Assert.AreEqual("B", keys[0].Key);
+        Assert.AreEqual(
+            "you are in bot lane at 5:00 with 20% health, 80% mana, no turret or minions of yours by you; a good player would recall",
+            keys[0].Reason);
+        Assert.IsEmpty(policy.DrainMoves());
+        Assert.IsTrue(jev.Asks.Skip(1).All(a => a.State.VideoTime >= 208.0),
+            "nothing asked through the channel: every option would move them");
+        Assert.AreEqual("pressed B to recall", jev.Asks[1].State.Coach[^1].Did);
+    }
+
+    [TestMethod]
+    public void An_enemy_showing_up_ends_the_hold_on_the_channel()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("recall");
+        var hurt = Self(x: 9000, y: 1400) with { Health = 0.2 };
+        policy.OnFrame(Clocked(200, 300, hurt));
+        policy.OnFrame(Clocked(203, 300, hurt, Enemy() with { WorldX = 10000, WorldY = 1400 }));
+
+        Assert.HasCount(2, jev.Asks);
+        CollectionAssert.Contains(Offered(jev.Last), "run_away");
+        CollectionAssert.DoesNotContain(Offered(jev.Last), "recall", "the one pressed is still channelling, as far as the coach knows");
+    }
+
+    [TestMethod]
+    public void The_cover_says_what_the_player_is_safe_by()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(200, 300, Self(x: 10300, y: 1300) with { Minions = [Bar(MinionTeam.Blue, 10800, 1300)] }));
+
+        CollectionAssert.AreEqual(new[] { "your bot outer turret", "your minions" }, jev.Last.State.Cover!.YouAreBy.ToArray());
+    }
+
     // --- Said, not yet done ---
 
     [TestMethod]
     public void A_pick_the_hands_cannot_do_yet_is_said_and_not_said_again_for_a_while()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("recall");
-        var hurt = Self(x: 9000, y: 1400) with { Health = 0.2 };
+        jev.Script = Choose("buy");
         for (var t = 200.0; t <= 206.0 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 300, hurt));
+            policy.OnFrame(Clocked(t, 300, Idle()));
 
-        var cues = policy.DrainCues();
+        var cues = policy.DrainCues().Where(c => c.Reason.StartsWith("coach would")).ToArray();   // not the side found in the fountain
         CollectionAssert.AreEqual(new[] { 200.0, 205.1 }, cues.Select(c => c.VideoTime).ToArray(), "SayEverySeconds apart");
-        Assert.AreEqual("coach would have recalled here: you are in bot lane at 5:00; 20% health; no enemy on the screen", cues[0].Reason);
+        Assert.AreEqual("coach would have bought here: you are in the fountain at 5:00; no enemy on the screen", cues[0].Reason);
         Assert.AreEqual(2, cues[0].Priority);
         Assert.IsFalse(cues[0].Failure);
         Assert.IsEmpty(policy.DrainKeys(), "no key for it yet");
         Assert.IsEmpty(policy.DrainMoves());
-        CollectionAssert.DoesNotContain(Offered(jev.Asks[1]), "recall", "just said");
-        Assert.AreEqual("said recall", Offering(jev, "recall")[^1].State.Coach[^1].Did);
+        CollectionAssert.DoesNotContain(Offered(jev.Asks[1]), "buy", "just said");
+        Assert.AreEqual("said buy", Offering(jev, "buy")[^1].State.Coach[^1].Did);
     }
 
     [TestMethod]
@@ -1890,7 +1998,8 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(10, Idle()));
         CollectionAssert.AreEqual(new[] { "carry_on", "buy" }, Offered(jev.Last), "shopping before the clock starts");
         policy.OnFrame(Clocked(20, 60, Self(x: 9000, y: 1400), Enemy(1500) with { WorldX = 10000, WorldY = 1400 }));
-        CollectionAssert.IsSubsetOf(new[] { "run_away", "go_to_turret", "recall" }, Offered(jev.Last));
+        CollectionAssert.IsSubsetOf(new[] { "run_away", "recall" }, Offered(jev.Last));
+        CollectionAssert.DoesNotContain(Offered(jev.Last), "go_to_turret", "folded into run_away");
         CollectionAssert.DoesNotContain(Offered(jev.Last), "buy");
     }
 }

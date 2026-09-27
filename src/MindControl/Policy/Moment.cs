@@ -56,6 +56,10 @@ public sealed record Moment
     public MinionFacts? Minions { get; init; }
     public AttackFacts? Attack { get; init; }
     public BrushFacts? Brush { get; init; }
+
+    /// <summary>What the player is safe by, and where they could run back to.</summary>
+    public CoverFacts? Cover { get; init; }
+
     public IReadOnlyList<RecentAction> Coach { get; init; } = [];
 
     /// <summary>The ability point the HUD shows waiting, when one is.</summary>
@@ -248,6 +252,32 @@ public sealed record BrushNear(string Name, string Kind, string Place, double Di
     public double? NearestEnemyMinionUnits { get; init; }
     public IReadOnlyList<string>? AlliesInIt { get; init; }
     public string? FaceCheck { get; init; }
+}
+
+/// <summary>
+/// The cover around the player: what they are safe by, and where they could
+/// run back to. <see cref="AlliesNearerTheEnemy"/> counts the allies the
+/// minimap places nearer the enemy champion nearest the player on the screen
+/// than the player is: 0 is the player out in front; null with no enemy
+/// champion on the screen. <see cref="YouAreBy"/> names the cover the player
+/// is already at: their nearest standing turret, their nearest ally, or "your
+/// minions" when they stand behind their own foremost minion in a lane.
+/// <see cref="Refuges"/> are the rest, nearest first.
+/// </summary>
+public sealed record CoverFacts(int? AlliesNearerTheEnemy, IReadOnlyList<string> YouAreBy, IReadOnlyList<Refuge> Refuges);
+
+/// <summary>
+/// Somewhere the player could run back to: one of their own turrets still
+/// standing ("your bot outer turret"), an ally (by champion), or "behind your
+/// minions" when they stand in front of their own foremost minion.
+/// <see cref="Kind"/> is "turret", "ally" or "minions";
+/// <see cref="TowardYourBase"/> whether it lies nearer their own fountain than
+/// they do; <see cref="NearestEnemyUnits"/> how far the nearest enemy champion
+/// on the screen stands from it.
+/// </summary>
+public sealed record Refuge(string Name, string Kind, double DistanceUnits, string? ScreenDirection, bool TowardYourBase)
+{
+    public double? NearestEnemyUnits { get; init; }
 }
 
 /// <summary>Something the coach already did: "pressed Q", "stepped up-left", "remarked on aim".</summary>

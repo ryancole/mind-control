@@ -70,6 +70,14 @@ public sealed record JevOptions
     public double SayEverySeconds { get; init; } = 5;
 
     /// <summary>
+    /// How long, in video seconds, the recall channel takes. For this long
+    /// after the coach pressed it, with no enemy champion on the screen, the
+    /// root offers nothing that would move the player and break it, and not
+    /// the recall again.
+    /// </summary>
+    public double RecallChannelSeconds { get; init; } = 8;
+
+    /// <summary>
     /// How far, in game units, the player's model can drift and still be on
     /// the same spot. The minimap read jitters by tens of units on a
     /// champion that has not moved; a walking one covers this in a third of
@@ -226,6 +234,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     // What the coach last did, by kind, for the pace of the next.
     private double _lastMoveAt = double.NegativeInfinity;
+    private double _recallUntil = double.NegativeInfinity;
     private double _lastAttackAt = double.NegativeInfinity;
     private readonly Dictionary<string, double> _lastSaid = [];
 
@@ -298,6 +307,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastMoveAt = double.NegativeInfinity;
         _lastAttackAt = double.NegativeInfinity;
         _lastSaid.Clear();
+        _recallUntil = double.NegativeInfinity;
 
         _frame = latest;
         // Visible spells restart from the baseline: a span that straddles a
@@ -433,14 +443,17 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             return;
         var asked = frame.VideoTime;
         var moment = Describe(frame, self, occasion: null, asked);
-        var branches = new[]
+        // Channelling a recall: only what does not move the player, until an
+        // enemy shows up or the channel is done.
+        var branches = Recalling(frame, moment)
+            ? new[] { LevelUp(self, moment, asked) }.OfType<Branch>().ToArray()
+            : new[]
         {
             LevelUp(self, moment, asked),
             RunAway(frame, self, moment, asked),
             UseAbility(frame, self, moment, asked),
             Attack(frame, self, asked),
             StepBack(frame, self, moment, asked),
-            GoToTurret(frame, self, moment, asked),
             HideInBrush(frame, self, moment, asked),
             CatchWave(frame, self, moment, asked),
             WalkToLane(frame, self, moment, asked),
@@ -1007,41 +1020,222 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             });
     }
 
-    // --- Said, not yet done: running, falling back, recalling, buying ---
+    // --- Out ahead with enemies near: back to cover ---
+
+    /// <summary>
+    /// How near a refuge the player already is when they are at it: inside
+    /// this, there is nothing to run back to.
+    /// </summary>
+    private const double AtARefugeUnits = 400;
+
+    /// <summary>
+    /// How far short of one of their own turrets, toward their base, a run
+    /// back to it aims: under the turret, not a click on the structure.
+    /// </summary>
+    private const double BehindATurretUnits = 250;
 
     /// <summary>
     /// Offered while the player is alive and placed with an enemy champion on
-    /// the screen. The ghost's hands have no move for it yet, so a pick is a
-    /// cue naming it, said no more often than
-    /// <see cref="JevOptions.SayEverySeconds"/>.
+    /// the screen, a refuge to run back to (<see cref="Cover"/>), and no
+    /// movement click in the last <see cref="JevOptions.MoveEverySeconds"/>.
+    /// Whether they stand out ahead of their minions and their team is the
+    /// root's call, from <see cref="Moment.Cover"/>, and which refuge the
+    /// follow-up's; a pick is one step on the ground toward it, and the next
+    /// is decided afresh.
     /// </summary>
-    private Branch? RunAway(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
-        self.Alive != false && self is { WorldX: not null, WorldY: not null } && moment.VisibleEnemies.Count > 0
-            ? Said(frame, "run_away", CoachQuestions.RunAwayOption, "run away", moment, asked)
-            : null;
+    private Branch? RunAway(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || moment.VisibleEnemies.Count == 0)
+            return null;
+        if (Stepping(frame.VideoTime))
+            return null;
+        var refuges = Cover(frame, self).Away;
+        if (refuges.Length == 0)
+            return null;
+
+        var criteria = new ChoiceCriteria();
+        foreach (var (fact, _, _) in refuges)
+            criteria[fact.Name] = DescribeRefuge(fact);
+        return new Branch("run_away", CoachQuestions.RunAwayOption,
+            refuges.Length > 1 ? q => q.Choice("refuge", CoachQuestions.WhichRefuge, criteria) : null,
+            response =>
+            {
+                var chosen = Picked(response, "refuge", refuges.Select(r => r.Fact.Name).ToArray());
+                if (refuges.FirstOrDefault(r => r.Fact.Name == chosen) is not { Fact: { } refuge } pick)
+                    return;
+                // World y grows north, screen y grows down: flip for the step.
+                var (dx, dy) = (pick.X - x, -(pick.Y - y));
+                var length = double.Hypot(dx, dy);
+                if (length < 1)
+                    return;
+                var direction = ScreenDirections.Name(dx, dy);
+                var nearest = moment.VisibleEnemies[0];
+                var ahead = moment.Minions?.AheadOfOurFrontUnits is > 0 and var units
+                    ? $" and you stand {units:0} units in front of your minions"
+                    : "";
+                var reason = $"{nearest.Champion} is {nearest.DistanceUnits:0} units {nearest.ScreenDirection}{ahead}; "
+                    + $"a good player would run back to {refuge.Name} ({length:0} units {direction})";
+                _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
+                {
+                    Destination = new Destination(refuge.Name, pick.X, pick.Y),
+                    DistanceUnits = length,
+                });
+                _lastMoveAt = asked;
+                Remember($"ran back toward {refuge.Name}", asked);
+            });
+    }
+
+    /// <summary>A refuge, as an option of the refuge follow-up says it.</summary>
+    private static string DescribeRefuge(Refuge refuge)
+    {
+        var said = $"{refuge.Name}: {refuge.DistanceUnits:0} units {refuge.ScreenDirection ?? "away"}"
+            + (refuge.TowardYourBase ? ", toward your base" : ", away from your base");
+        if (refuge.NearestEnemyUnits is { } enemy)
+            said += $", the nearest enemy champion {enemy:0} units from it";
+        return said;
+    }
 
     /// <summary>
-    /// Offered while the player is alive and placed out of their base with an
-    /// enemy champion on the screen. Said, not yet clicked, as for
-    /// <see cref="RunAway"/>.
+    /// The cover around the player: the nearest of their own turrets still
+    /// standing, the nearest ally the minimap places, and their own minions in
+    /// the lane they stand in. Those the player is already by
+    /// (<see cref="AtARefugeUnits"/>, or behind their own foremost minion) are
+    /// named in <c>By</c>; the rest are refuges to run back to, nearest first,
+    /// each with the spot a step aims at: under the turret, the ally, or just
+    /// behind the foremost minion when the player stands in front of it.
     /// </summary>
-    private Branch? GoToTurret(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
-        self.Alive != false && moment.VisibleEnemies.Count > 0 && moment.Whereabouts is { } where && !AtHome(where.Place)
-            ? Said(frame, "go_to_turret", CoachQuestions.GoToTurretOption, "fallen back to a turret", moment, asked)
-            : null;
+    private (IReadOnlyList<string> By, (Refuge Fact, double X, double Y)[] Away) Cover(FrameEnvelope frame, ChampionRow self)
+    {
+        if (self is not { WorldX: { } x, WorldY: { } y })
+            return ([], []);
+        var enemies = Visible(frame, self).Select(e => (X: e.WorldX!.Value, Y: e.WorldY!.Value)).ToArray();
+        List<(string Name, string Kind, double X, double Y)> spots = [];
+        List<string> by = [];
+
+        var home = Map.Fountain;
+        if (RiftMap.Turrets
+                .Where(t => t.Owner == _side && OurTurretStanding(t) != false)
+                .MinBy(t => double.Hypot(t.X - x, t.Y - y)) is { } turret)
+        {
+            var toHome = double.Hypot(home.X - turret.X, home.Y - turret.Y);
+            var (tx, ty) = toHome < 1 ? (turret.X, turret.Y)
+                : (turret.X + (home.X - turret.X) / toHome * BehindATurretUnits,
+                   turret.Y + (home.Y - turret.Y) / toHome * BehindATurretUnits);
+            spots.Add((turret.NameFrom(_side), "turret", tx, ty));
+        }
+        if (frame.Champions
+                .Where(c => c.Team == self.Team && c.TrackId != self.TrackId && c.Alive != false
+                    && c is { WorldX: not null, WorldY: not null })
+                .MinBy(c => double.Hypot(c.WorldX!.Value - x, c.WorldY!.Value - y)) is { } ally)
+            spots.Add((ally.Champion ?? $"track {ally.TrackId}", "ally", ally.WorldX!.Value, ally.WorldY!.Value));
+        if (RiftMap.LaneOf(x, y) is { } lane && OurFront(frame, lane) is { } front)
+        {
+            if (Map.Along(lane, x, y).Progress > front)
+            {
+                var (mx, my) = Map.At(lane, Math.Max(0, front - RiftMap.WalkBehindUnits / RiftMap.Length(lane)));
+                spots.Add(("behind your minions", "minions", mx, my));
+            }
+            else
+                by.Add("your minions");
+        }
+
+        var fromHome = double.Hypot(x - home.X, y - home.Y);
+        var measured = spots.Select(s => (s, Distance: double.Hypot(s.X - x, s.Y - y))).ToArray();
+        by.InsertRange(0, measured.Where(p => p.Distance <= AtARefugeUnits).Select(p => p.s.Name));
+        var away = measured
+            .Where(p => p.Distance > AtARefugeUnits)
+            .OrderBy(p => p.Distance)
+            .Select(p => (new Refuge(p.s.Name, p.s.Kind, Math.Round(p.Distance),
+                    ScreenDirections.NameOfWorldOffset(p.s.X - x, p.s.Y - y),
+                    double.Hypot(p.s.X - home.X, p.s.Y - home.Y) < fromHome)
+                {
+                    NearestEnemyUnits = enemies.Length == 0 ? null
+                        : Math.Round(enemies.Min(e => double.Hypot(e.X - p.s.X, e.Y - p.s.Y))),
+                }, p.s.X, p.s.Y))
+            .ToArray();
+        return (by, away);
+    }
+
+    /// <summary>
+    /// Whether one of the player's own turrets stands, off the minimap: null
+    /// when it has not been called, or the minimap has not been read for
+    /// turrets at all.
+    /// </summary>
+    private bool? OurTurretStanding(RiftMap.TurretSpot spot) =>
+        _turrets?.FirstOrDefault(t => t.Team == MinionTeam.Blue && t.Lane == spot.Lane && t.Tier == spot.Tier
+            && (spot.NexusSide is null || t.Side == spot.NexusSide))?.Standing;
+
+    /// <summary>
+    /// The cover around the player as the state tells it (<see cref="Cover"/>),
+    /// with how many allies the minimap places nearer the nearest visible
+    /// enemy champion than the player is: 0 is the player out in front of
+    /// their team, null with no enemy champion on the screen.
+    /// </summary>
+    private CoverFacts? CoverNow(FrameEnvelope frame, ChampionRow self)
+    {
+        if (self is not { WorldX: { } x, WorldY: { } y })
+            return null;
+        int? nearer = null;
+        if (Visible(frame, self).MinBy(e => double.Hypot(e.WorldX!.Value - x, e.WorldY!.Value - y)) is { } enemy)
+        {
+            var (ex, ey) = (enemy.WorldX!.Value, enemy.WorldY!.Value);
+            var yours = double.Hypot(ex - x, ey - y);
+            nearer = frame.Champions.Count(c => c.Team == self.Team && c.TrackId != self.TrackId && c.Alive != false
+                && c is { WorldX: { } ax, WorldY: { } ay } && double.Hypot(ex - ax, ey - ay) < yours);
+        }
+        var (by, away) = Cover(frame, self);
+        return new CoverFacts(nearer, by, away.Select(r => r.Fact).ToArray());
+    }
+
+    // --- Home: the recall ---
 
     /// <summary>
     /// Offered while the player is alive and placed out of their base, with
-    /// the game clock running. Said, not yet keyed, as for <see cref="RunAway"/>.
+    /// the game clock running, and not already channelling one the coach
+    /// pressed. Whether it is time to go home -- low health, no mana, nothing
+    /// to be safe by -- is the root's call, from <see cref="Moment.Player"/>
+    /// and <see cref="Moment.Cover"/>; a pick is the recall key, and for the
+    /// channel's length the root offers nothing that would move the player.
     /// </summary>
-    private Branch? Recall(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
-        self.Alive != false && frame.GameTime is not null && moment.Whereabouts is { } where && !AtHome(where.Place)
-            ? Said(frame, "recall", CoachQuestions.RecallOption, "recalled", moment, asked)
-            : null;
+    private Branch? Recall(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        if (self.Alive == false || frame.GameTime is null || moment.Whereabouts is not { } where || AtHome(where.Place))
+            return null;
+        if (frame.VideoTime < _recallUntil)
+            return null;
+        return new Branch("recall", CoachQuestions.RecallOption, null, _ =>
+        {
+            List<string> why = [];
+            if (moment.Player?.Health is { } health)
+                why.Add($"{health:0%} health");
+            if (moment.Player?.Mana is { } mana)
+                why.Add($"{mana:0%} mana");
+            if (moment.Cover is { YouAreBy.Count: 0 })
+                why.Add("no turret or minions of yours by you");
+            var clock = moment.GameClock is { } time ? $" at {time}" : "";
+            var with = why.Count > 0 ? $" with {string.Join(", ", why)}" : "";
+            var reason = $"you are in {where.Place}{clock}{with}; a good player would recall";
+            _keys.Add(new KeyPress(asked, "B", 2, reason));
+            _recallUntil = asked + _options.RecallChannelSeconds;
+            Remember("pressed B to recall", asked);
+        });
+    }
+
+    /// <summary>
+    /// Whether the coach's recall is still channelling: pressed less than
+    /// <see cref="JevOptions.RecallChannelSeconds"/> ago, with no enemy
+    /// champion on the screen and the player not yet home.
+    /// </summary>
+    private bool Recalling(FrameEnvelope frame, Moment moment) =>
+        frame.VideoTime < _recallUntil && moment.VisibleEnemies.Count == 0
+        && moment.Whereabouts is { } where && !AtHome(where.Place);
+
+    // --- Said, not yet done: buying ---
 
     /// <summary>
     /// Offered while the player is alive in the fountain, where the shop is.
-    /// Said, not yet done, as for <see cref="RunAway"/>.
+    /// The ghost's hands have no move for it yet, so a pick is a cue naming it
+    /// (<see cref="Said"/>).
     /// </summary>
     private Branch? Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
         self.Alive != false && moment.Whereabouts is { Place: RiftMap.FountainPlace }
@@ -1563,12 +1757,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         MinionFacts? minions = null;
         AttackFacts? attack = null;
         BrushFacts? brush = null;
+        CoverFacts? coverFacts = null;
         if (frame is not null && self is not null)
         {
             whereabouts = Whereabouts(frame, self, now);
             if (self is { WorldX: { } bx, WorldY: { } by })
                 brush = new BrushFacts(RiftBrush.At(bx, by)?.NameFrom(_side), NearBrushes(frame, self).Select(n => n.Fact).ToArray());
             minions = MinionsOnScreen(frame, self);
+            coverFacts = CoverNow(frame, self);
             var attackRange = AbilityKits.AttackRange(champion);
             if (self is { WorldX: { } sx, WorldY: { } sy })
             {
@@ -1618,6 +1814,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Minions = minions,
             Attack = attack,
             Brush = brush,
+            Cover = coverFacts,
             Coach = _recent.Select(r => new RecentAction(r.Did, Math.Round(now - r.At, 1))).ToArray(),
             Occasion = occasion,
             Setting = Moment.SettingFrom(_side),
