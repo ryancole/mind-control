@@ -5,13 +5,22 @@ namespace MindControl.Feed;
 
 /// <summary>
 /// Typed mirror of spectral-sight's wire format (docs/output-format.md,
-/// schema 1). Optional row fields are omitted-not-null on the wire, so a null
-/// here means "not measured". Unknown keys are ignored by deserialization,
-/// as the format requires.
+/// schema 2; schema 1 differs only by a meta <c>stride</c> this side never
+/// read, so it is accepted too). Optional row fields are omitted-not-null on
+/// the wire, so a null here means "not measured". Unknown keys are ignored by
+/// deserialization, as the format requires.
 /// </summary>
 public static class FeedJson
 {
-    public const int MaxSchema = 1;
+    public const int MaxSchema = 2;
+
+    /// <summary>Throws on a feed newer than this reader understands.</summary>
+    public static void EnsureSupported(Meta meta)
+    {
+        if (meta.Schema > MaxSchema)
+            throw new InvalidOperationException(
+                $"Feed schema {meta.Schema} is newer than this reactor understands ({MaxSchema})");
+    }
 
     public static readonly JsonSerializerOptions Options = new()
     {
@@ -26,7 +35,6 @@ public sealed record Meta
     public string Source { get; init; } = "";
     public int Width { get; init; }
     public int Height { get; init; }
-    public int Stride { get; init; }
     public string Created { get; init; } = "";
     public bool HasGameTime { get; init; }
     public bool HasLiveness { get; init; }

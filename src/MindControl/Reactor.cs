@@ -48,9 +48,7 @@ public sealed class Reactor(
     public async Task RunAsync(CancellationToken ct)
     {
         var meta = await feed.GetMetaAsync(ct);
-        if (meta.Schema > FeedJson.MaxSchema)
-            throw new InvalidOperationException(
-                $"Feed schema {meta.Schema} is newer than this reactor understands ({FeedJson.MaxSchema})");
+        FeedJson.EnsureSupported(meta);
         Log($"feed: {meta.Source} {meta.Width}x{meta.Height}, game_time={meta.HasGameTime} " +
             $"liveness={meta.HasLiveness} nameplates={meta.HasNameplates} " +
             $"world={(meta.WorldBounds is not null ? "calibrated" : "none")}");
