@@ -358,7 +358,7 @@ public sealed class JevPolicyTests
         Assert.IsTrue(consultation.Questions.ContainsKey("press_Q"));
     }
 
-    // --- Standing still: walking to lane ---
+    // --- Away from the action: heading to lane ---
 
     /// <summary>The player in their fountain, in the fixture's map frame.</summary>
     private static ChampionRow Idle(double x = 400, double y = 460) => Self(x: x, y: y);
@@ -371,18 +371,20 @@ public sealed class JevPolicyTests
     private static ChampionRow InBotLane(int track = 3) => Ally(track, 13064, 2051);
 
     [TestMethod]
-    public void A_player_who_has_stood_on_one_spot_for_the_interval_is_asked_whether_to_walk_to_lane()
+    public void A_player_is_asked_every_second_whether_to_head_to_lane()
     {
         var (policy, jev) = Coach();
         // Jittering by 40 units is standing still; the minimap read wobbles that much.
         var i = 0;
         for (var t = 100.0; t < 103.0; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle(x: 400 + i++ % 2 * 40), InBotLane()));
-        Assert.IsEmpty(jev.Asks, "not on the spot for long enough yet");
+        Assert.HasCount(3, jev.Asks, "at 100, 101 and 102: no wait for them to stand still first");
+        Assert.AreEqual(0.0, jev.Asks[0].State.Whereabouts!.StoodStillForSeconds);
 
         policy.OnFrame(Clocked(103.0, 53, Idle(), InBotLane()));
 
-        var ask = jev.Asks.Single();
+        Assert.HasCount(4, jev.Asks);
+        var ask = jev.Last;
         CollectionAssert.AreEquivalent(new[] { "walk", "lane" }, ask.Questions.Keys.ToArray());
         Assert.AreEqual("0:53", ask.State.GameClock);
         var where = ask.State.Whereabouts!;
@@ -403,7 +405,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_walks_to_the_chosen_lane_in_one_order_and_the_next_question_is_told()
+    public void A_yes_is_a_short_step_toward_the_chosen_lane_and_the_next_second_asks_again()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, q) => id switch
@@ -412,56 +414,32 @@ public sealed class JevPolicyTests
             "lane" => FakeJev.Pick(q, "bot"),
             _ => null,
         };
-        for (var t = 100.0; t <= 106.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+        for (var t = 103.0; t <= 105.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
 
-        // Asked at 103 and again at 106; the fake says yes both times, where
-        // the rubric tells the real model that the lane in coach_sent_them_to
-        // has had its one click already.
-        Assert.IsNull(jev.Asks[0].State.Whereabouts!.CoachSentThemTo);
-        Assert.AreEqual("bot lane", jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
+        // Asked at 103, 104 and 105, and a step each time: the step still
+        // being walked is no reason to hold the next.
         var steps = policy.DrainMoves();
-        Assert.HasCount(2, steps);
-        Assert.AreEqual(103.0, steps[0].VideoTime);
-        Assert.AreEqual(106.0, steps[1].VideoTime);
+        CollectionAssert.AreEqual(new[] { 103.0, 104.0, 105.0 }, steps.Select(s => s.VideoTime).ToArray());
         Assert.AreEqual("right", steps[0].Direction);
         Assert.IsGreaterThan(0, steps[0].Dx);
         Assert.IsLessThan(0, steps[0].Dy, "screen y grows down");
         Assert.AreEqual(1, Math.Round(double.Hypot(steps[0].Dx, steps[0].Dy), 6));
         Assert.AreEqual(2, steps[0].Priority);
         Assert.AreEqual(
-            "coach would have walked right to bot lane here: you have stood still for 3.0s in the fountain at 0:50; "
+            "coach would have stepped right toward bot lane here: you are in the fountain at 0:50; "
             + "a good player would be on the way to bot lane (12086 units right)",
             steps[0].Sentence);
-        // A walk, not a sidestep: it goes to where bot lane is played, not
-        // its nearest point (the lane's mouth just outside the base), and the
-        // recording clicks it on the minimap so one order covers the whole trip.
+        StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.0s in the fountain");
+        // Aimed at where bot lane is played, not its nearest point (the
+        // lane's mouth just outside the base); the recording clicks a short
+        // step that way on the ground.
         Assert.AreEqual(new Destination("bot lane", 12400, 1900), steps[0].Destination);
-        var reminded = jev.Last.State.Coach.Single();
-        Assert.AreEqual("walked toward bot lane", reminded.Did);
-        Assert.AreEqual(3.0, reminded.SecondsAgo);
+        var reminded = jev.Last.State.Coach;
+        Assert.AreEqual("stepped toward bot lane", reminded[^1].Did);
+        Assert.AreEqual(1.0, reminded[^1].SecondsAgo, "the step a second ago, still being walked");
         Assert.IsEmpty(policy.DrainKeys());
         Assert.IsEmpty(policy.DrainCues());
-    }
-
-    [TestMethod]
-    public void A_new_spot_forgets_the_lane_the_coach_sent_them_to()
-    {
-        var (policy, jev) = Coach();
-        jev.Script = (id, q) => id switch
-        {
-            "walk" => FakeJev.Yes,
-            "lane" => FakeJev.Pick(q, "bot"),
-            _ => null,
-        };
-        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 50, Idle()));
-        // They moved on and stopped again somewhere else: a fresh stand.
-        for (var t = 103.1; t <= 106.1 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 53, Idle(x: 1400)));
-
-        Assert.HasCount(2, jev.Asks);
-        Assert.IsNull(jev.Asks[1].State.Whereabouts!.CoachSentThemTo);
     }
 
     [TestMethod]
@@ -474,7 +452,7 @@ public sealed class JevPolicyTests
             "lane" => FakeJev.Pick(q, "bot"),
             _ => null,
         };
-        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+        for (var t = 100.0; t <= 100.9 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
         Assert.HasCount(1, jev.Asks, "it was asked; the answer just fell short");
         Assert.IsEmpty(policy.DrainMoves());
@@ -497,13 +475,16 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_player_on_the_move_or_without_a_clock_is_not_asked_about_lane()
+    public void A_player_on_the_move_is_asked_about_lane_but_not_without_a_clock()
     {
         var (policy, jev) = Coach();
-        // Walking out of base at 335 units a second: never on one spot.
+        // Walking out of base at 335 units a second: never on one spot, and
+        // still asked each second, since a walk is a click a second too.
         for (var t = 100.0; t <= 110.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle(x: 400 + (t - 100) * 335)));
-        Assert.IsEmpty(jev.Asks);
+        Assert.HasCount(11, jev.Asks);
+        Assert.IsTrue(jev.Asks.All(a => a.State.Whereabouts!.StoodStillForSeconds < 0.5), "the jitter radius holds a walker a fraction of a second at most");
+        jev.Asks.Clear();
 
         // On one spot, but no game clock: the game has not begun.
         for (var t = 110.1; t <= 120.0 + 1e-9; t = Math.Round(t + 0.1, 3))
@@ -521,12 +502,11 @@ public sealed class JevPolicyTests
         var (policy, jev) = Coach();
         for (var t = 100.0; t <= 102.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 50, Idle()));
+        var before = jev.Asks.Count;
         policy.Resync(Clocked(102.1, 52, Idle()));
-        for (var t = 102.2; t <= 104.9 + 1e-9; t = Math.Round(t + 0.1, 3))
-            policy.OnFrame(Clocked(t, 52, Idle()));
-        Assert.IsEmpty(jev.Asks, "still since the baseline, not since before the gap");
-        policy.OnFrame(Clocked(105.1, 55, Idle()));
-        Assert.AreEqual(3.0, jev.Asks.Single().State.Whereabouts!.StoodStillForSeconds);
+        policy.OnFrame(Clocked(102.2, 52, Idle()));
+        Assert.AreEqual(0.1, jev.Asks[before].State.Whereabouts!.StoodStillForSeconds,
+            "still since the baseline, not since before the gap");
     }
 
     [TestMethod]
@@ -622,7 +602,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_walks_to_the_crashing_wave_in_one_minimap_click()
+    public void A_yes_steps_toward_the_crashing_wave()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, _) => id == "tend" ? FakeJev.Yes : null;
@@ -637,7 +617,7 @@ public sealed class JevPolicyTests
         StringAssert.StartsWith(step.Reason,
             "the enemy wave is at your outer turret in bot lane with none of your team there; a good player would be on the way to catch it (");
         policy.OnFrame(Clocked(303, 403, Self(x: 7300, y: 4800) with { MinionDots = BotWaveAtOurTurret }));
-        Assert.AreEqual("walked toward bot lane's wave at your turret", jev.Last.State.Coach.Single().Did);
+        Assert.AreEqual("stepped toward bot lane's wave at your turret", jev.Last.State.Coach.Single().Did);
     }
 
     [TestMethod]
@@ -675,7 +655,7 @@ public sealed class JevPolicyTests
             policy.OnFrame(Clocked(t, 400, self));
 
         var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
-        var walk = policy.DrainMoves().Single(m => m.Reason.StartsWith("you have stood still", StringComparison.Ordinal));
+        var walk = policy.DrainMoves().First(m => m.Destination is not null);
         Assert.AreEqual(new Destination("bot lane", x, y), walk.Destination, "not past it, to where the lane is played");
     }
 
@@ -806,7 +786,7 @@ public sealed class JevPolicyTests
 
         var meet = jev.Asks[0].State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!.MeetAt!.Value;
         var (x, y) = RiftMap.At("bot", meet);
-        var step = policy.DrainMoves().Single();
+        var step = policy.DrainMoves().First();
         Assert.AreEqual(new Destination("bot lane", x, y), step.Destination);
         StringAssert.Contains(step.Reason, "a good player would be on the way to bot lane's minion wave");
     }
@@ -825,7 +805,7 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 70, self));
 
-        Assert.AreEqual(new Destination("bot lane", 12400, 1900), policy.DrainMoves().Single().Destination);
+        Assert.AreEqual(new Destination("bot lane", 12400, 1900), policy.DrainMoves().First().Destination);
         StringAssert.Contains(
             (string)((ChoiceQuestion)jev.Last.Questions["lane"]).Criteria["bot"]!, "1 ours, 0 theirs, ours pushed");
     }
@@ -920,7 +900,7 @@ public sealed class JevPolicyTests
         for (var t = 205.1; t <= 208.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 305, near));
         var times = jev.Asks.Where(a => a.Questions.ContainsKey("back")).Select(a => a.State.VideoTime).ToArray();
-        CollectionAssert.AreEqual(new[] { 200.0, 205.1, 207.1 }, times);
+        CollectionAssert.AreEqual(new[] { 200.0, 205.1, 206.1, 207.1 }, times);
     }
 
     [TestMethod]
@@ -1715,7 +1695,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_yes_walks_into_the_patch_in_one_order_and_the_next_question_is_told()
+    public void A_yes_steps_toward_the_patch_and_the_next_question_is_told()
     {
         var (policy, jev) = Coach();
         jev.Script = (id, _) => id == "hide" ? FakeJev.Yes : null;
@@ -1727,12 +1707,12 @@ public sealed class JevPolicyTests
         Assert.AreEqual("the bot lane brush", walk.Destination!.Name);
         Assert.AreEqual("the bot lane brush", RiftBrush.At(walk.Destination.X, walk.Destination.Y)!.Name, "the click lands in the grass");
         Assert.AreEqual("down", walk.Direction);
-        StringAssert.StartsWith(walk.Sentence, "coach would have walked down to the bot lane brush here: the bot lane brush is ");
+        StringAssert.StartsWith(walk.Sentence, "coach would have stepped down toward the bot lane brush here: the bot lane brush is ");
         StringAssert.EndsWith(walk.Reason,
             " units down and Karma can see you out here; a good player would stand in the brush, where no enemy outside it can see them");
 
         policy.OnFrame(Clocked(203.1, 303, ByTheLaneBrush()));
-        Assert.AreEqual("walked into the bot lane brush", Hides(jev)[^1].State.Coach.Single().Did);
+        Assert.AreEqual("stepped toward the bot lane brush", Hides(jev)[^1].State.Coach.Single().Did);
     }
 
     [TestMethod]
@@ -1808,6 +1788,6 @@ public sealed class JevPolicyTests
         jev.Release();
         for (var t = 204.1; t <= 207.5 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 304, ByTheLaneBrush()));
-        CollectionAssert.AreEqual(new[] { 200.0, 204.1, 207.1 }, Hides(jev).Select(a => a.State.VideoTime).ToArray());
+        CollectionAssert.AreEqual(new[] { 200.0, 204.1, 205.1, 206.1, 207.1 }, Hides(jev).Select(a => a.State.VideoTime).ToArray());
     }
 }

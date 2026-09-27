@@ -239,7 +239,7 @@ public static class RiftMap
 
     /// <summary>
     /// Where each lane is played in the early game: the point a player walking
-    /// to lane is headed for, and so where a walk's one minimap click goes,
+    /// to lane is headed for, and so where the steps to lane are aimed,
     /// rather than the lane's nearest point (from the fountain that is the
     /// lane's mouth at the nexus, a few seconds' walk). Bot is its corner,
     /// between where the fixture's player waited for the first minions

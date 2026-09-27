@@ -36,13 +36,16 @@ public sealed record JevOptions
     public double YesAt { get; init; } = 0.6;
 
     /// <summary>
-    /// How often, in video seconds, a player who stands on one spot is asked
-    /// about: should they be walking to lane? It is also the least time on
-    /// the spot before the first such question, since a player who stopped a
-    /// moment ago is not yet standing still. One in flight at a time, apart
-    /// from the button questions.
+    /// How often, in video seconds, each movement question is asked: should
+    /// they be heading to a lane, stepping back out of the enemy wave, going
+    /// to catch a wave at their turret, or stepping into the brush? A good
+    /// player moves in short clicks, a fresh one about every second, so each
+    /// is asked this often whether the player stands or walks, and whatever
+    /// the coach's last click was: a step still being walked is no reason to
+    /// hold the next. Each question has one in flight at a time, apart from
+    /// the others.
     /// </summary>
-    public double IdleAskEverySeconds { get; init; } = 3;
+    public double MoveAskEverySeconds { get; init; } = 1;
 
     /// <summary>
     /// How often, in video seconds, a skill point the HUD still shows waiting
@@ -55,21 +58,6 @@ public sealed record JevOptions
     public double PointAskEverySeconds { get; init; } = 3;
 
     /// <summary>
-    /// How often, in video seconds, a player in a lane with enemy minions on
-    /// their screen is asked about: should they step back behind their own?
-    /// One in flight at a time, apart from the other questions.
-    /// </summary>
-    public double WaveAskEverySeconds { get; init; } = 2;
-
-    /// <summary>
-    /// How often, in video seconds, a player away from an enemy wave that is
-    /// at one of their turrets is asked about: should they go and catch it?
-    /// Asked whether they stand or walk. One in flight at a time, apart from
-    /// the other questions.
-    /// </summary>
-    public double TendAskEverySeconds { get; init; } = 3;
-
-    /// <summary>
     /// How often, in video seconds, a player with an enemy minion or champion
     /// within reach of their basic attack is asked about: should they
     /// right-click to attack something? One right-click keeps a champion
@@ -77,14 +65,6 @@ public sealed record JevOptions
     /// attacks. One in flight at a time, apart from the other questions.
     /// </summary>
     public double AttackAskEverySeconds { get; init; } = 1;
-
-    /// <summary>
-    /// How often, in video seconds, a player standing outside the brush with
-    /// a patch near them is asked about: should they walk into it? Asked
-    /// whether they stand or walk. One in flight at a time, apart from the
-    /// other questions.
-    /// </summary>
-    public double BrushAskEverySeconds { get; init; } = 3;
 
     /// <summary>
     /// How far, in game units, the player's model can drift and still be on
@@ -180,9 +160,6 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // Perception: the spot the player has stood on, and since when.
     private (double X, double Y)? _restAt;
     private double _stillSince;
-    // The lane the coach already walked the player to from this spot, if it
-    // has: one minimap click is the whole walk, and the next question is told.
-    private string? _sentTo;
 
     // Perception: the minions on the screen, followed from frame to frame so
     // each bar has a fall rate.
@@ -325,7 +302,6 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastLanding = null;
         _recent.Clear();
         _restAt = null;
-        _sentTo = null;
         _turrets = null;
         _minionTracks.Clear();
         _point = null;
@@ -462,27 +438,24 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         });
     }
 
-    // --- Standing still: would a good player be walking to lane? ---
+    // --- Away from the action: would a good player be heading to lane? ---
 
     /// <summary>
-    /// Asks about a player who has stood on one spot for the ask interval,
-    /// when there is something to ask: alive, placed on the map, with a game
-    /// clock running (before it the player cannot move). Whether standing
-    /// there is idling, and which lane a good player would be walking to,
-    /// are the model's calls; a yes is a walk to where that lane's waves meet
-    /// when the minimap shows both, and otherwise to where the lane is played
-    /// (<see cref="RiftMap.LaningSpot"/>): one right-click on the minimap, the recording's broadest move. One
-    /// order is the whole walk: the questions that follow while the player
-    /// still stands on the spot are told the lane it was sent to, and the
-    /// rubric says not to order it again.
+    /// Asks about a player away from the action, when there is something to
+    /// ask: alive, placed on the map, with a game clock running (before it
+    /// the player cannot move). Asked whether they stand or walk, and
+    /// whatever the coach's last step was. Whether they belong somewhere
+    /// else, and which lane a good player would be heading to, are the
+    /// model's calls; a yes is one short step on the ground toward where that
+    /// lane's waves meet when the minimap shows both, and otherwise toward
+    /// where the lane is played (<see cref="RiftMap.LaningSpot"/>). The trip
+    /// is a string of such steps, one a second, each asked afresh.
     /// </summary>
     private void AskIdle(FrameEnvelope frame, ChampionRow self)
     {
-        if (_askingIdle || frame.VideoTime - _lastIdleAskAt < _options.IdleAskEverySeconds)
+        if (_askingIdle || frame.VideoTime - _lastIdleAskAt < _options.MoveAskEverySeconds)
             return;
-        if (self.Alive == false || _restAt is not { } rest || frame.GameTime is null)
-            return;
-        if (frame.VideoTime - _stillSince < _options.IdleAskEverySeconds)
+        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || frame.GameTime is null)
             return;
         var moment = Describe(frame, self, occasion: null, frame.VideoTime);
         if (moment.Whereabouts is not { } whereabouts)
@@ -499,8 +472,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         }
         var questions = new Questions()
             .Noul("walk", CoachQuestions.Walk,
-                yes: "they are idling away from the action and a good player would be on the way to a lane's minion wave, or to their team, by now",
-                no: "they are in a lane, held there by something on the screen, or have only just paused")
+                yes: "they are away from the action and a good player would be on the way to a lane's minion wave, or to their team, by now",
+                no: "they are in a lane, held where they are by something on the screen, or still shopping")
             .Choice("lane", CoachQuestions.Lane, criteria);
 
         _askingIdle = true;
@@ -512,30 +485,31 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 return;
             if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
                 return;
-            // The whole trip in one order: to where the lane's waves meet when
-            // the minimap shows both, to the enemy's front when it is alone at
-            // one of their turrets, and otherwise to where the lane is played
-            // -- never its nearest point, which from base is only its mouth.
+            // A step toward where the lane's waves meet when the minimap shows
+            // both, toward the enemy's front when it is alone at one of their
+            // turrets, and otherwise toward where the lane is played -- never
+            // its nearest point, which from base is only its mouth.
             var facts = whereabouts.Lanes.First(l => l.Lane == lane.Choice).Wave;
             var wave = facts?.MeetAt
                 ?? (facts?.TheirFront is { } front && RiftMap.AtOurTurret(lane.Choice, front) ? front : null);
             var spot = wave is { } at ? RiftMap.At(lane.Choice, at) : RiftMap.LaningSpot(lane.Choice);
             // World y grows north, screen y grows down: flip for the step.
-            var (dx, dy) = (spot.X - rest.X, -(spot.Y - rest.Y));
+            var (dx, dy) = (spot.X - x, -(spot.Y - y));
             var length = double.Hypot(dx, dy);
             if (length <= RiftMap.LaneHalfWidth)
                 return;   // already where the walk would go: nothing to demonstrate
             var direction = ScreenDirections.Name(dx, dy);
             var clock = moment.GameClock is { } time ? $" at {time}" : "";
             var to = wave is null ? $"{lane.Choice} lane" : $"{lane.Choice} lane's minion wave";
-            var reason = $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}; "
-                + $"a good player would be on the way to {to} ({length:0} units {direction})";
+            var where = whereabouts.StoodStillForSeconds >= 1
+                ? $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}"
+                : $"you are in {whereabouts.Place}{clock}";
+            var reason = $"{where}; a good player would be on the way to {to} ({length:0} units {direction})";
             _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
             {
                 Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
             });
-            _sentTo = $"{lane.Choice} lane";
-            Remember($"walked toward {lane.Choice} lane", asked);
+            Remember($"stepped toward {lane.Choice} lane", asked);
         });
     }
 
@@ -559,7 +533,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     /// <summary>
     /// How near an enemy wave the player already is when they are at it: about
-    /// a screen's width, inside which a minimap click has nothing to show.
+    /// a screen's width, inside which the wave is already in view.
     /// </summary>
     private const double AtTheWaveUnits = 1500;
 
@@ -570,11 +544,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <see cref="AtTheWaveUnits"/> away. Asked whether they stand or walk,
     /// since a roaming player is exactly who leaves a wave alone. Whether it
     /// is theirs to catch, and which one when more than one lane is crashing,
-    /// are the model's calls; a yes is one minimap walk to that wave's front.
+    /// are the model's calls; a yes is one short step on the ground toward
+    /// that wave's front, and the next second is asked afresh.
     /// </summary>
     private void AskTend(FrameEnvelope frame, ChampionRow self)
     {
-        if (_askingTend || frame.VideoTime - _lastTendAskAt < _options.TendAskEverySeconds)
+        if (_askingTend || frame.VideoTime - _lastTendAskAt < _options.MoveAskEverySeconds)
             return;
         if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
             return;
@@ -590,7 +565,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var questions = new Questions().Noul("tend", CoachQuestions.Tend,
             yes: "the wave at their turret is theirs to catch, nobody is there to, and nothing on the screen holds them",
-            no: "an ally has it, their own lane needs them, a fight holds them, or the coach just sent them");
+            no: "an ally has it, their own lane needs them, or a fight holds them");
         if (crashing.Length > 1)
         {
             var criteria = new ChoiceCriteria();
@@ -626,8 +601,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             {
                 Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
             });
-            _sentTo = $"{lane.Lane} lane";
-            Remember($"walked toward {lane.Lane} lane's wave at your turret", asked);
+            Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);
         });
     }
 
@@ -648,11 +622,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// stand too far forward is the model's call, from the counts and
     /// distances in <see cref="Moment.Minions"/>; a yes is one sidestep back
     /// down the lane toward their own nexus. One in flight at a time, and no
-    /// more often than <see cref="JevOptions.WaveAskEverySeconds"/>.
+    /// more often than <see cref="JevOptions.MoveAskEverySeconds"/>.
     /// </summary>
     private void AskWave(FrameEnvelope frame, ChampionRow self)
     {
-        if (_askingWave || frame.VideoTime - _lastWaveAskAt < _options.WaveAskEverySeconds)
+        if (_askingWave || frame.VideoTime - _lastWaveAskAt < _options.MoveAskEverySeconds)
             return;
         if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || RiftMap.LaneOf(x, y) is not { } lane)
             return;
@@ -851,14 +825,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// patch, and one within <see cref="BrushNearUnits"/>. Asked whether they
     /// stand or walk. Whether hiding is worth it -- out of an enemy laner's
     /// sight, breaking a chase, waiting out of the open -- and which patch are
-    /// the model's calls, from <see cref="Moment.Brush"/>; a yes is one walk
-    /// into the patch, ordered on the minimap like any walk, to the nearest
-    /// point well inside the grass. One in flight at a time, and no more often
-    /// than <see cref="JevOptions.BrushAskEverySeconds"/>.
+    /// the model's calls, from <see cref="Moment.Brush"/>; a yes is one short
+    /// step on the ground toward the nearest point well inside the grass, and
+    /// the next second is asked afresh. One in flight at a time, and no more often
+    /// than <see cref="JevOptions.MoveAskEverySeconds"/>.
     /// </summary>
     private void AskBrush(FrameEnvelope frame, ChampionRow self)
     {
-        if (_askingBrush || frame.VideoTime - _lastBrushAskAt < _options.BrushAskEverySeconds)
+        if (_askingBrush || frame.VideoTime - _lastBrushAskAt < _options.MoveAskEverySeconds)
             return;
         if (self.Alive == false || frame.GameTime is null || self is not { WorldX: { } x, WorldY: { } y })
             return;
@@ -871,7 +845,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var moment = Describe(frame, self, occasion: null, frame.VideoTime);
         var questions = new Questions().Noul("hide", CoachQuestions.Hide,
             yes: "a good player would be standing in that brush now, out of the enemy's sight, at no cost",
-            no: "every patch near is a face-check, they are on their way somewhere, nobody is there to hide from, or the coach just sent them");
+            no: "every patch near is a face-check, they are on their way somewhere, or nobody is there to hide from");
         if (near.Length > 1)
         {
             var criteria = new ChoiceCriteria();
@@ -912,7 +886,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             {
                 Destination = new Destination(patch.Name, spot.X, spot.Y),
             });
-            Remember($"walked into {patch.Name}", asked);
+            Remember($"stepped toward {patch.Name}", asked);
         });
     }
 
@@ -1543,7 +1517,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             };
         }).ToArray();
         var still = _restAt is null ? 0 : Math.Max(0, Math.Round(now - _stillSince, 1));
-        return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes) { CoachSentThemTo = _restAt is null ? null : _sentTo };
+        return new WhereaboutsFacts(RiftMap.Place(x, y), still, lanes);
     }
 
     /// <summary>
@@ -1669,14 +1643,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (self is not { WorldX: { } x, WorldY: { } y })
         {
             _restAt = null;
-            _sentTo = null;
             return;
         }
         if (_restAt is { } rest && double.Hypot(x - rest.X, y - rest.Y) <= _options.StillRadiusUnits)
             return;
         _restAt = (x, y);
         _stillSince = frame.VideoTime;
-        _sentTo = null;
     }
 
     /// <summary>The enemies the player can see, with a place on the map. Nothing in fog is ever listed.</summary>

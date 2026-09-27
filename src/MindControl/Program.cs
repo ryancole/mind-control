@@ -10,10 +10,6 @@ ushort screenWidth = 1920, screenHeight = 1080;
 // taken from here. The camera is locked, so it is one place -- the centre,
 // give or take, on the default HUD.
 (ushort X, ushort Y)? playerAnchor = null;
-// Where the minimap sits on the player's screen; a walk to a place on the
-// map is one right-click there. Null takes the stock HUD's corner, a
-// placeholder until etc/minimap-calibrator.html has read the real one.
-MinimapRect? minimap = null;
 string? tracePath = null;
 string? logPath = null;
 string? auditPath = null;
@@ -59,11 +55,6 @@ for (var i = 0; i < args.Length; i++)
             var anchor = args[++i].Split(',');
             playerAnchor = (ushort.Parse(anchor[0]), ushort.Parse(anchor[1]));
             break;
-        case "--minimap":
-            var rect = args[++i].Split(',');
-            minimap = new MinimapRect(
-                double.Parse(rect[0]), double.Parse(rect[1]), double.Parse(rect[2]), double.Parse(rect[3]));
-            break;
         case "--trace":
             tracePath = args[++i];
             break;
@@ -104,9 +95,6 @@ for (var i = 0; i < args.Length; i++)
                   --screen <WxH>     target screen size     (default 1920x1080)
                   --anchor <x,y>     the player's model on their screen, where a step is taken
                                      from (default: screen centre; the camera is locked)
-                  --minimap <x,y,w,h> the minimap on their screen, where a walk to lane is
-                                     clicked (default: the stock HUD's bottom-right corner;
-                                     etc/minimap-calibrator.html reads it off a screenshot)
                   --trace <file>     record when the coach pressed and stepped, for etc/ghost-viewer.html
                   --log <file>       also append coaching feedback to this file
                   --audit <file>     record every question put to Jev and its answer (JSONL)
@@ -162,7 +150,7 @@ using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, appen
 using var audit = auditPath is null ? null : new JevAudit(auditPath);
 using var recording = recordPath is null
     ? null
-    : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor, minimap);
+    : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
 // One policy owns everything -- hands and feet -- because they are one set
 // of questions about one moment, and the model answers them together.
 var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
@@ -177,8 +165,7 @@ try
     Console.WriteLine($"coaching against {feedUri} with {model} — feedback to the console" +
         (logPath is null ? "" : $" and {logPath}") +
         (coach is null ? "" : $", served at http://localhost:{servePort}/stream") +
-        (recording is null ? "" : $"; ghost input recorded to {recordPath}, opened with {recording.Header}, "
-            + $"walks clicked on the minimap at {recording.Minimap}") +
+        (recording is null ? "" : $"; ghost input recorded to {recordPath}, opened with {recording.Header}") +
         (auditPath is null ? "" : $"; questions and answers to {auditPath}") +
         "; no input is sent anywhere");
     await reactor.RunAsync(cts.Token);
