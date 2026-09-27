@@ -36,6 +36,16 @@ public sealed record JevOptions
     public double YesAt { get; init; } = 0.6;
 
     /// <summary>
+    /// <see cref="YesAt"/> for the walk to a lane alone, set lower so the
+    /// coach walks the player back to the action more readily. On the
+    /// fixture, 898 asks: 310 at 0.6 or more, 41 more at 0.5–0.6 (mostly the
+    /// jungle or river with an enemy 900–1900 units off), and below 0.5 the
+    /// asks a step would be wrong for (standing in mid lane at 0.40–0.44, a
+    /// fight with Akali 182 units off at 0.44).
+    /// </summary>
+    public double WalkYesAt { get; init; } = 0.5;
+
+    /// <summary>
     /// How often, in video seconds, each movement question is asked: should
     /// they be heading to a lane, stepping back out of the enemy wave, going
     /// to catch a wave at their turret, or stepping into the brush? A good
@@ -481,7 +491,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var asked = frame.VideoTime;
         Ask("idle", moment, questions, asked, NowRequest, released: () => _askingIdle = false, answered: response =>
         {
-            if (!response.TryGet<NoulAnswer>("walk", out var walk) || !walk!.IsYes(_options.YesAt))
+            if (!response.TryGet<NoulAnswer>("walk", out var walk) || !walk!.IsYes(_options.WalkYesAt))
                 return;
             if (!response.TryGet<ChoiceAnswer>("lane", out var lane) || !RiftMap.Lanes.Contains(lane!.Choice))
                 return;
