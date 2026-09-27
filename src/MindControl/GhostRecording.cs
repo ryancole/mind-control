@@ -72,6 +72,13 @@ public sealed class GhostRecording : IDisposable
     /// </summary>
     public const double PxPerUnitAt1080 = 0.75;
 
+    /// <summary>
+    /// The attack-move key on the game's default bindings: pressed, then a
+    /// left-click on the ground, it orders a walk that stops to attack an
+    /// enemy in range on the way.
+    /// </summary>
+    public const string AttackMoveKey = "A";
+
     private readonly ProtocolFileWriter _writer;
     private readonly ushort _width, _height;
     private readonly (ushort X, ushort Y) _anchor;
@@ -161,7 +168,10 @@ public sealed class GhostRecording : IDisposable
     /// the minimap, one leg of the trip a second. An attack (a step with a <see cref="MoveStep.Target"/>)
     /// is the same click on the target itself, as far from the player's
     /// model as the target stands (<see cref="PxPerUnitAt1080"/>): a
-    /// right-click on an enemy is the order to attack it.
+    /// right-click on an enemy is the order to attack it. An
+    /// <see cref="MoveStep.AttackMove"/> lands on the same spot but is
+    /// ordered with <see cref="AttackMoveKey"/> and a left-click instead of
+    /// the right-click.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
@@ -172,6 +182,15 @@ public sealed class GhostRecording : IDisposable
                 WalkPxAt1080, (step.DistanceUnits ?? double.PositiveInfinity) * PxPerUnitAt1080) * _height / 1080),
             _ => OnTheGround(step, StepPx),
         };
+        if (step.AttackMove)
+        {
+            var key = UsageOf(AttackMoveKey);
+            return WriteAt(step.VideoTime,
+                new MouseMoveMessage(x, y),
+                new KeyDownMessage(key), new KeyUpMessage(key),
+                new MouseButtonsMessage(MouseButtons.Left),
+                new MouseButtonsMessage(MouseButtons.None));
+        }
         return WriteAt(step.VideoTime,
             new MouseMoveMessage(x, y),
             new MouseButtonsMessage(MouseButtons.Right),

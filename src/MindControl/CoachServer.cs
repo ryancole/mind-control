@@ -73,13 +73,15 @@ public sealed class CoachServer : IDisposable
     /// a screen-space unit vector. A sidestep is on the ground in front of
     /// the player and carries no place on the map; a walk carries the place
     /// it goes to as <c>destination</c>, and an attack the enemy it is on as
-    /// <c>target</c>.
+    /// <c>target</c>; <c>attack_move</c> is true for a walk ordered as an
+    /// attack-move.
     /// </summary>
     public void PublishStep(MoveStep step, int? gameTime, IReadOnlyList<Message>? input = null) =>
         Publish(new
         {
             T = "step", VideoTime = step.VideoTime, GameTime = gameTime,
             Direction = step.Direction, Dx = step.Dx, Dy = step.Dy, Destination = step.Destination, Target = step.Target,
+            AttackMove = step.AttackMove,
             Priority = step.Priority, Reason = step.Sentence, Model = _model,
             Input = Data(input),
         });

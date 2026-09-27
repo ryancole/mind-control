@@ -856,6 +856,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
                     DistanceUnits = length,
+                    AttackMove = true,
                 });
                 _lastMoveAt = asked;
                 Remember($"stepped toward {lane.Choice} lane", asked);
@@ -945,6 +946,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
                     DistanceUnits = length,
+                    AttackMove = true,
                 });
                 _lastMoveAt = asked;
                 Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);

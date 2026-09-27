@@ -117,8 +117,8 @@ the things the moment makes possible:
 | `step_back` | in a lane with an enemy minion near | a sidestep back down the lane |
 | `go_to_turret` | an enemy champion is on the screen, out of the base | said, not yet done |
 | `hide_in_brush` | a patch of brush is near and they stand in none | a step into it |
-| `catch_wave` | an enemy wave is at one of their turrets, away from them | a step toward it |
-| `walk_to_lane` | the game clock is running | a step toward the lane's wave |
+| `catch_wave` | an enemy wave is at one of their turrets, away from them | an attack-move step toward it |
+| `walk_to_lane` | the game clock is running | an attack-move step toward the lane's wave |
 | `recall` | out of the base, with the clock running | said, not yet done |
 | `buy` | in the fountain | said, not yet done |
 | `carry_on` | always, first | no order |
@@ -136,7 +136,7 @@ is no order.
 
 ```
 key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up  recorded: KeyDown Q (0x14), KeyUp Q (0x14)
-step[p2]: coach would have stepped right toward bot lane here: you are in the fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, MouseButtons Right, MouseButtons None
+step[p2]: coach would have attack-moved right toward bot lane here: you are in the fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None
 key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
 cue[p2]: coach would have recalled here: you are in bot lane at 5:00; 20% health; no enemy on the screen
 ```
@@ -154,7 +154,8 @@ and what the ghost's hands cannot yet do is not said again for
 the minimap shows both, to the enemy's front when it is alone at one of the
 player's turrets, and otherwise to where the lane is played. Whether standing
 somewhere is idling (in the fountain after the clock has started, yes; in lane
-waiting for minions, no) is the rubric's call, not a threshold in code. The
+waiting for minions, no; left at the turret while their own wave has pushed
+out beyond it, yes) is the rubric's call, not a threshold in code. The
 walks need a world-calibrated feed, since the map is read in game units.
 
 A skill point (`skill_point` events, off the level-up chevrons the HUD draws
@@ -252,7 +253,13 @@ patch of brush — is a longer click aimed that way, 300px at a screen 1080
 tall and scaled by height (400 units, more than a second's walk, so the
 model does not stop between clicks), or on the place itself once it is
 nearer than that: the coach walks in steps, one a second, and never clicks
-the minimap. It is a recording, not a connection: this tool never opens
+the minimap. A walk toward the fight — up a lane, to a wave — is ordered
+as an attack-move instead: the same spot, but `KeyDown A`, `KeyUp A` and a
+left button down and up in place of the right-click (the game's default
+attack-move binding), so the champion stops to attack an enemy that comes
+into range on the way. A step away from the fight — a run back, a step back,
+a dodge, a step into brush — stays a plain move, which never stops to shoot.
+It is a recording, not a connection: this tool never opens
 the device. The file stays open for the run, shared for reading, and the
 library's reader opens a file a writer still holds, so misdirection can play
 the recording by path while a run is still appending to it: a read sees every

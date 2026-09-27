@@ -53,6 +53,7 @@ public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHei
     /// also carries its <c>destination</c>, the place on the map the click on
     /// the minimap stands for; null for a sidestep on the ground. An attack
     /// carries its <c>target</c>, the enemy the click is on; null for a move.
+    /// <c>attack_move</c> is true for a walk ordered as an attack-move.
     /// </summary>
     public void WriteStep(MoveStep step, IReadOnlyList<Message>? input = null) => Write(new
     {
@@ -63,6 +64,7 @@ public sealed class GhostTrace(string path, ushort screenWidth, ushort screenHei
         Dy = step.Dy,
         Destination = step.Destination,
         Target = step.Target,
+        AttackMove = step.AttackMove,
         Priority = step.Priority,
         Reason = step.Reason,
         Input = input is null ? null : GhostRecording.AsData(input),
