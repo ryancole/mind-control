@@ -1627,6 +1627,64 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
+    public void A_point_the_player_leaves_lit_is_shown_again_until_they_spend_it()
+    {
+        // The coach's chord never reaches the game: the VOD's chevrons stay
+        // lit, so the point is still there to spend, and shown again every
+        // PointAgainEverySeconds, not every moment.
+        var (policy, jev) = Coach(baseline: Frame(450, Self(level: 7)));
+        jev.Script = Choose("level_up", ("slot", "Q"));
+        policy.OnEvent(SkillPoint(452.1));
+        Run(policy, 452.1, 463, Self(level: 7, learnable: ["Q", "W", "E"]));
+
+        var presses = policy.DrainKeys();
+        CollectionAssert.AreEqual(new[] { 452.1, 457.1, 462.1 }, presses.Select(p => p.VideoTime).ToArray());
+        Assert.IsTrue(presses.All(p => p.Chord == "Ctrl+Q"));
+        StringAssert.StartsWith(presses[1].Sentence, "coach would have pressed Ctrl+Q here: you have held the point from level 7 for 5.0s");
+
+        // Shown three times, but one point: one placement when it goes in.
+        policy.OnEvent(SkillSpent(463.2, 11.1));
+        Assert.AreEqual("the point went in after 11.1s; the coach's Ctrl+Q counted as its placement", policy.DrainCues().Single().Reason);
+    }
+
+    [TestMethod]
+    public void A_level_gained_under_a_lit_point_is_another_point_to_put_in()
+    {
+        // The chevrons stay lit and the lit set is the same, so the feed says
+        // nothing; the level rising under them is a second point.
+        var (policy, jev) = Coach(baseline: Frame(100, Self(level: 2)));
+        jev.Script = Choose("level_up", ("slot", "Q"));
+        policy.OnEvent(SkillPoint(100.5, "Q", "W", "E"));
+        policy.OnFrame(Frame(100.5, Self(level: 2, learnable: ["Q", "W", "E"])));
+        Assert.HasCount(1, policy.DrainKeys());
+        Assert.AreEqual(1, jev.Last.State.SkillPoint!.Waiting);
+
+        policy.OnEvent(SkillPoint(101.0, "Q", "W", "E"));
+        Run(policy, 101.0, 102.0, Self(level: 3, learnable: ["Q", "W", "E"]));
+        var press = policy.DrainKeys().Single();
+        Assert.AreEqual(101.0, press.VideoTime, "offered at once, not after the reminder's wait");
+        Assert.AreEqual(2, Levels(jev)[^1].State.SkillPoint!.Waiting);
+        StringAssert.Contains(press.Sentence, "you have 2 points waiting at level 3");
+
+        // A row flapping a level down and back is not a third.
+        Run(policy, 102.0, 103.0, Self(level: 2, learnable: ["Q", "W", "E"]));
+        Run(policy, 103.0, 104.0, Self(level: 3, learnable: ["Q", "W", "E"]));
+        Assert.IsEmpty(policy.DrainKeys());
+
+        policy.OnEvent(SkillSpent(104.2, 3.7));
+        Assert.AreEqual("the points went in after 3.7s; the coach's Ctrl+Q, Ctrl+Q counted as its placement", policy.DrainCues().Single().Reason);
+    }
+
+    [TestMethod]
+    public void Lit_chevrons_the_feed_never_announced_are_offered_from_the_row()
+    {
+        var (policy, jev) = Coach(baseline: Frame(200, Self(level: 4)));
+        Run(policy, 200.1, 201, Self(level: 4, learnable: ["Q", "W", "E"]));
+        Assert.IsNotEmpty(Levels(jev));
+        CollectionAssert.AreEqual(new[] { "Q", "W", "E" }, Lit(jev.Last));
+    }
+
+    [TestMethod]
     public void A_point_already_waiting_at_the_baseline_is_offered_from_the_frames()
     {
         // After a gap the feed does not announce a point it already showed;
