@@ -29,7 +29,7 @@ public static class CoachQuestions
         + "the player going on with what they are already doing. Each option says when it is the right one. "
         + "Where more than one is right, the one earliest in this order wins: `level_up` (it takes no time "
         + "and is never in the way of anything else); `run_away`; `use_ability`; `attack`; `step_back`; "
-        + "`go_to_turret`; `hide_in_brush`; `catch_wave`; `walk_to_lane`; `recall`; `buy`. Pick `carry_on` "
+        + "`hide_in_brush`; `catch_wave`; `walk_to_lane`; `recall`; `buy`. Pick `carry_on` "
         + "when none of the offered options is right: a good player does not click for the sake of clicking. "
         + "`coach` lists what you, the coach, did in the last few seconds: a button pressed or an attack ordered "
         + "moments ago is still being carried out, but a step is not a reason to hold the next one, since a "
@@ -157,22 +157,32 @@ public static class CoachQuestions
         + "them: the fight decides where they stand, not the minions.";
 
     /// <summary>
-    /// Out of the fight, toward safety. Said, not yet clicked: the coach
-    /// names it and the ghost's hand does nothing.
+    /// Back to cover: a turret, an ally, the player's own minions. Where the
+    /// player stands against their minions and their team is in `minions` and
+    /// `cover`; when that is too far forward, or the lane is lost, is decided
+    /// here, and which cover <see cref="WhichRefuge"/> picks.
     /// </summary>
     public const string RunAwayOption =
-        "run_away: turn from the visible enemies and get away toward the player's own base. Right when the "
-        + "player's health is about 0.35 or less with an enemy champion close on the screen, or when more enemy "
-        + "champions than allies stand close to them and the fight is not theirs. Not when the fight is theirs "
-        + "(their health no lower than the enemy's, and not outnumbered), and not when no enemy champion is close.";
+        "run_away: a step back to cover: the nearest of the player's own turrets still standing, an ally, or "
+        + "behind their own minions (`cover.refuges`, nearest first). Right when an enemy champion is near them "
+        + "on the screen (`visible_enemies[].distance_units` under about 1200) and they stand out ahead with "
+        + "nothing between them and it: in front of their own minions (`minions.ahead_of_our_front_units` above 0, "
+        + "or none of their minions on the screen while enemy minions are), or ahead of their team "
+        + "(`cover.allies_nearer_the_enemy` 0, with no ally close beside them). Right too when an enemy champion is "
+        + "on the screen and the player is on the losing side of the lane: lower on health than that enemy, or "
+        + "facing more enemy champions than they have allies near, with one of their own turrets in "
+        + "`cover.refuges` to shelter under. A champion out ahead of their "
+        + "wave and their team takes every enemy's attention alone, with nothing to shoot first and nobody to help, "
+        + "which is how a player is caught; a good player gets back behind something before the enemy commits. "
+        + "Not when they stand behind their own minions' front or beside an ally with the lane even, not when they "
+        + "stand under their own turret already, and not when no enemy champion is near.";
 
-    /// <summary>Back under one of the player's own turrets. Said, not yet clicked.</summary>
-    public const string GoToTurretOption =
-        "go_to_turret: fall back to stand under the nearest of the player's own turrets that still stands "
-        + "(`whereabouts.lanes[].your_turrets`). Right when an enemy champion is on the screen and the player is "
-        + "on the losing side of the lane without being in danger yet: lower on health than the enemy, or facing "
-        + "more of them, with one of their own turrets near enough to shelter under. Not when the lane is even, "
-        + "not when the danger is close enough to run from, and not when no enemy champion is on the screen.";
+    public const string WhichRefuge =
+        "If the player were to run back now, to where? Each option is a refuge: one of their own turrets, an "
+        + "ally, or behind their own minions, with how far and which way it is, whether it lies toward their base, "
+        + "and how far the nearest enemy champion stands from it. The nearest, since the point is to be covered "
+        + "soon; but never one the nearest enemy champion stands nearer to than the player does, since running "
+        + "there is running at them.";
 
     /// <summary>
     /// Asked of a player anywhere but a lane's action: should they be
@@ -285,12 +295,21 @@ public static class CoachQuestions
         + "screen: the lane's patch whose nearest enemy minion is closest to it, since that is the one they can "
         + "still last-hit from; whether it lies toward their base does not matter here. Otherwise the nearest.";
 
-    /// <summary>Home by the recall channel. Said, not yet keyed.</summary>
+    /// <summary>
+    /// Home by the recall channel, the B key. The player's health and mana are
+    /// in `player`, what they are safe by in `cover`; when it is time to go
+    /// home is decided here.
+    /// </summary>
     public const string RecallOption =
-        "recall: channel the recall back to base. Right when the player's health is about 0.3 or less, or their "
-        + "mana too low to cast what they need, and no enemy champion is on the screen to interrupt the channel. "
-        + "Not with an enemy champion on the screen, since damage breaks the channel; not when their health and "
-        + "mana are healthy; and not when the coach said it moments ago (`coach`).";
+        "recall: press B to channel the recall back to base: eight seconds standing still, broken by any move "
+        + "and by any damage. Right when no enemy champion is on the screen and any of these holds: their health "
+        + "is about 0.3 or less (`player.health`); their mana is about 0.1 or less (`player.mana`), too little to "
+        + "cast what they need; or they have nothing to be safe by: `cover.you_are_by` names none of their turrets "
+        + "and not `your minions`, and no turret of theirs in `cover.refuges` is within about 2500 units, so "
+        + "whatever finds them there finds them alone. Not with an enemy champion on the screen, since damage "
+        + "breaks the channel. Not while they are on their way out to a lane, a wave or their team with health "
+        + "and mana to spare (`coach` shows a step toward one in the last few seconds): going out is what the "
+        + "walk is for. Not when their health and mana are healthy and a turret or their minions are by them.";
 
     /// <summary>The shop, from the fountain. Said, not yet keyed.</summary>
     public const string BuyOption =
