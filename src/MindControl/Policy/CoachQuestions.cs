@@ -188,16 +188,19 @@ public static class CoachQuestions
         + "that is the minions the minimap shows in it: how many of each side's, how far each side's front has "
         + "pushed (0 is the player's own nexus, 1 the enemy's, the middle of the lane about 0.5) and where the two "
         + "waves meet, and how far that is from the player; an empty one is a lane the minimap shows no minions in. "
-        + "When the lanes carry no `wave`, the minions were not read, so read a lane as its wave. Right when they "
-        + "are in the fountain or their own base and nothing keeps them there. At the start of the game a good "
-        + "player spends the first half minute or so buying and is on the way to lane by about 0:45, well before "
-        + "the first minions meet around 1:30: standing in the fountain before then, with the allies still in base "
+        + "When the lanes carry no `wave`, the minions were not read, so read a lane as its wave. Each lane's "
+        + "`walk_to` is the farthest spot up it the player can walk to safely: their farthest turret still "
+        + "standing, or behind their own minions when those have pushed beyond it, never into the enemy's; and "
+        + "`you_are` says whether the player is short of that spot, at it, or past it. Right when they are in "
+        + "the fountain or their own base and nothing keeps them there. At the start of the game a good player "
+        + "spends the first half minute or so buying and is on the way to lane by about 0:45, well before the "
+        + "first minions meet around 1:30: standing in the fountain before then, with the allies still in base "
         + "too, is shopping, not idling, and after it is. After a recall or a respawn later in the game they buy "
-        + "in a few seconds and walk straight back out. Right when they are in the jungle or river with no enemy "
-        + "on the screen and nothing to do there. Not when they are already in a lane: being in lane, waiting for "
-        + "the minions or holding ground against a visible enemy, is laning, not idling. The one exception is a "
-        + "lane whose `wave` meets far up it from where they are, thousands of units off with no enemy on the "
-        + "screen: that is waiting at the wrong end of the lane, and right. Not when an enemy is on the screen "
+        + "in a few seconds and walk straight back out. Right when they are in a lane but `short of it`: back at "
+        + "their own inner or inhibitor turret with the lane's safe spot far up it is still the walk out, not "
+        + "laning. Right when they are in the jungle or river with no enemy on the screen and nothing to do "
+        + "there. Not when they are `at it` or `past it` in a lane: being there, waiting for the minions or "
+        + "holding ground against a visible enemy, is laning, not idling. Not when an enemy is on the screen "
         + "near them, because then the moment is about that enemy. Whether they stand or are already walking "
         + "makes no difference.";
 
@@ -208,8 +211,9 @@ public static class CoachQuestions
         + "farm for gold is the one in their own lane, so go by the champion's role first (a marksman or a "
         + "support belongs in bot lane, a mid champion in mid, a top champion in top), then by the allies: "
         + "the lane their partner or their team is in, and not a lane that already has the allies it needs. "
-        + "Where an option says where its minions meet, that is where the walk goes; it does not change which "
-        + "lane is theirs. Distance decides only between lanes that are otherwise equally theirs.";
+        + "Where an option says how far it is safe to walk, that is where the walk goes; neither it nor where "
+        + "the minions are changes which lane is theirs. Distance decides only between lanes that are "
+        + "otherwise equally theirs.";
 
     /// <summary>
     /// Offered while an enemy wave is at one of the player's turrets and the

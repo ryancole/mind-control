@@ -41,10 +41,12 @@ public sealed class ScreenDirectionsTests
     }
 
     [TestMethod]
-    public void Toward_base_is_down_left_on_the_screen()
+    public void Toward_base_is_down_left_on_the_screen_from_blue_and_up_right_from_red()
     {
-        Assert.AreEqual(1.0, ScreenDirections.TowardBase(-1, 1), 1e-9);
-        Assert.AreEqual(-1.0, ScreenDirections.TowardBase(1, -1), 1e-9);
-        Assert.AreEqual(0.0, ScreenDirections.TowardBase(1, 1), 1e-9);
+        Assert.AreEqual(1.0, RiftMap.Blue.TowardBase(-1, 1), 1e-9);
+        Assert.AreEqual(-1.0, RiftMap.Blue.TowardBase(1, -1), 1e-9);
+        Assert.AreEqual(0.0, RiftMap.Blue.TowardBase(1, 1), 1e-9);
+        Assert.AreEqual(1.0, RiftMap.Red.TowardBase(1, -1), 1e-9);
+        Assert.AreEqual(-1.0, RiftMap.Red.TowardBase(-1, 1), 1e-9);
     }
 }

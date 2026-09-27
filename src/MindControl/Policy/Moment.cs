@@ -16,8 +16,12 @@ namespace MindControl.Policy;
 /// </summary>
 public sealed record Moment
 {
-    /// <summary>The standing brief that opens every state.</summary>
-    public const string SettingText =
+    /// <summary>
+    /// The standing brief that opens every state, for a player on
+    /// <paramref name="side"/>: their base is the lower left of the map from
+    /// blue and the upper right from red, and the camera never turns.
+    /// </summary>
+    public static string SettingFrom(MapSide side) =>
         "League of Legends on Summoner's Rift, seen from the coached player's own screen. "
         + "You sit in a coach's seat over their shoulder, deciding what a good player would do "
         + "in their place at this exact moment. Everything below is what the player can see: "
@@ -29,7 +33,7 @@ public sealed record Moment
         + "stands in them from enemies outside; brush is part of the map, so where it lies is known, but whether an unseen "
         + "enemy is standing in it is not). Enemies hidden in fog of war are not listed, because the player cannot "
         + "see them. Distances are in game units; directions are as they appear on the player's "
-        + "screen, where their own base is at the lower left. `coach` lists what you, the coach, "
+        + $"screen, where their own base is at the {(side == MapSide.Blue ? "lower left" : "upper right")}. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself; `skill_point`, when present, is an "
         + "ability point waiting on their HUD to be spent.";
 
@@ -41,7 +45,7 @@ public sealed record Moment
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    public string Setting { get; init; } = SettingText;
+    public string Setting { get; init; } = SettingFrom(MapSide.Blue);
     public double VideoTime { get; init; }
     public string? GameClock { get; init; }
     public PlayerFacts? Player { get; init; }
@@ -149,6 +153,23 @@ public sealed record LaneFacts(string Lane, double DistanceUnits, string? Screen
 
     /// <summary>The enemy's turrets in the lane, likewise.</summary>
     public LaneTurretFacts? TheirTurrets { get; init; }
+
+    /// <summary>
+    /// The farthest spot up the lane the player can walk to safely
+    /// (<see cref="RiftMap.WalkTo"/>): "your outer turret", "behind your
+    /// minions", and how far it is and which way on the screen (no direction
+    /// when the player stands on it).
+    /// </summary>
+    public string? WalkTo { get; init; }
+    public double? WalkToUnitsAway { get; init; }
+    public string? WalkToScreenDirection { get; init; }
+
+    /// <summary>
+    /// Where the player stands against <see cref="WalkTo"/>, along the lane:
+    /// "short of it", "at it" or "past it". Only for the lane they stand in,
+    /// or every lane from their own base; null from anywhere else.
+    /// </summary>
+    public string? YouAre { get; init; }
 }
 
 /// <summary>

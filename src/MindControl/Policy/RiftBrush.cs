@@ -3,8 +3,8 @@ namespace MindControl.Policy;
 /// <summary>
 /// The brush on Summoner's Rift: the 39 patches of tall grass, where a
 /// champion standing inside cannot be seen by an enemy outside. Pure
-/// geometry, in the same game units as <see cref="RiftMap"/> (the player's
-/// base at the origin, y growing north): which patch a point stands in, which
+/// geometry, in the same game units as <see cref="RiftMap"/> (blue's base
+/// in the lower left, y growing north): which patch a point stands in, which
 /// are near it and how far, and where on the map each lies. It decides
 /// nothing about whether anyone should be in one.
 /// </summary>
@@ -51,20 +51,32 @@ public static class RiftBrush
     /// <summary>One patch of brush: every cell a champion can stand on in it, and its middle.</summary>
     public sealed record Patch((double X, double Y)[] Cells, double X, double Y)
     {
-        /// <summary>
-        /// Where on the map the patch lies, as a coach says it: "bot lane",
-        /// "the river", "your jungle", "their jungle", the last three with
-        /// the side of mid ("the river, bot side").
-        /// </summary>
-        public string Place { get; } = PlaceOf(X, Y);
+        private readonly (string Place, MapSide? Jungle) _where = WhereOf(X, Y);
 
-        /// <summary>As a coach names it: "the bot lane brush", "a river brush, bot side", "a brush in your jungle, top side".</summary>
-        public string Name => Place.EndsWith(" lane") ? $"the {Place} brush"
-            : Place.StartsWith("the river") ? $"a river brush{Place["the river".Length..]}"
-            : $"a brush in {Place}";
+        /// <summary>
+        /// Where on the map the patch lies, as a coach from
+        /// <paramref name="side"/> says it: "bot lane", "the river", "your
+        /// jungle", "their jungle", the last three with the side of mid ("the
+        /// river, bot side").
+        /// </summary>
+        public string PlaceFrom(MapSide side) => _where.Jungle is { } jungle
+            ? $"{(jungle == side ? "your" : "their")} jungle, {_where.Place}"
+            : _where.Place;
+
+        /// <summary>As a coach from <paramref name="side"/> names it: "the bot lane brush", "a river brush, bot side", "a brush in your jungle, top side".</summary>
+        public string NameFrom(MapSide side)
+        {
+            var place = PlaceFrom(side);
+            return place.EndsWith(" lane") ? $"the {place} brush"
+                : place.StartsWith("the river") ? $"a river brush{place["the river".Length..]}"
+                : $"a brush in {place}";
+        }
+
+        /// <summary>Whether the patch is in the jungle of the side opposite <paramref name="side"/>.</summary>
+        public bool InEnemyJungle(MapSide side) => _where.Jungle is { } jungle && jungle != side;
 
         /// <summary>The lane the patch belongs to, or null when it is in the river or a jungle.</summary>
-        public string? Lane => Place.EndsWith(" lane") ? Place[..^" lane".Length] : null;
+        public string? Lane => _where.Place.EndsWith(" lane") ? _where.Place[..^" lane".Length] : null;
 
         /// <summary>How far a point is from the patch's nearest cell, and that cell.</summary>
         public (double Distance, double X, double Y) Nearest(double x, double y)
@@ -97,17 +109,21 @@ public static class RiftBrush
             .ToArray();
     }
 
-    /// <summary>Where a patch at (<paramref name="x"/>, <paramref name="y"/>) lies, as <see cref="Patch.Place"/> says it.</summary>
-    private static string PlaceOf(double x, double y)
+    /// <summary>
+    /// Where a patch at (<paramref name="x"/>, <paramref name="y"/>) lies:
+    /// its lane, the river, or the side of mid of a jungle and whose jungle
+    /// that is, blue's below the river and red's above it.
+    /// </summary>
+    private static (string Place, MapSide? Jungle) WhereOf(double x, double y)
     {
         var lane = RiftMap.Lanes.MinBy(l => RiftMap.Toward(l, x, y).Distance)!;
         if (RiftMap.Toward(lane, x, y).Distance <= LaneBrushReach)
-            return $"{lane} lane";
+            return ($"{lane} lane", null);
         var side = y > x ? "top side" : "bot side";
         var offRiver = (x + y - RiverLine) / Math.Sqrt(2);
         if (Math.Abs(offRiver) <= RiverHalfWidth)
-            return $"the river, {side}";
-        return offRiver < 0 ? $"your jungle, {side}" : $"their jungle, {side}";
+            return ($"the river, {side}", null);
+        return (side, offRiver < 0 ? MapSide.Blue : MapSide.Red);
     }
 
     /// <summary>The patch a point stands in, or null when it stands in none.</summary>
