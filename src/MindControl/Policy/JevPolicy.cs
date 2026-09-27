@@ -230,6 +230,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly ConcurrentQueue<Action> _arrivals = new();
     private int _generation;
     private bool _deciding;
+
+    // Activity since the health log last drained it (DrainActivity): frames
+    // seen and how many had no self in them, whose seat the coach took the
+    // latest one to be, roots with nothing to offer, roots asked, and each
+    // answer by its pick ("carry_on", a pick below DecideAt as "weak").
+    private int _framesSeen, _framesWithoutSelf, _nothingToOffer, _rootsAsked;
+    private string? _seatSeen;
+    private readonly SortedDictionary<string, int> _answers = new(StringComparer.Ordinal);
     private double _lastDecideAt = double.NegativeInfinity;
 
     // What the coach last did, by kind, for the pace of the next.
@@ -363,7 +371,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (Carried(frame, r => r.Turrets) is { } turrets)
             _turrets = turrets;
         _minionTracks.Update(frame.VideoTime, Carried(frame, r => r.Minions));
-        if (Self() is { } self)
+        _framesSeen++;
+        var seat = Self();
+        _seatSeen = seat is null ? null : seat.Champion ?? $"unnamed track {seat.TrackId}";
+        if (seat is null)
+            _framesWithoutSelf++;
+        if (seat is { } self)
         {
             if (self.Resource is { } resource)
                 _resource = resource;
@@ -407,6 +420,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         }
         Settle();
     }
+
+    public string? DrainActivity()
+    {
+        if (_framesSeen == 0)
+            return null;
+        var seat = _framesWithoutSelf == _framesSeen ? $"no player row in {_framesSeen} frames"
+            : _framesWithoutSelf > 0 ? $"player {_seatSeen ?? "lost"}, missing from {_framesWithoutSelf} of {_framesSeen} frames"
+            : $"player {_seatSeen}";
+        var answers = _answers.Count == 0 ? "" : $" ({string.Join(", ", _answers.Select(a => $"{a.Key} {a.Value}"))})";
+        var nothing = _nothingToOffer > 0 ? $", nothing to offer {_nothingToOffer}" : "";
+        var line = $"{seat}; asked {_rootsAsked}{answers}{nothing}";
+        _framesSeen = _framesWithoutSelf = _nothingToOffer = _rootsAsked = 0;
+        _answers.Clear();
+        return line;
+    }
+
+    private void Tally(string answer) => _answers[answer] = _answers.GetValueOrDefault(answer) + 1;
 
     // --- The moment itself: what a good player would do now ---
 
@@ -461,7 +491,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Buy(frame, self, moment, asked),
         }.OfType<Branch>().ToArray();
         if (branches.Length == 0)
+        {
+            _nothingToOffer++;
             return;
+        }
 
         var criteria = new ChoiceCriteria { [CarryOn] = CoachQuestions.CarryOnOption };
         foreach (var branch in branches)
@@ -472,12 +505,25 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         _deciding = true;
         _lastDecideAt = asked;
+        _rootsAsked++;
         Ask("decide", moment, questions, asked, NowRequest, released: () => _deciding = false, answered: response =>
         {
-            if (!response.TryGet<ChoiceAnswer>("decide", out var decide) || decide!.Choice == CarryOn)
+            if (!response.TryGet<ChoiceAnswer>("decide", out var decide))
+            {
+                Tally("unreadable");
                 return;
+            }
+            if (decide!.Choice == CarryOn)
+            {
+                Tally(CarryOn);
+                return;
+            }
             if (decide.Probabilities.GetValueOrDefault(decide.Choice) < _options.DecideAt)
+            {
+                Tally($"{decide.Choice} (weak)");
                 return;
+            }
+            Tally(decide.Choice);
             branches.FirstOrDefault(b => b.Option == decide.Choice)?.Act(response);
         });
     }
@@ -1672,6 +1718,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     return;
                 if (response is null)
                 {
+                    if (occasion == "decide")
+                        Tally("no answer");
                     Fail(videoTime, error ?? "no answer");
                     return;
                 }
@@ -2128,7 +2176,21 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             _selfVotes.Remove(name);
     }
 
-    private ChampionRow? Self() => (_options.SelfChampion ?? _selfName) is { } name
-        ? _frame?.Champions.FirstOrDefault(c => c.Champion == name)
-        : _frame?.Champions.FirstOrDefault(c => c.IsSelf);
+    /// <summary>
+    /// The player's row in the current frame: the one carrying their name
+    /// (given, or the majority of the rows the camera flagged), or else the
+    /// flagged row when it carries no name at all -- the player's own seat on
+    /// a frame whose name the reader has not (yet) put to it. Without that
+    /// fallback a name seen once and then lost leaves no self in any frame,
+    /// and the coach says nothing for as long as it stays lost.
+    /// </summary>
+    private ChampionRow? Self()
+    {
+        if (_frame is not { } frame)
+            return null;
+        var flagged = frame.Champions.FirstOrDefault(c => c.IsSelf);
+        return (_options.SelfChampion ?? _selfName) is { } name
+            ? frame.Champions.FirstOrDefault(c => c.Champion == name) ?? (flagged is { Champion: null } ? flagged : null)
+            : flagged;
+    }
 }

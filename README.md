@@ -69,6 +69,13 @@ etc/dev.ps1 -Log data/coaching.log  # also append it to a file
 
 `dotnet test` needs nothing running.
 
+The `health:` line every five seconds ends with what the coach did in that
+stretch: `coach: player Twitch; asked 18 (carry_on 17, buy 1)`. A silent
+coach is then one of three things: `no player row` (it could not find the
+player, so nothing was asked), `nothing to offer`, or answers that were all
+`carry_on` or `(weak)`, below `DecideAt` — the rubric's call, which
+`--audit` shows the state behind.
+
 The execution-coaching fixture is `data/coach-full-20260902-222718.jsonl`
 (local, gitignored): the whole of `Recording 2026-08-30 200315` exported with
 `--coach` by spectral-sight's gated build of 2026-09-02, video 142–1121s. To

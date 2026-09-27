@@ -123,6 +123,14 @@ public interface IPolicy
     /// <summary>Steps the coach would have taken since the last drain.</summary>
     IReadOnlyList<MoveStep> DrainMoves() => [];
 
+    /// <summary>
+    /// What the coach did since the last drain, as one line for the health
+    /// log (who it took the player to be, what it asked and what came back),
+    /// so a silent stretch says whether nothing was asked or every answer
+    /// was no order; null when there is nothing to say.
+    /// </summary>
+    string? DrainActivity() => null;
+
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);
 

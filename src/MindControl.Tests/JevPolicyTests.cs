@@ -1691,6 +1691,35 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
+    public void Self_is_the_flagged_row_when_the_name_it_was_known_by_is_lost()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 180, Idle()));
+        var asked = jev.Asks.Count;
+
+        // The reader loses the name: the flagged row carries none from here on.
+        var unnamed = Idle() with { Champion = null };
+        for (var t = 100.5; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 180, unnamed));
+        Assert.IsGreaterThan(asked, jev.Asks.Count, "the coach went silent when the player's name was lost");
+        Assert.AreEqual("?", jev.Last.State.Player!.Champion);
+    }
+
+    [TestMethod]
+    public void The_activity_line_tells_no_player_from_answers_of_no_order()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 180));
+        Assert.AreEqual("no player row in 1 frames; asked 0", policy.DrainActivity());
+
+        jev.Script = Choose("carry_on");
+        for (var t = 101.0; t <= 102.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 180, Idle()));
+        Assert.AreEqual("player Ezreal; asked 4 (carry_on 4)", policy.DrainActivity());
+        Assert.IsNull(policy.DrainActivity(), "drained");
+    }
+
+    [TestMethod]
     public void An_identity_correction_migrates_the_self_majority()
     {
         var (policy, jev) = Coach(new JevOptions(), baseline: Frame(0, Self(), Ally(3, 3000, 3000)));
