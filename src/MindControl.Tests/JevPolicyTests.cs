@@ -491,21 +491,23 @@ public sealed class JevPolicyTests
         Assert.IsLessThan(0, steps[0].Dy, "screen y grows down");
         Assert.AreEqual(1, Math.Round(double.Hypot(steps[0].Dx, steps[0].Dy), 6));
         Assert.AreEqual(2, steps[0].Priority);
+        var (x, y) = RiftMap.Blue.At("bot", RiftMapTests.Progress(RiftMap.Blue, "bot", "outer"));
+        var length = double.Hypot(x - 400, y - 460);
         Assert.AreEqual(
             "coach would have stepped right toward bot lane here: you are in the fountain at 0:50; "
-            + "a good player would be on the way to bot lane (12086 units right)",
+            + $"a good player would be on the way up bot lane (your outer turret, {length:0} units right)",
             steps[0].Sentence);
         StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.4s in the fountain");
-        // Aimed at where bot lane is played, not its nearest point (the
-        // lane's mouth just outside the base); the recording clicks a step
-        // that way on the ground.
-        Assert.AreEqual(new Destination("bot lane", 12400, 1900), steps[0].Destination);
-        Assert.AreEqual(12086, steps[0].DistanceUnits!.Value, 1);
+        // Aimed at the farthest turret standing, not the lane's nearest point
+        // (its mouth just outside the base); the recording clicks a step that
+        // way on the ground.
+        Assert.AreEqual(new Destination("bot lane", x, y), steps[0].Destination);
+        Assert.AreEqual(length, steps[0].DistanceUnits!.Value, 1);
         var reminded = Offering(jev, "walk_to_lane")[^1].State.Coach;
         Assert.AreEqual("stepped toward bot lane", reminded[^1].Did);
         Assert.AreEqual(1.2, reminded[^1].SecondsAgo, "the step before, still being walked");
         Assert.IsEmpty(policy.DrainKeys());
-        Assert.IsEmpty(policy.DrainCues());
+        CollectionAssert.AreEqual(new[] { "you play from the blue side" }, policy.DrainCues().Select(c => c.Reason).ToArray());
     }
 
     [TestMethod]
@@ -591,32 +593,32 @@ public sealed class JevPolicyTests
     [TestMethod]
     public void The_enemy_front_is_placed_by_our_turrets()
     {
-        Assert.AreEqual("in their half of the lane", RiftMap.EnemyFrontPlace("bot", 0.8));
-        Assert.AreEqual("in your half of the lane, short of your outer turret", RiftMap.EnemyFrontPlace("bot", 0.45),
+        Assert.AreEqual("in their half of the lane", RiftMap.Blue.EnemyFrontPlace("bot", 0.8));
+        Assert.AreEqual("in your half of the lane, short of your outer turret", RiftMap.Blue.EnemyFrontPlace("bot", 0.45),
             "bot's outer turret stands far up the lane");
-        Assert.AreEqual("at your outer turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 10500, 1250).Progress));
-        Assert.AreEqual("at your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress));
-        Assert.AreEqual("at or past your inhibitor turret", RiftMap.EnemyFrontPlace("top", RiftMap.Along("top", 1253, 4400).Progress));
-        Assert.IsFalse(RiftMap.AtOurTurret("mid", 0.5));
-        Assert.IsTrue(RiftMap.AtOurTurret("mid", RiftMap.Along("mid", 5846, 6396).Progress));
+        Assert.AreEqual("at your outer turret", RiftMap.Blue.EnemyFrontPlace("bot", RiftMap.Blue.Along("bot", 10500, 1250).Progress));
+        Assert.AreEqual("at your inner turret", RiftMap.Blue.EnemyFrontPlace("bot", RiftMap.Blue.Along("bot", 7000, 1480).Progress));
+        Assert.AreEqual("at or past your inhibitor turret", RiftMap.Blue.EnemyFrontPlace("top", RiftMap.Blue.Along("top", 1253, 4400).Progress));
+        Assert.IsFalse(RiftMap.Blue.AtOurTurret("mid", 0.5));
+        Assert.IsTrue(RiftMap.Blue.AtOurTurret("mid", RiftMap.Blue.Along("mid", 5846, 6396).Progress));
     }
 
     [TestMethod]
     public void A_wave_at_a_fallen_turret_is_placed_on_the_way_to_the_next_one_in()
     {
-        var atOuter = RiftMap.Along("bot", 10500, 1250).Progress;
-        Assert.AreEqual("at your outer turret", RiftMap.EnemyFrontPlace("bot", atOuter, _ => true));
+        var atOuter = RiftMap.Blue.Along("bot", 10500, 1250).Progress;
+        Assert.AreEqual("at your outer turret", RiftMap.Blue.EnemyFrontPlace("bot", atOuter, _ => true));
         Assert.AreEqual("past your fallen outer turret, on the way to your inner turret",
-            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier != "outer"));
+            RiftMap.Blue.EnemyFrontPlace("bot", atOuter, tier => tier != "outer"));
         Assert.AreEqual("past your fallen outer and inner turrets, on the way to your inhibitor turret",
-            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier == "inhibitor"));
+            RiftMap.Blue.EnemyFrontPlace("bot", atOuter, tier => tier == "inhibitor"));
         Assert.AreEqual("past your fallen outer, inner and inhibitor turrets, on the way to your nexus",
-            RiftMap.EnemyFrontPlace("bot", atOuter, _ => false));
+            RiftMap.Blue.EnemyFrontPlace("bot", atOuter, _ => false));
         Assert.AreEqual("past your fallen outer turret, on the way to your inner turret (the minimap has not shown whether it stands)",
-            RiftMap.EnemyFrontPlace("bot", atOuter, tier => tier == "outer" ? false : null));
+            RiftMap.Blue.EnemyFrontPlace("bot", atOuter, tier => tier == "outer" ? false : null));
         Assert.AreEqual("at your outer turret (the minimap has not shown whether it stands)",
-            RiftMap.EnemyFrontPlace("bot", atOuter, _ => null), "not called is not fallen");
-        Assert.AreEqual("at your inner turret", RiftMap.EnemyFrontPlace("bot", RiftMap.Along("bot", 7000, 1480).Progress,
+            RiftMap.Blue.EnemyFrontPlace("bot", atOuter, _ => null), "not called is not fallen");
+        Assert.AreEqual("at your inner turret", RiftMap.Blue.EnemyFrontPlace("bot", RiftMap.Blue.Along("bot", 7000, 1480).Progress,
             tier => tier != "outer"), "a turret the wave is already past is not named");
     }
 
@@ -646,7 +648,7 @@ public sealed class JevPolicyTests
 
         var step = policy.DrainMoves().Single();
         // The enemy's front, its dot nearest our base, as the facts round it.
-        var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
+        var (x, y) = RiftMap.Blue.At("bot", Math.Round(RiftMap.Blue.Along("bot", 10300, 1260).Progress, 2));
         Assert.AreEqual("bot lane", step.Destination!.Name);
         Assert.AreEqual(x, step.Destination.X, 1e-6);
         Assert.AreEqual(y, step.Destination.Y, 1e-6);
@@ -672,7 +674,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_walk_to_lane_goes_to_an_enemy_wave_alone_at_their_turret()
+    public void A_walk_to_lane_stops_short_of_an_enemy_wave_alone_at_their_turret()
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("walk_to_lane", ("lane", "bot"));
@@ -680,9 +682,11 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 400, self));
 
-        var (x, y) = RiftMap.At("bot", Math.Round(RiftMap.Along("bot", 10300, 1260).Progress, 2));
+        var front = Math.Round(RiftMap.Blue.Along("bot", 10300, 1260).Progress, 2);
+        var (x, y) = RiftMap.Blue.At("bot", front - RiftMap.WalkBehindUnits / RiftMap.Length("bot"));
         var walk = policy.DrainMoves().First(m => m.Destination is not null);
-        Assert.AreEqual(new Destination("bot lane", x, y), walk.Destination, "not past it, to where the lane is played");
+        Assert.AreEqual(new Destination("bot lane", x, y), walk.Destination, "not into it, not past it to the turret");
+        StringAssert.Contains(walk.Reason, "on the way up bot lane (short of the enemy minions, ");
     }
 
     /// <summary>All 22 turrets standing, but for the ones named: (team, lane, tier) to their reading.</summary>
@@ -764,8 +768,8 @@ public sealed class JevPolicyTests
         var lanes = jev.Last.State.Whereabouts!.Lanes;
         var bot = lanes.Single(l => l.Lane == "bot").Wave!;
         Assert.AreEqual((2, 3), (bot.OurMinions, bot.TheirMinions));
-        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 11100, 1350).Progress, 2), bot.OurFront, "our front is our foremost dot");
-        Assert.AreEqual(Math.Round(RiftMap.Along("bot", 11650, 1480).Progress, 2), bot.TheirFront, "theirs is their foremost toward us");
+        Assert.AreEqual(Math.Round(RiftMap.Blue.Along("bot", 11100, 1350).Progress, 2), bot.OurFront, "our front is our foremost dot");
+        Assert.AreEqual(Math.Round(RiftMap.Blue.Along("bot", 11650, 1480).Progress, 2), bot.TheirFront, "theirs is their foremost toward us");
         Assert.AreEqual("in your half of the lane, short of your outer turret", bot.TheirFrontPlace);
         Assert.AreEqual(Math.Round((bot.OurFront!.Value + bot.TheirFront!.Value) / 2, 2), bot.MeetAt);
         Assert.AreEqual("right", bot.MeetScreenDirection);
@@ -797,7 +801,7 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_walk_goes_to_where_the_lanes_waves_meet_when_the_minimap_shows_both()
+    public void A_walk_goes_behind_our_minions_when_they_fight_beyond_the_turret()
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("walk_to_lane", ("lane", "bot"));
@@ -805,15 +809,19 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 180, self));
 
-        var meet = jev.Asks[0].State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!.MeetAt!.Value;
-        var (x, y) = RiftMap.At("bot", meet);
+        var bot = jev.Asks[0].State.Whereabouts!.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual("behind your minions", bot.WalkTo);
+        Assert.AreEqual("short of it", bot.YouAre, "from the fountain");
+        var (x, y) = RiftMap.Blue.At("bot", bot.Wave!.OurFront!.Value - RiftMap.WalkBehindUnits / RiftMap.Length("bot"));
         var step = policy.DrainMoves().First();
         Assert.AreEqual(new Destination("bot lane", x, y), step.Destination);
-        StringAssert.Contains(step.Reason, "a good player would be on the way to bot lane's minion wave");
+        StringAssert.Contains(step.Reason, "a good player would be on the way up bot lane (behind your minions, ");
+        StringAssert.Contains((string)((ChoiceQuestion)jev.Asks[0].Questions["lane"]).Criteria["bot"]!,
+            "; the farthest it is safe to walk: behind your minions, ");
     }
 
     [TestMethod]
-    public void A_walk_to_a_lane_whose_waves_are_not_both_seen_goes_where_it_is_played()
+    public void A_walk_goes_to_the_farthest_turret_standing_when_our_minions_are_short_of_it()
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("walk_to_lane", ("lane", "bot"));
@@ -821,9 +829,91 @@ public sealed class JevPolicyTests
         for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 70, self));
 
-        Assert.AreEqual(new Destination("bot lane", 12400, 1900), policy.DrainMoves().First().Destination);
+        var (x, y) = RiftMap.Blue.At("bot", RiftMapTests.Progress(RiftMap.Blue, "bot", "outer"));
+        Assert.AreEqual(new Destination("bot lane", x, y), policy.DrainMoves().First().Destination);
         StringAssert.Contains(
             (string)((ChoiceQuestion)Offering(jev, "walk_to_lane")[^1].Questions["lane"]).Criteria["bot"]!, "1 ours, 0 theirs, ours pushed");
+    }
+
+    [TestMethod]
+    public void A_player_in_lane_at_their_inhibitor_turret_is_still_short_of_it_and_walked_on()
+    {
+        // The VOD case: out of the base and into bot lane at the inhibitor
+        // turret, the outer turret still standing far up the lane.
+        var (policy, jev) = Coach();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 356, Self(x: 4400, y: 1300) with { Turrets = Turrets() }));
+
+        var where = jev.Asks[0].State.Whereabouts!;
+        Assert.AreEqual("bot lane", where.Place);
+        var bot = where.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual(("your outer turret", "short of it"), (bot.WalkTo, bot.YouAre));
+        Assert.IsNull(where.Lanes.Single(l => l.Lane == "top").YouAre, "not in top lane, not in base");
+        Assert.AreEqual("right", policy.DrainMoves().First().Direction);
+
+        // With the outer turret fallen, the inner is as far as it is safe.
+        var (policy2, jev2) = Coach();
+        var fallen = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false));
+        policy2.OnFrame(Clocked(100, 356, Self(x: 4400, y: 1300) with { Turrets = fallen }));
+        Assert.AreEqual("your inner turret", jev2.Last.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").WalkTo);
+    }
+
+    [TestMethod]
+    public void A_player_at_or_past_the_safe_spot_is_not_walked()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 356, Self(x: 10504, y: 1300)));
+        Assert.AreEqual("at it", jev.Last.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").YouAre);
+        Assert.IsEmpty(policy.DrainMoves());
+    }
+
+    [TestMethod]
+    public void A_player_seen_in_the_red_fountain_is_coached_from_the_red_side()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 50, Idle(x: 14300, y: 14400)));
+
+        CollectionAssert.AreEqual(new[] { "you play from the red side" }, policy.DrainCues().Select(c => c.Reason).ToArray());
+        var state = jev.Asks[0].State;
+        StringAssert.Contains(state.Setting, "their own base is at the upper right");
+        Assert.AreEqual("the fountain", state.Whereabouts!.Place);
+        var bot = state.Whereabouts.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual(("your outer turret", "short of it"), (bot.WalkTo, bot.YouAre));
+        var step = policy.DrainMoves().First();
+        var (x, y) = RiftMap.Red.At("bot", RiftMapTests.Progress(RiftMap.Red, "bot", "outer"));
+        Assert.AreEqual(new Destination("bot lane", x, y), step.Destination, "red's own outer turret, not blue's");
+        Assert.AreEqual("down", step.Direction);
+    }
+
+    [TestMethod]
+    public void The_red_side_is_kept_across_a_resync_and_our_turrets_are_reds()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        // An ally in the red fountain says the side while the player is out.
+        policy.OnFrame(Clocked(90, 300, Self(x: 7000, y: 5000), Ally(3, 14300, 14400)));
+        policy.Resync(Clocked(95, 305, Self(x: 13500, y: 10300)));
+        policy.DrainMoves();
+
+        // The feed's "blue" turrets are the player's own: here, red's.
+        var fallen = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false));
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 310, Self(x: 13500, y: 10300) with { Turrets = fallen }));
+
+        var where = jev.Asks[^1].State.Whereabouts!;
+        Assert.AreEqual("bot lane", where.Place, "at red's bot inhibitor turret");
+        var bot = where.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreEqual(("your inner turret", "short of it"), (bot.WalkTo, bot.YouAre));
+        Assert.AreEqual(new LaneTurretFacts("fallen", "standing", "standing"), bot.YourTurrets);
+        var step = policy.DrainMoves().First();
+        var (x, y) = RiftMap.Red.At("bot", RiftMapTests.Progress(RiftMap.Red, "bot", "inner"));
+        Assert.AreEqual(new Destination("bot lane", x, y), step.Destination);
+        Assert.AreEqual("down", step.Direction);
     }
 
     /// <summary>The player on bot lane's straight, east of our outer turret.</summary>
@@ -845,7 +935,7 @@ public sealed class JevPolicyTests
         Assert.AreEqual(300, minions.NearestTheirsUnits);
         Assert.AreEqual(2, minions.TheirsWithinCasterRange, "the one 700 units off is out of a caster's reach");
         var length = RiftMap.Length("bot");
-        var ahead = Math.Round((RiftMap.Along("bot", 9000, 1400).Progress - RiftMap.Along("bot", 8700, 1400).Progress) * length);
+        var ahead = Math.Round((RiftMap.Blue.Along("bot", 9000, 1400).Progress - RiftMap.Blue.Along("bot", 8700, 1400).Progress) * length);
         Assert.AreEqual(ahead, minions.AheadOfOurFrontUnits);
         Assert.AreEqual(300, ahead, 5);
         Assert.AreEqual(0, ask.Options!.Retry!.MaxRetries, "a question about the moment is not retried");
@@ -1088,8 +1178,8 @@ public sealed class JevPolicyTests
     public void A_turret_the_minimap_shows_fallen_covers_nothing()
     {
         var (policy, jev) = Coach();
-        Turret[] turrets = RiftMap.TheirTurrets
-            .Select(t => new Turret { Team = MinionTeam.Red, Lane = t.Lane, Tier = t.Tier, Side = t.Side, Standing = !(t.Lane == "bot" && t.Tier == "outer") })
+        Turret[] turrets = RiftMap.Blue.TheirTurrets
+            .Select(t => new Turret { Team = MinionTeam.Red, Lane = t.Lane, Tier = t.Tier, Side = t.NexusSide, Standing = !(t.Lane == "bot" && t.Tier == "outer") })
             .ToArray();
         policy.OnFrame(Frame(10, ByTheirTurret() with { Turrets = turrets }, KarmaUnderTurret()));
         Assert.IsNull(Attacks(jev).Single().State.VisibleEnemies.Single().UnderTheirTurret);
@@ -1705,7 +1795,7 @@ public sealed class JevPolicyTests
         var walk = policy.DrainMoves().Single(m => m.Destination is not null);
         Assert.AreEqual(200.0, walk.VideoTime);
         Assert.AreEqual("the bot lane brush", walk.Destination!.Name);
-        Assert.AreEqual("the bot lane brush", RiftBrush.At(walk.Destination.X, walk.Destination.Y)!.Name, "the click lands in the grass");
+        Assert.AreEqual("the bot lane brush", RiftBrush.At(walk.Destination.X, walk.Destination.Y)!.NameFrom(MapSide.Blue), "the click lands in the grass");
         Assert.AreEqual("down", walk.Direction);
         StringAssert.StartsWith(walk.Sentence, "coach would have stepped down toward the bot lane brush here: the bot lane brush is ");
         StringAssert.EndsWith(walk.Reason,
@@ -1749,7 +1839,7 @@ public sealed class JevPolicyTests
     public void Standing_in_brush_dead_unplaced_without_a_clock_or_far_from_any_offers_no_brush()
     {
         var (policy, jev) = Coach();
-        var inside = RiftBrush.All.Single(p => p.Name == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
+        var inside = RiftBrush.All.Single(p => p.NameFrom(MapSide.Blue) == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
         policy.OnFrame(Clocked(200, 300, Self(x: inside.X, y: inside.Y)));
         policy.OnFrame(Clocked(204, 304, Self(alive: false, x: 7807, y: 1400)));
         policy.OnFrame(Clocked(208, 308, Self(x: 7807, y: 1400) with { WorldX = null }));
@@ -1762,7 +1852,7 @@ public sealed class JevPolicyTests
     public void The_patch_they_stand_in_is_on_every_question()
     {
         var (policy, jev) = Coach();
-        var inside = RiftBrush.All.Single(p => p.Name == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
+        var inside = RiftBrush.All.Single(p => p.NameFrom(MapSide.Blue) == "the bot lane brush" && p.Y < 1000).Inside(7807, 1400);
         policy.OnFrame(Clocked(200, 300, Self(x: inside.X, y: inside.Y), Enemy(500) with { WorldX = inside.X + 400, WorldY = inside.Y }));
         var ask = jev.Asks.First();
         Assert.AreEqual("the bot lane brush", ask.State.Brush!.YouStandIn);

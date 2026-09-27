@@ -23,14 +23,24 @@ public sealed class RiftBrushTests
     [TestMethod]
     public void Patches_are_named_by_where_they_lie()
     {
-        Assert.AreEqual("the bot lane brush", Nearest(12455, 1321).Name, "bot lane's corner");
+        Assert.AreEqual("the bot lane brush", Nearest(12455, 1321).NameFrom(MapSide.Blue), "bot lane's corner");
         Assert.AreEqual("bot", Nearest(12455, 1321).Lane);
-        Assert.AreEqual("the top lane brush", Nearest(1127, 12405).Name, "top lane's corner");
-        Assert.AreEqual("a river brush, top side", Nearest(6267, 8351).Name, "the long one beside mid");
-        Assert.AreEqual("a river brush, bot side", Nearest(8674, 6404).Name);
-        Assert.AreEqual("a brush in their jungle, top side", Nearest(6238, 10301).Name);
-        Assert.AreEqual("a brush in your jungle, bot side", Nearest(6544, 4660).Name);
+        Assert.AreEqual("the top lane brush", Nearest(1127, 12405).NameFrom(MapSide.Blue), "top lane's corner");
+        Assert.AreEqual("a river brush, top side", Nearest(6267, 8351).NameFrom(MapSide.Blue), "the long one beside mid");
+        Assert.AreEqual("a river brush, bot side", Nearest(8674, 6404).NameFrom(MapSide.Blue));
+        Assert.AreEqual("a brush in their jungle, top side", Nearest(6238, 10301).NameFrom(MapSide.Blue));
+        Assert.AreEqual("a brush in your jungle, bot side", Nearest(6544, 4660).NameFrom(MapSide.Blue));
         Assert.IsNull(Nearest(6544, 4660).Lane);
+    }
+
+    [TestMethod]
+    public void A_jungle_is_yours_or_theirs_by_the_side_played()
+    {
+        Assert.AreEqual("a brush in your jungle, top side", Nearest(6238, 10301).NameFrom(MapSide.Red));
+        Assert.AreEqual("a brush in their jungle, bot side", Nearest(6544, 4660).NameFrom(MapSide.Red));
+        Assert.IsTrue(Nearest(6544, 4660).InEnemyJungle(MapSide.Red));
+        Assert.IsFalse(Nearest(6544, 4660).InEnemyJungle(MapSide.Blue));
+        Assert.AreEqual("the bot lane brush", Nearest(12455, 1321).NameFrom(MapSide.Red), "lanes and river are the same from either side");
     }
 
     [TestMethod]
@@ -57,7 +67,7 @@ public sealed class RiftBrushTests
             var inner = new[] { (50.0, 0.0), (-50.0, 0.0), (0.0, 50.0), (0.0, -50.0) }.All(d => cells.Contains((x + d.Item1, y + d.Item2)));
             var anyInner = patch.Cells.Any(c => new[] { (50.0, 0.0), (-50.0, 0.0), (0.0, 50.0), (0.0, -50.0) }
                 .All(d => cells.Contains((c.X + d.Item1, c.Y + d.Item2))));
-            Assert.AreEqual(anyInner, inner, $"{patch.Name} at ({patch.X:0}, {patch.Y:0})");
+            Assert.AreEqual(anyInner, inner, $"{patch.NameFrom(MapSide.Blue)} at ({patch.X:0}, {patch.Y:0})");
         }
     }
 

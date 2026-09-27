@@ -1,20 +1,30 @@
 namespace MindControl.Policy;
 
 /// <summary>
-/// Summoner's Rift as the coached player's own minimap shows it, in game
-/// units with their base at the origin and y growing north (blue is always
-/// the local team, as <see cref="ScreenDirections.TowardBase"/> assumes):
-/// the three lanes as the lines their turrets lie on, the fountain, and the
-/// two bases. Pure geometry, with the turret positions Riot publishes for the
-/// map: it says where a point is and how far each lane is from it, and
-/// decides nothing about whether anyone should be there.
+/// A corner of Summoner's Rift: blue is the lower left, where x and y are
+/// smallest, and red the upper right. It is the map's, not the feed's: the
+/// feed's "blue" team is always the player's own, whichever corner that is.
 /// </summary>
-public static class RiftMap
+public enum MapSide { Blue, Red }
+
+/// <summary>
+/// Summoner's Rift in game units, y growing north, blue's base in the lower
+/// left and red's in the upper right, as spectral-sight's world positions
+/// are: the three lanes as the lines their turrets lie on, the 22 turret
+/// spots, the fountains, and the two bases. The geometry is fixed; an
+/// instance (<see cref="Blue"/>, <see cref="Red"/>) is the map seen from the
+/// side the player plays, which is what makes a turret "your" or "their",
+/// a base home, and a lane run from the player's own nexus. Pure geometry,
+/// with the turret positions Riot publishes for the map: it says where a
+/// point is and how far each lane is from it, and decides nothing about
+/// whether anyone should be there.
+/// </summary>
+public sealed class RiftMap
 {
     public static readonly string[] Lanes = ["top", "mid", "bot"];
 
     /// <summary>
-    /// Each lane's centre line from the player's nexus to the enemy's. Mid
+    /// Each lane's centre line from blue's nexus to red's. Mid
     /// runs through its turrets; the side lanes follow their turrets to the
     /// outer one and then bend round the map's corner on the inside of the
     /// enemy's outer turret, where the fixture recording shows the laning
@@ -41,13 +51,15 @@ public static class RiftMap
         ],
     };
 
-    private const double FountainX = 450, FountainY = 450, FountainRadius = 1000;
+    /// <summary>
+    /// The two fountains, where each side spawns and shops, and how near one
+    /// a point has to be to stand in it.
+    /// </summary>
+    private static readonly (double X, double Y) BlueFountain = (450, 450), RedFountain = (14350, 14350);
+    private const double FountainRadius = 1000;
 
-    /// <summary>The middle of the player's own fountain, where they respawn: home.</summary>
-    public static (double X, double Y) Fountain => (FountainX, FountainY);
-
-    /// <summary>The base is the square behind the inhibitors; the far corner mirrors it.</summary>
-    private const double BaseEdge = 3800, EnemyBaseEdge = 11100;
+    /// <summary>The bases are the squares behind the inhibitors, in the map's two corners.</summary>
+    private const double BlueBaseEdge = 3800, RedBaseEdge = 11100;
 
     /// <summary>
     /// How far from a lane's centre line still counts as standing in it. The
@@ -63,65 +75,119 @@ public static class RiftMap
     /// <summary>What <see cref="Place"/> calls the rest of the player's own base.</summary>
     public const string BasePlace = "their own base";
 
-    /// <summary>Where a point is, named the way a coach says it: "the fountain", "bot lane", "the jungle or river".</summary>
-    public static string Place(double x, double y)
-    {
-        if (double.Hypot(x - FountainX, y - FountainY) <= FountainRadius)
-            return FountainPlace;
-        if (x < BaseEdge && y < BaseEdge)
-            return BasePlace;
-        if (x > EnemyBaseEdge && y > EnemyBaseEdge)
-            return "the enemy base";
-        return LaneOf(x, y) is { } lane ? $"{lane} lane" : "the jungle or river";
-    }
+    /// <summary>
+    /// The side whose fountain a point stands in, or null when it stands in
+    /// neither. Nobody stands in the enemy's fountain and lives, so a player
+    /// or ally seen in one says which side they play from.
+    /// </summary>
+    public static MapSide? FountainOf(double x, double y) =>
+        double.Hypot(x - BlueFountain.X, y - BlueFountain.Y) <= FountainRadius ? MapSide.Blue
+        : double.Hypot(x - RedFountain.X, y - RedFountain.Y) <= FountainRadius ? MapSide.Red
+        : null;
+
+    /// <summary>The side whose base a point stands in, fountain included, or null.</summary>
+    private static MapSide? BaseOf(double x, double y) =>
+        x < BlueBaseEdge && y < BlueBaseEdge ? MapSide.Blue
+        : x > RedBaseEdge && y > RedBaseEdge ? MapSide.Red
+        : null;
 
     /// <summary>
-    /// The lane a point stands in, or null when it is in the fountain, either
-    /// base, or off every lane: the lanes meet at each base, so a point there
-    /// belongs to none of them.
+    /// The lane a point stands in, or null when it is in either base or off
+    /// every lane: the lanes meet at each base, so a point there belongs to
+    /// none of them. The same from either side.
     /// </summary>
     public static string? LaneOf(double x, double y)
     {
-        if (double.Hypot(x - FountainX, y - FountainY) <= FountainRadius
-            || (x < BaseEdge && y < BaseEdge) || (x > EnemyBaseEdge && y > EnemyBaseEdge))
+        if (BaseOf(x, y) is not null)
             return null;
         var nearest = Lanes.MinBy(lane => Toward(lane, x, y).Distance)!;
         return Toward(nearest, x, y).Distance <= LaneHalfWidth ? nearest : null;
     }
 
-    /// <summary>The lane turret tiers, from the enemy's side of a lane in toward the player's base.</summary>
+    /// <summary>The lane turret tiers, from the enemy's side of a lane in toward the owner's base.</summary>
     public static readonly string[] Tiers = ["outer", "inner", "inhibitor"];
-
-    /// <summary>
-    /// The player's own lane turrets, outer to inhibitor, as the points of
-    /// each lane's path they stand beside. Whether each still stands is the
-    /// feed's (<c>turrets</c>); this is only where they are.
-    /// </summary>
-    private static readonly Dictionary<string, (double X, double Y)[]> OurTurrets = new()
-    {
-        ["top"] = [(1250, 10504), (1483, 6919), (1253, 4281)],
-        ["mid"] = [(5846, 6396), (5048, 4812), (3651, 3696)],
-        ["bot"] = [(10504, 1250), (6919, 1483), (4281, 1253)],
-    };
 
     /// <summary>A turret's attack range, in game units: a wave this near one is fighting it.</summary>
     public const double TurretRange = 750;
 
-    /// <summary>One of the enemy's turrets: its lane ("base" for the two nexus turrets), tier, nexus side, and spot.</summary>
-    public sealed record TurretSpot(string Lane, string Tier, string? Side, double X, double Y)
+    /// <summary>
+    /// One of the map's 22 turret spots, named for good by the side it
+    /// belongs to (<c>blue-bot-outer</c>, <c>red-base-nexus-top</c>): its
+    /// lane ("base" for the two nexus turrets), tier, which side of the nexus
+    /// for a nexus turret, and where it stands. Whether it is the player's or
+    /// the enemy's depends on the side they play from (<see cref="Owner"/>).
+    /// </summary>
+    public sealed record TurretSpot(MapSide Owner, string Lane, string Tier, string? NexusSide, double X, double Y)
     {
-        /// <summary>As a coach names it: "their bot outer turret", "their top nexus turret".</summary>
-        public string Name => Tier == "nexus" ? $"their {Side} nexus turret" : $"their {Lane} {Tier} turret";
+        public string Id => Tier == "nexus"
+            ? $"{Owner.ToString().ToLowerInvariant()}-base-nexus-{NexusSide}"
+            : $"{Owner.ToString().ToLowerInvariant()}-{Lane}-{Tier}";
+
+        /// <summary>
+        /// As a coach from <paramref name="side"/> names it: "your bot outer
+        /// turret", "their top nexus turret".
+        /// </summary>
+        public string NameFrom(MapSide side) =>
+            (Owner == side ? "your " : "their ")
+            + (Tier == "nexus" ? $"{NexusSide} nexus turret" : $"{Lane} {Tier} turret");
     }
 
-    /// <summary>The enemy's eleven turrets where Riot's map data puts them, lanes outer to inhibitor, then the nexus pair.</summary>
-    public static readonly TurretSpot[] TheirTurrets =
+    /// <summary>
+    /// All 22 turrets where Riot's map data puts them (the same spots
+    /// spectral-sight reads them at): each side's lanes, outer to inhibitor,
+    /// then its nexus pair.
+    /// </summary>
+    public static readonly TurretSpot[] Turrets =
     [
-        new("top", "outer", null, 4318, 13875), new("top", "inner", null, 7943, 13411), new("top", "inhibitor", null, 10481, 13650),
-        new("mid", "outer", null, 8955, 8510), new("mid", "inner", null, 9767, 10113), new("mid", "inhibitor", null, 11134, 11207),
-        new("bot", "outer", null, 13866, 4505), new("bot", "inner", null, 13327, 8226), new("bot", "inhibitor", null, 13624, 10572),
-        new("base", "nexus", "top", 12611, 13084), new("base", "nexus", "bot", 13052, 12612),
+        new(MapSide.Blue, "top", "outer", null, 981, 10441), new(MapSide.Blue, "top", "inner", null, 1512, 6699),
+        new(MapSide.Blue, "top", "inhibitor", null, 1169, 4287),
+        new(MapSide.Blue, "mid", "outer", null, 5846, 6396), new(MapSide.Blue, "mid", "inner", null, 5048, 4812),
+        new(MapSide.Blue, "mid", "inhibitor", null, 3651, 3696),
+        new(MapSide.Blue, "bot", "outer", null, 10504, 1029), new(MapSide.Blue, "bot", "inner", null, 6919, 1483),
+        new(MapSide.Blue, "bot", "inhibitor", null, 4281, 1253),
+        new(MapSide.Blue, "base", "nexus", "top", 1748, 2270), new(MapSide.Blue, "base", "nexus", "bot", 2177, 1807),
+        new(MapSide.Red, "top", "outer", null, 4318, 13875), new(MapSide.Red, "top", "inner", null, 7943, 13411),
+        new(MapSide.Red, "top", "inhibitor", null, 10481, 13650),
+        new(MapSide.Red, "mid", "outer", null, 8955, 8510), new(MapSide.Red, "mid", "inner", null, 9767, 10113),
+        new(MapSide.Red, "mid", "inhibitor", null, 11134, 11207),
+        new(MapSide.Red, "bot", "outer", null, 13866, 4505), new(MapSide.Red, "bot", "inner", null, 13327, 8226),
+        new(MapSide.Red, "bot", "inhibitor", null, 13624, 10572),
+        new(MapSide.Red, "base", "nexus", "top", 12611, 13084), new(MapSide.Red, "base", "nexus", "bot", 13052, 12612),
     ];
+
+    /// <summary>The map as seen from the blue side, the lower-left corner.</summary>
+    public static readonly RiftMap Blue = new(MapSide.Blue);
+
+    /// <summary>The map as seen from the red side, the upper-right corner.</summary>
+    public static readonly RiftMap Red = new(MapSide.Red);
+
+    /// <summary>The map as seen from <paramref name="side"/>.</summary>
+    public static RiftMap From(MapSide side) => side == MapSide.Blue ? Blue : Red;
+
+    private RiftMap(MapSide side) => Side = side;
+
+    /// <summary>The side the player plays from: whose fountain is home, whose turrets are theirs.</summary>
+    public MapSide Side { get; }
+
+    /// <summary>The middle of the player's own fountain, where they respawn: home.</summary>
+    public (double X, double Y) Fountain => Side == MapSide.Blue ? BlueFountain : RedFountain;
+
+    /// <summary>Where a point is, named the way a coach says it: "the fountain", "bot lane", "the jungle or river".</summary>
+    public string Place(double x, double y)
+    {
+        if (FountainOf(x, y) == Side)
+            return FountainPlace;
+        if (BaseOf(x, y) is { } side)
+            return side == Side ? BasePlace : "the enemy base";
+        return LaneOf(x, y) is { } lane ? $"{lane} lane" : "the jungle or river";
+    }
+
+    /// <summary>The player's own turret of a tier in a lane.</summary>
+    public TurretSpot OurTurret(string lane, string tier) =>
+        Turrets.First(t => t.Owner == Side && t.Lane == lane && t.Tier == tier);
+
+    /// <summary>The enemy's eleven turrets.</summary>
+    public IEnumerable<TurretSpot> TheirTurrets => Turrets.Where(t => t.Owner != Side);
 
     /// <summary>
     /// The enemy turret whose range (<see cref="TurretRange"/>) covers a
@@ -131,7 +197,7 @@ public static class RiftMap
     /// one not known either way is taken to stand, since walking under a
     /// turret that is there is the costly mistake.
     /// </summary>
-    public static (TurretSpot Turret, double Distance)? TheirTurretCovering(
+    public (TurretSpot Turret, double Distance)? TheirTurretCovering(
         double x, double y, Func<TurretSpot, bool?>? standing = null) =>
         TheirTurrets
             .Where(t => standing?.Invoke(t) != false)
@@ -140,6 +206,19 @@ public static class RiftMap
             .OrderBy(p => p.Distance)
             .Select(p => ((TurretSpot, double)?)p)
             .FirstOrDefault();
+
+    /// <summary>
+    /// How much of a screen direction points toward the player's own base:
+    /// +1 straight at it, -1 straight away. The camera never rotates, so
+    /// home is down-left on the screen from the blue side and up-right from
+    /// the red.
+    /// </summary>
+    public double TowardBase(double dx, double dy)
+    {
+        var length = double.Hypot(dx, dy);
+        var toward = length == 0 ? 0 : (-dx + dy) / (length * Math.Sqrt(2));
+        return Side == MapSide.Blue ? toward : -toward;
+    }
 
     /// <summary>
     /// Where an enemy wave's front is in a lane, named as a coach says it,
@@ -152,7 +231,7 @@ public static class RiftMap
     /// turret in that has not fallen, since that is the one it pressures.
     /// Without <paramref name="standing"/> every turret is named by its spot.
     /// </summary>
-    public static string EnemyFrontPlace(string lane, double progress, Func<string, bool?>? standing = null)
+    public string EnemyFrontPlace(string lane, double progress, Func<string, bool?>? standing = null)
     {
         var reached = -1;
         for (var tier = 0; tier < Tiers.Length; tier++)
@@ -185,12 +264,12 @@ public static class RiftMap
     /// Whether an enemy wave's front is at one of the player's own turrets, or
     /// at or past the spot of their outer turret when it has fallen.
     /// </summary>
-    public static bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, 0);
+    public bool AtOurTurret(string lane, double progress) => progress <= TurretReach(lane, 0);
 
     /// <summary>How far along the lane a turret's range reaches toward the enemy.</summary>
-    private static double TurretReach(string lane, int tier)
+    private double TurretReach(string lane, int tier)
     {
-        var turret = OurTurrets[lane][tier];
+        var turret = OurTurret(lane, Tiers[tier]);
         return Along(lane, turret.X, turret.Y).Progress + TurretRange / Length(lane);
     }
 
@@ -210,7 +289,17 @@ public static class RiftMap
     /// place on it, and how far off the centre line it lies. How far a wave
     /// has pushed is this, for its front minion.
     /// </summary>
-    public static (double Distance, double Progress) Along(string lane, double x, double y)
+    public (double Distance, double Progress) Along(string lane, double x, double y)
+    {
+        var (distance, progress) = AlongFromBlue(lane, x, y);
+        return (distance, Side == MapSide.Blue ? progress : 1 - progress);
+    }
+
+    /// <summary>The point on a lane's centre line <paramref name="progress"/> of the way from the player's nexus to the enemy's.</summary>
+    public (double X, double Y) At(string lane, double progress) =>
+        AtFromBlue(lane, Side == MapSide.Blue ? progress : 1 - progress);
+
+    private static (double Distance, double Progress) AlongFromBlue(string lane, double x, double y)
     {
         var path = Paths[lane];
         var best = (Distance: double.PositiveInfinity, Units: 0.0);
@@ -225,8 +314,7 @@ public static class RiftMap
         return (best.Distance, best.Units / walked);
     }
 
-    /// <summary>The point on a lane's centre line <paramref name="progress"/> of the way from the player's nexus to the enemy's.</summary>
-    public static (double X, double Y) At(string lane, double progress)
+    private static (double X, double Y) AtFromBlue(string lane, double progress)
     {
         var path = Paths[lane];
         var remaining = Math.Clamp(progress, 0, 1) * Length(lane);
@@ -244,21 +332,43 @@ public static class RiftMap
     }
 
     /// <summary>
-    /// Where each lane is played in the early game: the point a player walking
-    /// to lane is headed for, and so where the steps to lane are aimed,
-    /// rather than the lane's nearest point (from the fountain that is the
-    /// lane's mouth at the nexus, a few seconds' walk). Bot is its corner,
-    /// between where the fixture's player waited for the first minions
-    /// (11162, 2115) and where they laned (12688, 3462); top mirrors it
-    /// across the diagonal; mid is the map's centre.
+    /// How far behind the minions a walk up a lane stops, in game units: out
+    /// of an enemy caster minion's reach (550) of their front, near enough.
     /// </summary>
-    public static (double X, double Y) LaningSpot(string lane) => lane switch
+    public const double WalkBehindUnits = 500;
+
+    /// <summary>
+    /// The farthest spot up a lane the player can walk to safely, as a
+    /// fraction of the lane (<see cref="Along"/>), named as a coach says it:
+    /// their farthest turret still standing, or, when their own minions have
+    /// pushed beyond it, just behind those minions' front; and never within
+    /// <see cref="WalkBehindUnits"/> of the enemy's front, so a walk stops
+    /// short of an enemy wave rather than into it. <paramref name="standing"/>
+    /// says whether the player's turret of a tier stands (null: not known),
+    /// and a turret not known to have fallen is taken to stand, as it does
+    /// before the minimap is read. The fronts are a wave's
+    /// (<see cref="WaveFacts"/>), null when that side shows none.
+    /// </summary>
+    public (double Progress, string Name) WalkTo(
+        string lane, Func<string, bool?>? standing, double? ourFront, double? theirFront)
     {
-        "top" => (1900, 12400),
-        "mid" => (7400, 7400),
-        "bot" => (12400, 1900),
-        _ => throw new ArgumentException($"no lane \"{lane}\"", nameof(lane)),
-    };
+        var (progress, name) = (0.0, "your nexus");
+        for (var tier = 0; tier < Tiers.Length; tier++)
+        {
+            if (standing?.Invoke(Tiers[tier]) == false)
+                continue;
+            var turret = OurTurret(lane, Tiers[tier]);
+            (progress, name) = (Along(lane, turret.X, turret.Y).Progress, $"your {Tiers[tier]} turret");
+            break;
+        }
+        var behind = WalkBehindUnits / Length(lane);
+        if (ourFront is { } ours && ours - behind > progress)
+            (progress, name) = (ours - behind, "behind your minions");
+        if (theirFront is { } theirs && theirs - behind < progress)
+            (progress, name) = (Math.Max(0, theirs - behind),
+                ourFront >= theirs ? "behind your minions" : "short of the enemy minions");
+        return (progress, name);
+    }
 
     /// <summary>The nearest point of a lane to (<paramref name="x"/>, <paramref name="y"/>), and how far it is.</summary>
     public static (double Distance, double X, double Y) Toward(string lane, double x, double y)

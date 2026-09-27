@@ -46,16 +46,4 @@ public static class ScreenDirections
         uy /= length;
         return ((-uy, ux), (uy, -ux));
     }
-
-    /// <summary>
-    /// How much of a screen direction points toward the player's own base:
-    /// +1 straight at it, -1 straight away. Blue is always the local team,
-    /// its base is the bottom-left of the map, and the camera never rotates,
-    /// so toward home is down-left on the screen.
-    /// </summary>
-    public static double TowardBase(double dx, double dy)
-    {
-        var length = double.Hypot(dx, dy);
-        return length == 0 ? 0 : (-dx + dy) / (length * Math.Sqrt(2));
-    }
 }
