@@ -91,7 +91,7 @@ public sealed class Reactor(
         if (frame.Seq < _lastSeq)
         {
             // A restarted run or replay; sequence numbers are transport-scoped.
-            Log($"feed: seq went backwards ({_lastSeq} -> {frame.Seq}), treating as a new run");
+            Log(Tone.Error, $"feed: seq went backwards ({_lastSeq} -> {frame.Seq}), treating as a new run");
             _blind = true;
         }
         _lastSeq = frame.Seq;
@@ -188,7 +188,7 @@ public sealed class Reactor(
         if (!_paused)
         {
             _paused = true;
-            Log($"coaching paused: {reason}");
+            Log(Tone.Error, $"coaching paused: {reason}");
             coach?.PublishStatus("paused", reason);
         }
     }
@@ -199,7 +199,7 @@ public sealed class Reactor(
         // in words only, with nothing for the hands to do.
         foreach (var cue in policy.DrainCues())
         {
-            Coach($"cue[p{cue.Priority}]: {cue.Reason}");
+            Coach($"cue[p{cue.Priority}]: {cue.Reason}", tone: cue.Failure ? Tone.Error : Tone.Advice);
             coach?.PublishCue(cue, gameTime);
         }
         // A key press is the keyboard half of the demonstration, so unlike a
@@ -231,15 +231,18 @@ public sealed class Reactor(
     /// A line of coaching feedback: to the console, and to the --log file if
     /// one is open. <paramref name="input"/> is what the recording wrote for
     /// it, named plainly after the advice; null when nothing was recorded.
+    /// Advice is green on the console and a failure red; the file stays plain.
     /// </summary>
-    private void Coach(string message, IReadOnlyList<Message>? input = null)
+    private void Coach(string message, IReadOnlyList<Message>? input = null, Tone tone = Tone.Advice)
     {
         if (input is not null)
             message = $"{message}  recorded: {GhostRecording.Show(input)}";
-        Log(message);
+        Log(tone, message);
         log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {message}");
     }
 
-    private static void Log(string message) =>
-        Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {message}");
+    private static void Log(string message) => Log(Tone.Plain, message);
+
+    private static void Log(Tone tone, string message) =>
+        ConsoleTone.WriteLine(tone, $"{DateTime.Now:HH:mm:ss.fff} {message}");
 }

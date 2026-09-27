@@ -17,9 +17,11 @@ namespace MindControl.Policy;
 /// Coaching that is said and not done: what the player's own cast came to, or
 /// what a bolt at them came to. Those are facts about a moment that has
 /// already passed, so there is nothing for the ghost's hands to do about them,
-/// and the cue carries only the words.
+/// and the cue carries only the words. <see cref="Failure"/> marks a cue that
+/// is not coaching at all but the coach saying it could not coach (the model
+/// did not answer), so the console can tell the two apart.
 /// </remarks>
-public sealed record CoachCue(double VideoTime, int Priority, string Reason);
+public sealed record CoachCue(double VideoTime, int Priority, string Reason, bool Failure = false);
 
 /// <summary>
 /// A key the coach would have pressed at this moment, and why. The keyboard

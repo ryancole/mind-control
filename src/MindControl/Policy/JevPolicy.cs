@@ -1386,7 +1386,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (_failing)
             return;
         _failing = true;
-        _cues.Add(new CoachCue(videoTime, 1, $"the coach model did not answer: {why}"));
+        _cues.Add(new CoachCue(videoTime, 1, $"the coach model did not answer: {why}", Failure: true));
     }
 
     private void Remember(string did, double at)
