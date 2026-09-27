@@ -222,7 +222,7 @@ never judged.
 ## Ghost input recording
 
 The ghost's input -- the mouse and keyboard reactions the coach would have
-made -- is also recorded to `data/ghost-<yyyyMMdd-HHmmss>.msdr`, a fresh file
+made -- is also recorded to `data/msdr/ghost-<yyyyMMdd-HHmmss>.msdr`, a fresh file
 per run named for the moment it started, in the wire format of the
 [misdirection](../misdirection) HID bridge, via the
 [misdirection-client](submodules/misdirection-client) library's protocol file

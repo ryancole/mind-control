@@ -332,6 +332,7 @@ public sealed class JevPolicyTests
         Assert.HasCount(1, cues);
         StringAssert.Contains(cues[0].Reason, "did not answer");
         StringAssert.Contains(cues[0].Reason, "refused");
+        Assert.IsTrue(cues[0].Failure, "a failure is marked as one, not as coaching");
         Assert.IsGreaterThan(1, jev.Asks.Count, "it kept asking");
 
         jev.Fault = null;

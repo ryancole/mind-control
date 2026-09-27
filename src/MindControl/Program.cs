@@ -17,7 +17,7 @@ string? auditPath = null;
 // the demonstration the whole pipeline exists to produce. data/ is gitignored.
 // A file of its own per run, named for when the run started, so a session's
 // ghost is never mixed with an earlier one's.
-string? recordPath = $"data/ghost-{DateTime.Now:yyyyMMdd-HHmmss}.msdr";
+string? recordPath = $"data/msdr/ghost-{DateTime.Now:yyyyMMdd-HHmmss}.msdr";
 string? selfChampion = null;
 // Pinned, not the alias: the thresholds in JevOptions were tuned against one
 // release's calibration, and jev-latest moves without notice.
@@ -99,7 +99,7 @@ for (var i = 0; i < args.Length; i++)
                   --log <file>       also append coaching feedback to this file
                   --audit <file>     record every question put to Jev and its answer (JSONL)
                   --record <file|none> append the ghost's mouse and key input as a misdirection
-                                     protocol file (.msdr)  (default data/ghost-<yyyyMMdd-HHmmss>.msdr,
+                                     protocol file (.msdr)  (default data/msdr/ghost-<yyyyMMdd-HHmmss>.msdr,
                                      a fresh file for each run)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
@@ -121,7 +121,7 @@ for (var i = 0; i < args.Length; i++)
                 """);
             return 0;
         default:
-            Console.Error.WriteLine($"unknown argument: {args[i]} (try --help)");
+            ConsoleTone.Error($"unknown argument: {args[i]} (try --help)");
             return 2;
     }
 }
@@ -190,8 +190,8 @@ static JevClient? OpenJev(string? apiKey, string model)
     }
     catch (JevConfigurationException e)
     {
-        Console.Error.WriteLine($"jev: {e.Message}");
-        Console.Error.WriteLine("set the key with: dotnet user-secrets set Jev <key> --project src/MindControl");
+        ConsoleTone.Error($"jev: {e.Message}");
+        ConsoleTone.Error("set the key with: dotnet user-secrets set Jev <key> --project src/MindControl");
         return null;
     }
 }
