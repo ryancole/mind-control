@@ -10,14 +10,20 @@ ushort screenWidth = 1920, screenHeight = 1080;
 // taken from here. The camera is locked, so it is one place -- the centre,
 // give or take, on the default HUD.
 (ushort X, ushort Y)? playerAnchor = null;
+// Every file a run writes is named for when the run started, in a folder of
+// its kind under data/ (gitignored), so a session's output is never mixed
+// with an earlier one's. A file flag given without a path writes there.
+var runStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+var defaultTracePath = $"data/traces/trace-{runStamp}.jsonl";
+var defaultLogPath = $"data/logs/coaching-{runStamp}.log";
+var defaultAuditPath = $"data/audits/audit-{runStamp}.jsonl";
 string? tracePath = null;
 string? logPath = null;
-string? auditPath = null;
+// On by default: the questions and answers are what a run is tuned from.
+string? auditPath = defaultAuditPath;
 // The ghost's input in misdirection's wire format. On by default: this file is
-// the demonstration the whole pipeline exists to produce. data/ is gitignored.
-// A file of its own per run, named for when the run started, so a session's
-// ghost is never mixed with an earlier one's.
-string? recordPath = $"data/msdr/ghost-{DateTime.Now:yyyyMMdd-HHmmss}.msdr";
+// the demonstration the whole pipeline exists to produce.
+string? recordPath = $"data/msdr/ghost-{runStamp}.msdr";
 string? selfChampion = null;
 // Pinned, not the alias: the thresholds in JevOptions were tuned against one
 // release's calibration, and jev-latest moves without notice.
@@ -55,19 +61,19 @@ for (var i = 0; i < args.Length; i++)
             var anchor = args[++i].Split(',');
             playerAnchor = (ushort.Parse(anchor[0]), ushort.Parse(anchor[1]));
             break;
+        // A file flag's path is optional; "none" turns it off, the way "all"
+        // lifts the --kinds filter.
         case "--trace":
-            tracePath = args[++i];
+            tracePath = FilePath(ref i, defaultTracePath);
             break;
         case "--log":
-            logPath = args[++i];
+            logPath = FilePath(ref i, defaultLogPath);
             break;
         case "--audit":
-            auditPath = args[++i];
+            auditPath = FilePath(ref i, defaultAuditPath);
             break;
         case "--record":
-            // "none" turns it off, the way "all" lifts the --kinds filter.
-            var record = args[++i];
-            recordPath = record == "none" ? null : record;
+            recordPath = FilePath(ref i, $"data/msdr/ghost-{runStamp}.msdr");
             break;
         case "--self":
             selfChampion = args[++i];
@@ -95,12 +101,16 @@ for (var i = 0; i < args.Length; i++)
                   --screen <WxH>     target screen size     (default 1920x1080)
                   --anchor <x,y>     the player's model on their screen, where a step is taken
                                      from (default: screen centre; the camera is locked)
-                  --trace <file>     record when the coach pressed and stepped, for etc/ghost-viewer.html
-                  --log <file>       also append coaching feedback to this file
-                  --audit <file>     record every question put to Jev and its answer (JSONL)
-                  --record <file|none> append the ghost's mouse and key input as a misdirection
-                                     protocol file (.msdr)  (default data/msdr/ghost-<yyyyMMdd-HHmmss>.msdr,
-                                     a fresh file for each run)
+                  File flags take an optional path; without one they write a fresh file named
+                  for the run's start (<stamp> = yyyyMMdd-HHmmss), and "none" turns them off.
+                  --trace [file]     record when the coach pressed and stepped, for etc/ghost-viewer.html
+                                     (off by default; bare: data/traces/trace-<stamp>.jsonl)
+                  --log [file]       also append coaching feedback to this file
+                                     (off by default; bare: data/logs/coaching-<stamp>.log)
+                  --audit [file|none] record every question put to Jev and its answer (JSONL)
+                                     (default data/audits/audit-<stamp>.jsonl)
+                  --record [file|none] append the ghost's mouse and key input as a misdirection
+                                     protocol file (.msdr)  (default data/msdr/ghost-<stamp>.msdr)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
@@ -145,6 +155,9 @@ if (jev is null)
 
 var feed = new FeedClient(feedUri, kinds);
 var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
+foreach (var path in new[] { tracePath, logPath, auditPath })
+    if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
+        Directory.CreateDirectory(dir);
 using var trace = tracePath is null ? null : new GhostTrace(tracePath, screenWidth, screenHeight);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 using var audit = auditPath is null ? null : new JevAudit(auditPath);
@@ -175,6 +188,16 @@ catch (OperationCanceledException)
     // Ctrl-C: clean shutdown.
 }
 return 0;
+
+// The path after a file flag: the next argument unless the line ends there or
+// it is another flag, in which case the flag's default; "none" is off.
+string? FilePath(ref int i, string fallback)
+{
+    if (i + 1 >= args.Length || args[i + 1].StartsWith("--"))
+        return fallback;
+    var value = args[++i];
+    return value == "none" ? null : value;
+}
 
 static JevClient? OpenJev(string? apiKey, string model)
 {
