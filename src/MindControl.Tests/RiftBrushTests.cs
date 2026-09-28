@@ -26,18 +26,18 @@ public sealed class RiftBrushTests
         Assert.AreEqual("the bot lane brush, your half, past your outer turret", Nearest(12455, 1321).NameFrom(MapSide.Blue), "bot lane's corner");
         Assert.AreEqual("bot", Nearest(12455, 1321).Lane);
         Assert.AreEqual("the top lane brush, your half, past your outer turret", Nearest(1127, 12405).NameFrom(MapSide.Blue), "top lane's corner");
-        Assert.AreEqual("a river brush, top side", Nearest(6267, 8351).NameFrom(MapSide.Blue), "the long one beside mid");
-        Assert.AreEqual("a river brush, bot side", Nearest(8674, 6404).NameFrom(MapSide.Blue));
-        Assert.AreEqual("a brush in their jungle, top side", Nearest(6238, 10301).NameFrom(MapSide.Blue));
-        Assert.AreEqual("a brush in your jungle, bot side", Nearest(6544, 4660).NameFrom(MapSide.Blue));
+        Assert.AreEqual("a river brush, top side, 2000 units from their raptors", Nearest(6267, 8351).NameFrom(MapSide.Blue), "the long one beside mid");
+        Assert.AreEqual("a river brush, bot side, 2000 units from your raptors", Nearest(8674, 6404).NameFrom(MapSide.Blue));
+        Assert.AreEqual("a brush in their jungle, top side, 1100 units from their red buff", Nearest(6238, 10301).NameFrom(MapSide.Blue));
+        Assert.AreEqual("a brush in your jungle, bot side, 900 units from your raptors", Nearest(6544, 4660).NameFrom(MapSide.Blue));
         Assert.IsNull(Nearest(6544, 4660).Lane);
     }
 
     [TestMethod]
     public void A_jungle_is_yours_or_theirs_by_the_side_played()
     {
-        Assert.AreEqual("a brush in your jungle, top side", Nearest(6238, 10301).NameFrom(MapSide.Red));
-        Assert.AreEqual("a brush in their jungle, bot side", Nearest(6544, 4660).NameFrom(MapSide.Red));
+        Assert.AreEqual("a brush in your jungle, top side, 1100 units from your red buff", Nearest(6238, 10301).NameFrom(MapSide.Red));
+        Assert.AreEqual("a brush in their jungle, bot side, 900 units from their raptors", Nearest(6544, 4660).NameFrom(MapSide.Red));
         Assert.IsTrue(Nearest(6544, 4660).InEnemyJungle(MapSide.Red));
         Assert.IsFalse(Nearest(6544, 4660).InEnemyJungle(MapSide.Blue));
         Assert.AreEqual("the bot lane brush, their half, short of their outer turret", Nearest(12455, 1321).NameFrom(MapSide.Red), "a lane brush is placed from the side played");

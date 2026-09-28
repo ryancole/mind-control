@@ -47,14 +47,11 @@ public static class RiftBrush
         /// <summary>
         /// Where on the map the patch lies, as a coach from
         /// <paramref name="side"/> says it: in a lane by its turret spots
-        /// (<see cref="RiftMap.LanePlace"/>), "the river", "your jungle",
-        /// "their jungle", the last three with the side of mid ("the river,
-        /// bot side").
+        /// (<see cref="RiftMap.LanePlace"/>), else in the river or a jungle by
+        /// its landmarks (<see cref="RiftMap.OffLanePlace"/>).
         /// </summary>
         public string PlaceFrom(MapSide side) =>
-            Lane is { } lane ? RiftMap.From(side).LanePlace(lane, X, Y)
-            : _where.Jungle is { } jungle ? $"{(jungle == side ? "your" : "their")} jungle, {_where.Place}"
-            : _where.Place;
+            Lane is { } lane ? RiftMap.From(side).LanePlace(lane, X, Y) : RiftMap.From(side).OffLanePlace(X, Y);
 
         /// <summary>As a coach from <paramref name="side"/> names it: "the bot lane brush, at your outer turret", "a river brush, bot side", "a brush in your jungle, top side".</summary>
         public string NameFrom(MapSide side)
