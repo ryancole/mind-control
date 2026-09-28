@@ -134,7 +134,7 @@
   }
   #caption .t { font: 11px var(--mono); color: var(--muted); flex: none; }
   #caption .v { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; flex: none; }
-  .v.acted { color: var(--act); } .v.weak { color: var(--weak); } .v.carry_on { color: var(--muted); }
+  .v.acted { color: var(--act); } .v.weak { color: var(--weak); }
   .v.nothing { color: var(--fizzle); } .v.idle { color: #4d5a6e; } .v.stale, .v.no\ answer, .v.unreadable { color: var(--danger); }
 
   svg text { fill: var(--text); font-family: system-ui, "Segoe UI", sans-serif; }
@@ -300,9 +300,9 @@
 
 // --- The tree's shape -------------------------------------------------------
 // The root's options in the rubric's order (JevPolicy.AskDecide), with the
-// hand each one's deed takes. carry_on is no order and reaches no hand.
+// hand each one's deed takes. carry_on, the no-order pick, is not drawn: an
+// answer that picked it leaves the view on the last decision that did not.
 const OPTIONS = [
-  { id: "carry_on", label: "carry on", hand: null },
   { id: "level_up", label: "level up", hand: "keyboard" },
   { id: "run_away", label: "run away", hand: "move" },
   { id: "use_ability", label: "use ability", hand: "keyboard" },
@@ -329,7 +329,7 @@ const HANDS = [
 
 // --- Geometry ---------------------------------------------------------------
 const ROW_H = 46, ROW_Y0 = 42;
-const ROOT = { x: 86, y: ROW_Y0 + ROW_H * 5 };
+const ROOT = { x: 86, y: ROW_Y0 + ROW_H * (OPTIONS.length - 1) / 2 };
 const OPT_X = 292, LABEL_X = 310, BAR_W = 150;
 const AXON_X0 = 474, CHIP_X = 486, CHIP_W = 90, CHIP_GAP = 6, CHIPS = 4;
 const AXON_X1 = CHIP_X + CHIPS * (CHIP_W + CHIP_GAP);
@@ -342,7 +342,7 @@ const handY = i => 70 + i * 128;
 
 // --- State ------------------------------------------------------------------
 const thoughts = new Map();       // id -> merged asked + answered
-let lastRoot = null;              // the latest completed root thought (answered or idle)
+let lastRoot = null;              // the latest completed root thought (answered or idle), carry_on aside
 let inFlightRoot = null;          // the latest root asked and not yet answered
 const lastReflex = {};            // occasion -> latest completed event thought
 const inFlightReflex = {};        // occasion -> asked and not yet answered
@@ -551,7 +551,7 @@ function drawRoot(t, live) {
     if (t?.decide_at != null && isOffered) {
       const x = LABEL_X + t.decide_at * BAR_W;
       row.tick.setAttribute("x1", x); row.tick.setAttribute("x2", x);
-      row.tick.setAttribute("visibility", o.id === "carry_on" ? "hidden" : "visible");
+      row.tick.setAttribute("visibility", "visible");
     } else row.tick.setAttribute("visibility", "hidden");
     row.gate.textContent = b?.gate ? clip(b.gate, 30) : !b && t ? "not considered" : "";
     const tip = b?.gate ? `<b>${o.id}</b>  gated\n${esc(b.gate)}`
@@ -650,7 +650,6 @@ function caption(t) {
   if (t.did?.length) text = t.did.map(x => x.said).join("  ·  ");
   else if (verdict === "idle") text = "nothing the moment makes possible, so nothing was asked";
   else if (verdict === "weak") text = `leaned toward ${d.choice} at ${fmt2(d.probabilities[d.choice])}, below the ${t.decide_at} it takes to act`;
-  else if (verdict === "carry_on") text = `carry on (${fmt2(d?.probabilities?.carry_on)}): no new order this moment`;
   else if (verdict === "nothing") text = `picked ${d?.choice ?? "?"}, but the branch found nothing to do (already there, or the answer was about a point since spent)`;
   else if (t.error) text = t.error;
   else text = "";
@@ -899,7 +898,6 @@ function drawRaster() {
         const chosen = b.option === pick;
         ctx.globalAlpha = chosen ? 1 : .12 + .88 * p;
         ctx.fillStyle = chosen ? (t.verdict === "acted" ? act : t.verdict === "weak" ? weak : fireC) : syn;
-        if (chosen && t.verdict === "carry_on") ctx.fillStyle = "#56637a";
         ctx.fillRect(x, y + 2, colW, g.rowH - 4);
         ctx.globalAlpha = 1;
       });
@@ -963,13 +961,17 @@ function onThought(t) {
   if (merged.occasion === "decide") {
     if (t.phase === "asked") {
       if (!inFlightRoot || t.id > inFlightRoot.id) inFlightRoot = merged;
-      if (live) for (const b of merged.branches ?? []) if (!b.gate) fire(rows[b.option].syn, "faint", 260);
+      if (live) for (const b of merged.branches ?? []) if (!b.gate && rows[b.option]) fire(rows[b.option].syn, "faint", 260);
     } else {
       if (inFlightRoot?.id === t.id) inFlightRoot = null;
-      if (!lastRoot || t.id >= lastRoot.id) lastRoot = merged;
       if (t.phase === "answered") {
         answerTimes.push(performance.now());
         if (t.elapsed_ms != null) { latencies.push(t.elapsed_ms); if (latencies.length > 40) latencies.shift(); }
+      }
+      // carry_on is no order, most quarter seconds: counted in the rate, never drawn.
+      if (merged.verdict === "carry_on") thoughts.delete(t.id);
+      else if (!lastRoot || t.id >= lastRoot.id) lastRoot = merged;
+      if (t.phase === "answered" && merged.verdict !== "carry_on") {
         if (live) sparkRoot(merged);
         if (merged.verdict === "weak") {
           const d = merged.answers.decide;
