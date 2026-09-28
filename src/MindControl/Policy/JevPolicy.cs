@@ -1153,10 +1153,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 var where = whereabouts.StoodStillForSeconds >= 1
                     ? $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}"
                     : $"you are in {whereabouts.Place}{clock}";
-                var reason = $"{where}; a good player would be on the way up {lane.Choice} lane ({name}, {length:0} units {direction})";
+                var place = Map.Place(spot.X, spot.Y);
+                var reason = $"{where}; a good player would be on the way up {lane.Choice} lane ({AtPlace(name, place)}, {length:0} units {direction})";
                 _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
                 {
-                    Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
+                    Destination = new Destination(place, spot.X, spot.Y),
                     DistanceUnits = length,
                     From = (x, y),
                     AttackMove = true,
@@ -1177,16 +1178,25 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (wave.TheirFrontPlace is { } place)
             said += $", theirs {place}";
         if (wave.MeetAt is { } meet)
-            return said + $", meeting {meet:0.00} of the way to the enemy nexus, "
+            return said + $", meeting in {wave.MeetPlace} ({meet:0.00} of the way to the enemy nexus), "
                 + (wave.MeetScreenDirection is { } way ? $"{wave.MeetUnitsAway:0} units away, {way} on the screen" : "where the player stands");
         return said + (wave.OurFront is { } ours ? $", ours pushed {ours:0.00} of the way" : $", theirs pushed to {wave.TheirFront:0.00} of the way");
     }
 
+    /// <summary>
+    /// A spot named with where on the map it is: "behind your minions in bot
+    /// lane, at your outer turret", or the place alone when it already says
+    /// the name ("bot lane, at your outer turret" for "your outer turret").
+    /// </summary>
+    private static string AtPlace(string name, string? place) =>
+        place is null ? name : place.EndsWith(name) ? place : $"{name} in {place}";
+
     /// <summary>A lane's safe spot to walk to, as an option of the lane follow-up says it.</summary>
     private static string DescribeWalkTo(LaneFacts lane)
     {
-        if (lane.WalkTo is not { } spot)
+        if (lane.WalkTo is not { } walkTo)
             return "";
+        var spot = AtPlace(walkTo, lane.WalkToPlace);
         var said = lane.WalkToScreenDirection is { } way
             ? $"; the farthest it is safe to walk: {spot}, {lane.WalkToUnitsAway:0} units away, {way} on the screen"
             : $"; the farthest it is safe to walk: {spot}, where the player stands";
@@ -1246,12 +1256,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 var (dx, dy) = (spot.X - x, -(spot.Y - y));
                 var length = double.Hypot(dx, dy);
                 var direction = ScreenDirections.Name(dx, dy);
+                var place = Map.Place(spot.X, spot.Y);
                 var alone = lane.AlliesThere.Count == 0 ? " with none of your team there" : "";
                 var reason = $"the enemy wave is {wave.TheirFrontPlace} in {lane.Lane} lane{alone}; "
-                    + $"a good player would be on the way to catch it ({length:0} units {direction})";
+                    + $"a good player would be on the way to catch it (in {place}, {length:0} units {direction})";
                 _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
                 {
-                    Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
+                    Destination = new Destination(place, spot.X, spot.Y),
                     DistanceUnits = length,
                     From = (x, y),
                     AttackMove = true,
@@ -1400,10 +1411,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     ? $" and you stand {units:0} units in front of your minions"
                     : "";
                 var reason = $"{nearest.Champion} is {nearest.DistanceUnits:0} units {nearest.ScreenDirection}{ahead}; "
-                    + $"a good player would run back to {refuge.Name} ({length:0} units {direction})";
+                    + $"a good player would run back to {AtPlace(refuge.Name, refuge.Place)} ({length:0} units {direction})";
                 _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
                 {
-                    Destination = new Destination(refuge.Name, pick.X, pick.Y),
+                    Destination = new Destination(AtPlace(refuge.Name, refuge.Place), pick.X, pick.Y),
                     DistanceUnits = length,
                     From = (x, y),
                 });
@@ -1415,7 +1426,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <summary>A refuge, as an option of the refuge follow-up says it.</summary>
     private static string DescribeRefuge(Refuge refuge)
     {
-        var said = $"{refuge.Name}: {refuge.DistanceUnits:0} units {refuge.ScreenDirection ?? "away"}"
+        var said = $"{refuge.Name}: in {refuge.Place}, {refuge.DistanceUnits:0} units {refuge.ScreenDirection ?? "away"}"
             + (refuge.TowardYourBase ? ", toward your base" : ", away from your base");
         if (refuge.NearestEnemyUnits is { } enemy)
             said += $", the nearest enemy champion {enemy:0} units from it";
@@ -1485,6 +1496,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     ScreenDirections.NameOfWorldOffset(p.s.X - x, p.s.Y - y),
                     double.Hypot(p.s.X - home.X, p.s.Y - home.Y) < fromHome)
                 {
+                    Place = Map.Place(p.s.X, p.s.Y),
                     NearestEnemyUnits = enemies.Length == 0 ? null
                         : Math.Round(enemies.Min(e => double.Hypot(e.X - p.s.X, e.Y - p.s.Y))),
                 }, p.s.X, p.s.Y))
@@ -2352,12 +2364,16 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     row.Health, row.Level, inRange,
                     _withinReachSince.TryGetValue(row.TrackId, out var since) ? Math.Round(now - since, 1) : null)
                 {
+                    Place = Map.Place(row.WorldX!.Value, row.WorldY!.Value),
                     InAttackRange = attackRange is { } r ? distance <= r : null,
                     UnderTheirTurret = TurretCover(row.WorldX!.Value, row.WorldY!.Value)?.Said,
                 });
             }
             foreach (var row in frame.Champions.Where(c => c.Team == self.Team && c.TrackId != self.TrackId))
-                allies.Add(new AllyFacts(row.Champion ?? $"track {row.TrackId}", row.Alive, Distance(self, row)));
+                allies.Add(new AllyFacts(row.Champion ?? $"track {row.TrackId}", row.Alive, Distance(self, row))
+                {
+                    Place = row is { Alive: not false, WorldX: { } ax, WorldY: { } ay } ? Map.Place(ax, ay) : null,
+                });
         }
 
         return new Moment
@@ -2415,6 +2431,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 YourTurrets = LaneTurrets(MinionTeam.Blue, lane),
                 TheirTurrets = LaneTurrets(MinionTeam.Red, lane),
                 WalkTo = name,
+                WalkToPlace = Map.Place(sx, sy),
                 WalkToUnitsAway = Math.Round(away),
                 WalkToScreenDirection = away < 1 ? null : ScreenDirections.NameOfWorldOffset(sx - x, sy - y),
                 YouAre = YouAre(lane, x, y, progress),
@@ -2520,7 +2537,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var away = double.Hypot(mx - x, my - y);
         return facts with
         {
-            MeetAt = meet, MeetUnitsAway = Math.Round(away),
+            MeetAt = meet, MeetPlace = Map.Place(mx, my), MeetUnitsAway = Math.Round(away),
             MeetScreenDirection = away < 1 ? null : ScreenDirections.NameOfWorldOffset(mx - x, my - y),
         };
     }

@@ -99,6 +99,9 @@ public sealed record EnemyFacts(
     string Champion, double DistanceUnits, string ScreenDirection, double VisibleForSeconds,
     double? Health, int? Level, IReadOnlyList<string> InRangeOf, double? WithinReachForSeconds)
 {
+    /// <summary>Where on the map they stand (<see cref="RiftMap.Place"/>): "bot lane", "their jungle, top side".</summary>
+    public string? Place { get; init; }
+
     /// <summary>Whether the player's basic attack reaches them; null when the player's attack range is not on file.</summary>
     public bool? InAttackRange { get; init; }
 
@@ -148,7 +151,14 @@ public sealed record MinionTarget(string Name, double Health, double DistanceUni
 }
 
 /// <summary>An ally, always on the player's own minimap.</summary>
-public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);
+public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits)
+{
+    /// <summary>
+    /// Where on the map they stand (<see cref="RiftMap.Place"/>); null when
+    /// the minimap did not place them or they are dead.
+    /// </summary>
+    public string? Place { get; init; }
+}
 
 /// <summary>
 /// Where the player stands, off their own minimap: the place named as a coach
@@ -176,6 +186,10 @@ public sealed record LaneFacts(string Lane, double DistanceUnits, string? Screen
     /// when the player stands on it).
     /// </summary>
     public string? WalkTo { get; init; }
+
+    /// <summary>Where on the map that spot is (<see cref="RiftMap.Place"/>): "bot lane, at your outer turret".</summary>
+    public string? WalkToPlace { get; init; }
+
     public double? WalkToUnitsAway { get; init; }
     public string? WalkToScreenDirection { get; init; }
 
@@ -213,6 +227,9 @@ public sealed record WaveFacts(
     /// shows none of theirs in the lane.
     /// </summary>
     public string? TheirFrontPlace { get; init; }
+
+    /// <summary>Where on the map <see cref="MeetAt"/> is (<see cref="RiftMap.Place"/>); null with no <see cref="MeetAt"/>.</summary>
+    public string? MeetPlace { get; init; }
 
     /// <summary>How far the enemy's front is from the player, and which way on the screen.</summary>
     public double? TheirFrontUnitsAway { get; init; }
@@ -289,6 +306,9 @@ public sealed record CoverFacts(int? AlliesNearerTheEnemy, IReadOnlyList<string>
 /// </summary>
 public sealed record Refuge(string Name, string Kind, double DistanceUnits, string? ScreenDirection, bool TowardYourBase)
 {
+    /// <summary>Where on the map the spot a run back aims at is (<see cref="RiftMap.Place"/>).</summary>
+    public string? Place { get; init; }
+
     public double? NearestEnemyUnits { get; init; }
 }
 
