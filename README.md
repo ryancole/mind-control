@@ -269,6 +269,16 @@ latency is about a tenth of a second, and the ghost runs that far behind the
 moment: every output is stamped with the video time it was asked about, so
 the trace and the log carry the coach's timing rather than the network's.
 
+The audit also carries the farming's measure: a line per enemy minion that
+died on the player's screen low enough to be a last hit, with `occasion`
+`last_hit` or `missed_cs` and no questions, and a `why` that puts it down to
+what the coach did in the 1.5 s before its bar was last seen: `coach
+attacked`, `attack offered, picked <option>`, `attack closed: <gate>`, or `not
+asked`. The health line every five seconds tallies the same (`farm: 2 taken, 3
+missed (...)`, and `last hits N of M since start`), and every state carries it
+as `farming`: the HUD's creep score, its rate from 1:30, and the last minute's
+last hits taken and missed.
+
 What the copy must not claim, and still does not: a bolt is "a bolt", never
 an ability (a ranged auto-attack qualifies as readily as a skillshot, and
 until spectral-sight names the ability nothing here tells them apart); a wide

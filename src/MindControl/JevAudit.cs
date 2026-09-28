@@ -34,5 +34,16 @@ public sealed class JevAudit(string path) : IDisposable
         _writer.WriteLine(JsonSerializer.Serialize(line, Moment.JsonOptions));
     }
 
+    /// <summary>
+    /// A last hit taken or missed, as a line of its own with the occasion
+    /// "last_hit" or "missed_cs" and no questions: the farming's measure,
+    /// beside the answers it is put down to.
+    /// </summary>
+    public void WriteFarm(FarmOutcome farm)
+    {
+        var line = new { farm.VideoTime, Occasion = farm.Outcome, farm.At, farm.Health, farm.Why };
+        _writer.WriteLine(JsonSerializer.Serialize(line, Moment.JsonOptions));
+    }
+
     public void Dispose() => _writer.Dispose();
 }

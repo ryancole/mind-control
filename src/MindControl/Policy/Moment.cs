@@ -35,7 +35,8 @@ public sealed record Moment
         + "see them. Distances are in game units; directions are as they appear on the player's "
         + $"screen, where their own base is at the {(side == MapSide.Blue ? "lower left" : "upper right")}. `coach` lists what you, the coach, "
         + "have already done recently, so you do not repeat yourself; `skill_point`, when present, is an "
-        + "ability point waiting on their HUD to be spent.";
+        + "ability point waiting on their HUD to be spent; `farming` is their creep score and the last hits "
+        + "they took and missed in the last minute.";
 
     /// <summary>How a state is written on the wire: snake_case, nothing null, nothing escaped that need not be.</summary>
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -64,6 +65,9 @@ public sealed record Moment
 
     /// <summary>The ability point the HUD shows waiting, when one is.</summary>
     public SkillPointFacts? SkillPoint { get; init; }
+
+    /// <summary>The player's farm: their creep score, and the last hits they took and missed lately.</summary>
+    public FarmingFacts? Farming { get; init; }
 
     /// <summary>What the question is about, when it is about an event rather than the moment itself.</summary>
     public object? Occasion { get; init; }
@@ -306,6 +310,27 @@ public sealed record BoltOccasion(
 public sealed record SkillPointFacts(
     int? Level, IReadOnlyList<string> Lit, bool UltimateTakesAPoint, int? CoachWatchingSinceLevel, double HeldForSeconds,
     int Waiting);
+
+/// <summary>
+/// The player's farm, off their own HUD and screen. <see cref="Cs"/> is the
+/// creep score the HUD prints, null until read; <see cref="CsPerMinute"/> is
+/// that over the game clock, from 1:30 on (before it the first wave has barely
+/// met). The last-minute counts are the enemy minions that died on the
+/// player's screen low enough to be a last hit: taken, when their score rose
+/// for it, or missed, when someone or something else got it.
+/// <see cref="LastMissSecondsAgo"/> is null with no miss in that minute.
+/// </summary>
+public sealed record FarmingFacts(
+    int? Cs, double? CsPerMinute, int LastHitsLastMinute, int MissedLastMinute, double? LastMissSecondsAgo);
+
+/// <summary>
+/// An enemy minion that died on the player's screen, for the audit: whether
+/// they took the last hit, the bar's last legible fill, and for a miss what
+/// the coach was doing in the moments before (<see cref="Why"/>): ordering an
+/// attack, offering one that lost to another option, or not offering one and
+/// why not.
+/// </summary>
+public sealed record FarmOutcome(double VideoTime, double At, string Outcome, double? Health, string? Why);
 
 /// <summary>A shot of the player's that was seen leaving them with an enemy in front of it.</summary>
 public sealed record ShotOccasion(

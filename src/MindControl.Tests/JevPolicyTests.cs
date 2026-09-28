@@ -1173,6 +1173,78 @@ public sealed class JevPolicyTests
         Assert.IsNull(Attacks(jev)[0].State.Attack!.EnemyMinionsNear.Single().FallingPerSecond, "one reading is no rate");
     }
 
+    // --- The farm: last hits taken and missed ---
+
+    /// <summary>An enemy minion's death on the screen, its bar last seen at <paramref name="at"/>, reported 1.5 s later.</summary>
+    private static GameEvent Died(string kind, double at) => new()
+    {
+        Kind = kind, VideoTime = at + 1.5, Team = "blue", Champion = "Ezreal", IsSelf = true, At = at, Health = 0.1,
+    };
+
+    [TestMethod]
+    public void The_state_tells_the_farm_off_the_score_and_the_last_minutes_last_hits()
+    {
+        var (policy, jev) = Coach();
+        policy.OnEvent(Died(EventKind.LastHit, 130));   // older than the minute counted
+        policy.OnEvent(Died(EventKind.LastHit, 195));
+        policy.OnEvent(Died(EventKind.MissedCs, 197));
+        policy.OnFrame(Clocked(200, 300, Idle() with { Cs = 30 }));
+
+        Assert.AreEqual(new FarmingFacts(30, 6.0, 1, 1, 3.0), jev.Last.State.Farming);
+    }
+
+    [TestMethod]
+    public void The_farm_is_not_told_before_the_score_is_read_or_a_minion_dies_and_no_rate_before_one_thirty()
+    {
+        var (policy, jev) = Coach();
+        policy.OnFrame(Clocked(100, 50, Idle()));
+        Assert.IsNull(jev.Last.State.Farming);
+
+        policy.OnFrame(Clocked(101, 80, Idle() with { Cs = 0 }));
+        Assert.AreEqual(new FarmingFacts(0, null, 0, 0, null), jev.Last.State.Farming);
+    }
+
+    [TestMethod]
+    public void A_missed_last_hit_is_put_down_to_what_the_coach_did_before_it()
+    {
+        var (policy, jev) = Coach();
+        List<FarmOutcome> farmed = [];
+        policy.Farmed += farmed.Add;
+        var near = InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3));
+        void Frames(double from, ChampionRow self)
+        {
+            for (var t = from; t <= from + 1 + 1e-9; t = Math.Round(t + 0.1, 3))
+                policy.OnFrame(Clocked(t, 300, self));
+        }
+
+        jev.Script = Choose("carry_on");
+        Frames(200, near);
+        policy.OnEvent(Died(EventKind.MissedCs, 201));
+        jev.Script = Choose("attack");
+        Frames(210, near);
+        policy.OnEvent(Died(EventKind.MissedCs, 211));
+        Frames(220, InLane());
+        policy.OnEvent(Died(EventKind.MissedCs, 221));
+        policy.OnEvent(Died(EventKind.LastHit, 221));
+        policy.OnEvent(Died(EventKind.MissedCs, 300));   // no root in its window
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "attack offered, picked carry_on", "coach attacked", "attack closed: nothing in reach of a basic attack",
+                "attack closed: nothing in reach of a basic attack", "not asked",
+            },
+            farmed.Select(f => f.Why).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { EventKind.MissedCs, EventKind.MissedCs, EventKind.MissedCs, EventKind.LastHit, EventKind.MissedCs },
+            farmed.Select(f => f.Outcome).ToArray());
+        StringAssert.EndsWith(policy.DrainActivity(),
+            "; farm: 1 taken, 4 missed (attack closed: nothing in reach of a basic attack 1, attack offered, picked carry_on 1, "
+            + "coach attacked 1, not asked 1); last hits 1 of 5 since start");
+        policy.OnFrame(Clocked(400, 300, Idle()));
+        StringAssert.EndsWith(policy.DrainActivity(), "; last hits 1 of 5 since start", "the totals outlive a drain");
+    }
+
     /// <summary>Near their bot outer turret (13866, 4505): the player outside its range, Karma inside it.</summary>
     private static ChampionRow ByTheirTurret() => Self(x: 13300, y: 3800);
 
