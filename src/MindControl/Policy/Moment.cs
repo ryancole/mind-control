@@ -85,7 +85,14 @@ public sealed record PlayerFacts(
 /// </summary>
 public sealed record SlotFacts(
     string Slot, string? Kind, double? Range, string Status,
-    double? SecondsPastPrintedCooldown, double? UpInSeconds, string? Note);
+    double? SecondsPastPrintedCooldown, double? UpInSeconds, string? Note)
+{
+    /// <summary>How many enemy minions whose bars were read stand inside its range; null when none do or its range is not on file.</summary>
+    public int? EnemyMinionsInRange { get; init; }
+
+    /// <summary>The lowest bar, 0 to 1, among those minions; null when there are none.</summary>
+    public double? LowestEnemyMinionInRange { get; init; }
+}
 
 /// <summary>An enemy the player can see right now.</summary>
 public sealed record EnemyFacts(
