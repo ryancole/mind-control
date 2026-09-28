@@ -145,7 +145,7 @@ public sealed class JevPolicyTests
         policy.OnFrame(Clocked(100, 50, Idle()));
 
         var ask = jev.Asks.Single();
-        CollectionAssert.AreEqual(new[] { "carry_on", "walk_to_lane", "buy" }, Offered(ask),
+        CollectionAssert.AreEqual(new[] { "carry_on", "buy", "walk_to_lane" }, Offered(ask),
             "in the fountain with the clock running: no button up, nobody on the screen, nothing in reach");
         CollectionAssert.AreEquivalent(new[] { "decide", "lane" }, ask.Questions.Keys.ToArray(),
             "the walk's follow-up goes in the same request");
@@ -687,25 +687,28 @@ public sealed class JevPolicyTests
         var roaming = Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret };
         policy.OnFrame(Clocked(300, 400, roaming));
 
-        var ask = Offering(jev, "catch_wave").Single();
-        Assert.IsFalse(ask.Questions.ContainsKey("tend_lane"), "one lane crashing: no choice to make");
+        var ask = Offering(jev, "walk_to_lane").Single();
         var bot = ask.State.Whereabouts!.Lanes.Single(l => l.Lane == "bot").Wave!;
         Assert.AreEqual("at your outer turret", bot.TheirFrontPlace);
         Assert.IsNull(bot.OurFront);
         Assert.AreEqual("down-right", bot.TheirFrontScreenDirection);
         Assert.IsGreaterThan(1500, bot.TheirFrontUnitsAway!.Value);
+        var criteria = ((ChoiceQuestion)ask.Questions["lane"]).Criteria;
+        StringAssert.Contains((string)criteria["bot"]!, "its enemy wave is at a turret of the player's");
+        Assert.DoesNotContain("its enemy wave", (string)criteria["mid"]!);
     }
 
     [TestMethod]
-    public void A_yes_steps_toward_the_crashing_wave()
+    public void A_walk_to_the_crashing_lane_says_it_goes_to_catch_the_wave()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("catch_wave");
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret }));
 
         var step = policy.DrainMoves().Single();
-        // The enemy's front, its dot nearest our base, as the facts round it.
-        var (x, y) = RiftMap.Blue.At("bot", Math.Round(RiftMap.Blue.Along("bot", 10300, 1260).Progress, 2));
+        // Short of the enemy's front, its dot nearest our base, as the facts round it.
+        var front = Math.Round(RiftMap.Blue.Along("bot", 10300, 1260).Progress, 2);
+        var (x, y) = RiftMap.Blue.At("bot", front - RiftMap.WalkBehindUnits / RiftMap.Length("bot"));
         Assert.AreEqual("bot lane, at your outer turret", step.Destination!.Name);
         Assert.IsTrue(step.AttackMove, "a walk to catch a wave stops to attack on the way");
         Assert.AreEqual(x, step.Destination.X, 1e-6);
@@ -717,18 +720,21 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void Two_lanes_crashing_is_a_choice_between_them()
+    public void A_player_at_their_lane_is_still_offered_the_walk_while_another_lane_crashes()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("catch_wave", ("tend_lane", "mid"));
+        jev.Script = Choose("walk_to_lane", ("lane", "mid"));
         var dots = BotWaveAtOurTurret.Append(Dot(MinionTeam.Red, 5846, 6396)).ToArray();
         policy.OnFrame(Clocked(300, 400, Self(x: 1300, y: 12000) with { MinionDots = dots }, InBotLane()));
 
-        var choice = (ChoiceQuestion)Offering(jev, "catch_wave").Single().Questions["tend_lane"];
-        CollectionAssert.AreEquivalent(new[] { "mid", "bot" }, choice.Options.ToArray());
-        StringAssert.Contains((string)choice.Criteria["bot"]!, "the enemy wave is at your outer turret");
+        var choice = (ChoiceQuestion)Offering(jev, "walk_to_lane").Single().Questions["lane"];
+        StringAssert.Contains((string)choice.Criteria["bot"]!, "theirs at your outer turret");
+        StringAssert.Contains((string)choice.Criteria["bot"]!, "its enemy wave is at a turret of the player's");
         StringAssert.Contains((string)choice.Criteria["bot"]!, "allies there: champ3");
-        Assert.AreEqual("mid lane, at your outer turret", policy.DrainMoves().Single().Destination!.Name);
+        StringAssert.Contains((string)choice.Criteria["mid"]!, "its enemy wave is at a turret of the player's");
+        Assert.DoesNotContain("its enemy wave", (string)choice.Criteria["top"]!);
+        var step = policy.DrainMoves().Single();
+        StringAssert.StartsWith(step.Reason, "the enemy wave is at your outer turret in mid lane with none of your team there; a good player would be on the way to catch it (");
     }
 
     [TestMethod]
@@ -744,7 +750,7 @@ public sealed class JevPolicyTests
         var (x, y) = RiftMap.Blue.At("bot", front - RiftMap.WalkBehindUnits / RiftMap.Length("bot"));
         var walk = policy.DrainMoves().First(m => m.Destination is not null);
         Assert.AreEqual(new Destination("bot lane, at your outer turret", x, y), walk.Destination, "not into it, not past it to the turret");
-        StringAssert.Contains(walk.Reason, "on the way up bot lane (short of the enemy minions in bot lane, at your outer turret, ");
+        StringAssert.Contains(walk.Reason, "on the way to catch it (short of the enemy minions in bot lane, at your outer turret, ");
     }
 
     /// <summary>All 22 turrets standing, but for the ones named: (team, lane, tier) to their reading.</summary>
@@ -765,7 +771,7 @@ public sealed class JevPolicyTests
     public void A_wave_at_a_fallen_outer_turret_is_told_as_on_the_way_to_the_inner_one()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("catch_wave");
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         var turrets = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false), (MinionTeam.Red, "mid", TurretTier.Inner, null));
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWaveAtOurTurret, Turrets = turrets }));
 
@@ -805,14 +811,17 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void No_wave_at_a_turret_or_a_player_already_at_it_offers_no_catch()
+    public void No_wave_at_a_turret_or_a_player_already_at_it_is_no_wave_to_catch()
     {
         var (policy, jev) = Coach();
         policy.OnFrame(Clocked(300, 400, Self(x: 7000, y: 5000) with { MinionDots = BotWavesMeeting }));
         policy.OnFrame(Clocked(303, 403, Self(x: 10000, y: 1300) with { MinionDots = BotWaveAtOurTurret }));
         policy.OnFrame(Clocked(306, 406, Self(x: 7000, y: 5000, alive: false) with { MinionDots = BotWaveAtOurTurret }));
         policy.OnFrame(Clocked(309, 409, Self(x: 7000, y: 5000)));
-        Assert.IsEmpty(Offering(jev, "catch_wave"));
+        var walks = Offering(jev, "walk_to_lane");
+        Assert.IsTrue(walks.All(a => a.State.VideoTime != 306), "not while dead");
+        Assert.IsTrue(walks.SelectMany(a => ((ChoiceQuestion)a.Questions["lane"]).Criteria.Values)
+            .All(c => !((string)c!).Contains("its enemy wave")));
     }
 
     [TestMethod]
@@ -1105,7 +1114,9 @@ public sealed class JevPolicyTests
 
     // --- Basic attacks: a last hit, or a trade ---
 
-    private static FakeJev.Ask[] Attacks(FakeJev jev) => Offering(jev, "attack");
+    /// <summary>The roots that offered either attack, on a minion or on a champion.</summary>
+    private static FakeJev.Ask[] Attacks(FakeJev jev) =>
+        jev.Asks.Where(a => Offered(a).Contains("attack_minion") || Offered(a).Contains("attack_champion")).ToArray();
 
     [TestMethod]
     public void Enemy_minions_in_reach_are_offered_as_targets_lowest_bar_first()
@@ -1130,7 +1141,7 @@ public sealed class JevPolicyTests
                 new MinionTarget("minion 3", 0.7, 400, "right", true),
             },
             attack.EnemyMinionsNear.ToArray());
-        var criteria = ((ChoiceQuestion)ask.Questions["target"]).Criteria;
+        var criteria = ((ChoiceQuestion)ask.Questions["minion"]).Criteria;
         CollectionAssert.AreEqual(new[] { "minion 1", "minion 2", "minion 3" }, criteria.Keys.ToArray());
         Assert.AreEqual("minion 2: an enemy minion with 25% of its health bar left, 300 units right, inside your attack range",
             criteria["minion 2"]);
@@ -1142,7 +1153,7 @@ public sealed class JevPolicyTests
     public void A_pick_right_clicks_the_chosen_target()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("attack", ("target", "minion 1"));
+        jev.Script = Choose("attack_minion", ("minion", "minion 1"));
         var lane = InLane(Bar(MinionTeam.Red, 9300, 1700, health: 0.2), Bar(MinionTeam.Red, 9400, 1400, health: 0.9));
         policy.OnFrame(Clocked(200, 300, lane));
         policy.OnFrame(Clocked(200.1, 300, lane));
@@ -1167,13 +1178,14 @@ public sealed class JevPolicyTests
     public void A_lone_enemy_champion_in_reach_is_offered_without_a_choice()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("attack");
+        jev.Script = Choose("attack_champion");
         var karma = Enemy(500) with { Health = 0.4 };
         policy.OnFrame(Frame(10, Self(), karma));
         policy.OnFrame(Frame(10.1, Self(), karma));
 
         var ask = Attacks(jev)[0];
-        Assert.IsFalse(ask.Questions.ContainsKey("target"));
+        Assert.IsFalse(ask.Questions.ContainsKey("champion"));
+        CollectionAssert.DoesNotContain(Offered(ask), "attack_minion", "no minion bar read");
         Assert.IsTrue(ask.State.VisibleEnemies.Single().InAttackRange);
         Assert.IsEmpty(ask.State.Attack!.EnemyMinionsNear, "the bars were not read: no minion to offer");
         var attack = policy.DrainMoves().Single();
@@ -1181,6 +1193,22 @@ public sealed class JevPolicyTests
         Assert.AreEqual("right", attack.Direction);
         Assert.AreEqual("Karma is 500 units right with 40% health, inside your attack range; a good player would attack them now",
             attack.Reason);
+    }
+
+    [TestMethod]
+    public void A_minion_and_a_champion_in_reach_are_two_choices_each_with_its_own_rubric()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("attack_champion");
+        var karma = Enemy() with { WorldX = 9400, WorldY = 1400, Health = 0.2 };
+        policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3)), karma));
+
+        var ask = Attacks(jev).Single();
+        CollectionAssert.IsSubsetOf(new[] { "attack_minion", "attack_champion" }, Offered(ask));
+        Assert.IsFalse(ask.Questions.ContainsKey("minion") || ask.Questions.ContainsKey("champion"), "one of each: no follow-up");
+        StringAssert.StartsWith(Criterion(ask, "attack_minion"), "attack_minion: right-click an enemy minion");
+        StringAssert.StartsWith(Criterion(ask, "attack_champion"), "attack_champion: right-click an enemy champion");
+        Assert.AreEqual(new AttackTarget("Karma", 400), policy.DrainMoves().Single().Target);
     }
 
     [TestMethod]
@@ -1209,7 +1237,7 @@ public sealed class JevPolicyTests
     public void An_attack_is_not_offered_again_for_a_second()
     {
         var (policy, jev) = Coach();
-        jev.Script = Choose("attack");
+        jev.Script = Choose("attack_minion");
         var near = InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3));
         for (var t = 200.0; t <= 202.5 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 300, near));
@@ -1278,7 +1306,7 @@ public sealed class JevPolicyTests
         jev.Script = Choose("carry_on");
         Frames(200, near);
         policy.OnEvent(Died(EventKind.MissedCs, 201));
-        jev.Script = Choose("attack");
+        jev.Script = Choose("attack_minion");
         Frames(210, near);
         policy.OnEvent(Died(EventKind.MissedCs, 211));
         Frames(220, InLane());
@@ -1289,15 +1317,15 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEqual(
             new[]
             {
-                "attack offered, picked carry_on", "coach attacked", "attack closed: nothing in reach of a basic attack",
-                "attack closed: nothing in reach of a basic attack", "not asked",
+                "attack offered, picked carry_on", "coach attacked", "attack closed: no enemy minion in reach of a basic attack",
+                "attack closed: no enemy minion in reach of a basic attack", "not asked",
             },
             farmed.Select(f => f.Why).ToArray());
         CollectionAssert.AreEqual(
             new[] { EventKind.MissedCs, EventKind.MissedCs, EventKind.MissedCs, EventKind.LastHit, EventKind.MissedCs },
             farmed.Select(f => f.Outcome).ToArray());
         StringAssert.EndsWith(policy.DrainActivity(),
-            "; farm: 1 taken, 4 missed (attack closed: nothing in reach of a basic attack 1, attack offered, picked carry_on 1, "
+            "; farm: 1 taken, 4 missed (attack closed: no enemy minion in reach of a basic attack 1, attack offered, picked carry_on 1, "
             + "coach attacked 1, not asked 1); last hits 1 of 5 this game");
         policy.OnFrame(Clocked(400, 300, Idle()));
         StringAssert.EndsWith(policy.DrainActivity(), "; last hits 1 of 5 this game", "the totals outlive a drain");
@@ -2391,8 +2419,8 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEqual(
             new[]
             {
-                "carry_on", "level_up", "run_away", "use_ability", "attack", "step_back",
-                "hide_in_brush", "catch_wave", "walk_to_lane", "recall", "buy",
+                "carry_on", "level_up", "run_away", "use_ability", "attack_minion", "attack_champion", "step_back",
+                "hide_in_brush", "recall", "buy", "walk_to_lane",
             },
             asked.Branches!.Select(b => b.Option).ToArray(), "every branch, in the rubric's order");
         CollectionAssert.AreEqual(Offered(jev.Last), asked.Branches!.Where(b => b.Gate is null).Select(b => b.Option).ToArray(),

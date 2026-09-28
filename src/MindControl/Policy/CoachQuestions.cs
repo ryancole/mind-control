@@ -28,12 +28,14 @@ public static class CoachQuestions
         + "they could do, and only the things the state makes possible are offered; `carry_on` is no new order, "
         + "the player going on with what they are already doing. Each option says when it is the right one. "
         + "Where more than one is right, the one earliest in this order wins: `level_up` (it takes no time "
-        + "and is never in the way of anything else); `run_away`; `use_ability`; `attack`; `step_back`; "
-        + "`hide_in_brush`; `catch_wave`; `walk_to_lane`; `recall`; `buy`. Pick `carry_on` "
-        + "when none of the offered options is right: a good player does not click for the sake of clicking. "
+        + "and is never in the way of anything else); `run_away`; `use_ability`; `attack_minion`; "
+        + "`attack_champion`; `step_back`; `hide_in_brush`; `recall`; `buy`; `walk_to_lane`. `walk_to_lane` is "
+        + "the default: whenever it is offered and none of the options before it is right, it is right, unless "
+        + "its own text says it is not. Pick `carry_on` only when none of the offered options is right: a good "
+        + "player does not click for the sake of clicking. "
         + "But in a lane with enemy minions in reach, farming them is what a good player is doing: gold comes "
-        + "only from minions, so while `attack` or `use_ability` is offered there, `carry_on` is right only when "
-        + "their own texts say they are not. "
+        + "only from minions, so while `attack_minion` or `use_ability` is offered there, `carry_on` is right "
+        + "only when their own texts say they are not. "
         + "`coach` lists what you, the coach, did in the last few seconds: a button pressed or an attack ordered "
         + "moments ago is still being carried out, but a step is not a reason to hold the next one, since a "
         + "good player gets around in short right-clicks on the ground, a fresh one about every second.";
@@ -41,7 +43,7 @@ public static class CoachQuestions
     /// <summary>The root's do-nothing option, always offered.</summary>
     public const string CarryOnOption =
         "carry_on: no new order this moment; the player goes on with what they are doing. Right when none "
-        + "of the other options offered is.";
+        + "of the other options offered is, `walk_to_lane` included when it is offered.";
 
     /// <summary>Throw a button that is up at a visible enemy; <see cref="Ability"/> picks which.</summary>
     public static string UseAbilityOption(IEnumerable<string> slots) =>
@@ -104,24 +106,20 @@ public static class CoachQuestions
         + "abilities are and what this champion's players usually max.";
 
     /// <summary>
-    /// Right-click an enemy in reach; <see cref="AttackTarget"/> picks which.
-    /// What is in reach is in `attack`, `minions` and `visible_enemies`; when
-    /// an attack is worth it is decided here.
+    /// Right-click an enemy minion in reach; <see cref="WhichMinion"/> picks
+    /// which. What is in reach is in `attack` and `minions`; when hitting a
+    /// minion is worth it is decided here.
     /// </summary>
-    public const string AttackOption =
-        "attack: right-click an enemy within or nearly within reach of the player's basic attack. "
+    public const string AttackMinionOption =
+        "attack_minion: right-click an enemy minion within or nearly within reach of the player's basic attack. "
         + "`attack.enemy_minions_near` lists the enemy minions near them with how much of each one's health bar is "
         + "left (`health`, 0 to 1), how fast it has been falling (`falling_per_second`, 0 when it holds, absent when "
         + "not yet known) and how soon it is empty at that rate (`seconds_to_empty`), and whether the attack reaches "
-        + "it (`in_attack_range`; false means a step outside it); `visible_enemies` the enemy champions with their "
-        + "own `in_attack_range` and, when one stands in an enemy turret's range, `under_their_turret`; "
-        + "`attack.you_under_their_turret` the enemy turret whose range the player stands in, if any, and "
-        + "`your_minions_under_that_turret` how many of the player's minions stand there too; and "
-        + "`minions.theirs_within_caster_range` how many enemy minions are within 550 units of the player. "
-        + "Gold comes only from the killing blow on a minion, so a good player's basic attacks in lane are mostly "
-        + "last hits; attacking a champion draws every nearby enemy minion's attacks onto the attacker; and a "
-        + "turret shoots an enemy champion who attacks a champion inside its range, and shoots whoever stands in "
-        + "its range with no minions of their own there to shoot first. "
+        + "it (`in_attack_range`; false means a step outside it); `attack.you_under_their_turret` the enemy turret "
+        + "whose range the player stands in, if any, and `your_minions_under_that_turret` how many of the player's "
+        + "minions stand there too. Gold comes only from the killing blow on a minion, so a good player's basic "
+        + "attacks in lane are mostly last hits, and a turret shoots whoever stands in its range with no minions "
+        + "of their own there to shoot first. "
         + "Farming is what a laner does between everything else: a good player's basic attacks go into the enemy "
         + "wave all through the lane, and an enemy champion somewhere on the screen does not stop them. "
         + "Go by these rules in order; the first that applies decides whether this is right. "
@@ -140,28 +138,54 @@ public static class CoachQuestions
         + "about a quarter, the ability takes the last hit and the basic attack is not right. "
         + "Fourth: the player's own health is low and an enemy champion within about 1000 units is healthier: "
         + "not right. "
-        + "Fifth: the only enemy champion worth attacking has `under_their_turret` set, or "
-        + "`attack.you_under_their_turret` is set: not right for the champion, since the turret would shoot the "
-        + "player for it; a minion is still right by the rules below. "
-        + "Sixth: an enemy champion has `in_attack_range` true, health no higher than the player's, and at most "
-        + "one enemy minion is within 550 units of the player: right, a trade the player wins. "
-        + "Seventh: no enemy champion in `visible_enemies` is within about 1000 units: right, attack the wave. An "
+        + "Fifth: no enemy champion in `visible_enemies` is within about 1000 units: right, attack the wave. An "
         + "enemy champion farther off cannot punish the attack, and a wave taken down fast is gold, experience "
         + "and pressure on their turret. "
-        + "Eighth: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.6 or less and its bar is "
+        + "Sixth: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.6 or less and its bar is "
         + "falling (`falling_per_second` above 0): right, one basic attack now sets up the last hit that follows, "
-        + "which the player's own minions would otherwise take. "
+        + "which the player's own minions would otherwise take; but when `attack_champion` is offered and its own "
+        + "text says the trade is the player's, that comes first. "
         + "Otherwise not right: with an enemy champion close and every minion near still healthy and holding, "
         + "hitting them only pushes the wave toward the enemy's turret; the player waits for a bar to drop.";
 
-    public const string AttackTarget =
-        "If the player were to right-click an enemy now, which? Each option is an enemy minion, with how much of "
-        + "its health bar is left, how fast it is falling, how far it is and whether the attack reaches it, or an "
-        + "enemy champion, with the same and whether they stand under one of their turrets. A minion one basic "
-        + "attack finishes comes first, since a last hit is gold that is gone the moment it dies to anything else: "
-        + "the one whose bar will be empty soonest, within range before one the player would have to walk to. Then "
-        + "an enemy champion in range whose trade is the player's and who does not stand under their turret; never "
-        + "one who does. Then the lowest minion in range, to farm the wave.";
+    public const string WhichMinion =
+        "If the player were to right-click an enemy minion now, which? Each option is an enemy minion, with how "
+        + "much of its health bar is left, how fast it is falling, how far it is and whether the attack reaches "
+        + "it. A minion one basic attack finishes comes first, since a last hit is gold that is gone the moment it "
+        + "dies to anything else: the one whose bar will be empty soonest, within range before one the player "
+        + "would have to walk to. Otherwise the lowest one in range, to farm the wave.";
+
+    /// <summary>
+    /// Right-click an enemy champion in reach; <see cref="WhichChampion"/>
+    /// picks which. Who is in reach is in `visible_enemies`; when a trade is
+    /// the player's is decided here.
+    /// </summary>
+    public const string AttackChampionOption =
+        "attack_champion: right-click an enemy champion within or nearly within reach of the player's basic "
+        + "attack, to trade blows with them. `visible_enemies` lists the enemy champions with their health, their "
+        + "own `in_attack_range` and, when one stands in an enemy turret's range, `under_their_turret`; "
+        + "`attack.you_under_their_turret` the enemy turret whose range the player stands in, if any; and "
+        + "`minions.theirs_within_caster_range` how many enemy minions are within 550 units of the player. "
+        + "Attacking a champion draws every nearby enemy minion's attacks onto the attacker, and a turret shoots "
+        + "an enemy champion who attacks a champion inside its range. "
+        + "Go by these rules in order; the first that applies decides whether this is right. "
+        + "First: `coach` has an entry that begins \"attacked\" with `seconds_ago` under 1: not right, that "
+        + "right-click is still being carried out. "
+        + "Second: every enemy champion in reach has `under_their_turret` set, or `attack.you_under_their_turret` "
+        + "is set: not right, the turret would shoot the player for it. "
+        + "Third: the player's own health is lower than that champion's: not right, a trade they lose. "
+        + "Fourth: that champion's health is about 0.25 or less and the player's is higher: right, the kill is "
+        + "there to take, whatever minions are near. "
+        + "Fifth: that champion has `in_attack_range` true and at most one enemy minion is within 550 units of the "
+        + "player: right, a trade the player wins. "
+        + "Otherwise not right: in the middle of the enemy wave, a basic attack on the champion costs more in "
+        + "minion damage than it deals.";
+
+    public const string WhichChampion =
+        "If the player were to right-click an enemy champion now, which? Each option is an enemy champion with "
+        + "their health, how far they are, whether the attack reaches them and whether they stand under one of "
+        + "their turrets. Never one who does. Of the rest, the lowest on health inside the attack's reach, then "
+        + "the nearest.";
 
     /// <summary>
     /// A step back down the lane, out of the enemy wave. The counts and
@@ -210,39 +234,42 @@ public static class CoachQuestions
         + "there is running at them.";
 
     /// <summary>
-    /// Asked of a player anywhere but a lane's action: should they be
-    /// heading to a lane? The still time, the place and the lanes are in
-    /// `whereabouts`; what counts as away from the action is decided here.
+    /// The player's default: a step on the way to a lane's wave, their own
+    /// lane's or one crashing into their turret with nobody there. The
+    /// place, the lanes and their minions are in `whereabouts`; when the
+    /// walk is not right is decided here.
     /// </summary>
     public const string WalkToLaneOption =
-        "walk_to_lane: a step toward a lane's minion wave. `whereabouts` says where the player is, how long they "
-        + "have stood on that spot (0 while they move), and how far each lane is. A good player is always near the "
-        + "action: first at the minion wave, where the gold is farmed, and otherwise where their team is; standing "
-        + "anywhere else is gold and experience left on the table. From about 1:05 the minions march down every "
+        "walk_to_lane: a step toward a lane's minion wave. This is the default: a good player is always near the "
+        + "action, first at the minion wave, where the gold is farmed, and otherwise where their team is; standing "
+        + "anywhere else is gold and experience left on the table, so whenever this is offered and nothing else is "
+        + "right, walking to a lane is. `whereabouts` says where the player is, how long they have stood on that "
+        + "spot (0 while they move), and how far each lane is. From about 1:05 the minions march down every "
         + "lane, a new wave each half minute, so a lane always has a wave to farm. When a lane carries a `wave`, "
         + "that is the minions the minimap shows in it: how many of each side's, how far each side's front has "
-        + "pushed (0 is the player's own nexus, 1 the enemy's, the middle of the lane about 0.5) and where the two "
-        + "waves meet, and how far that is from the player; an empty one is a lane the minimap shows no minions in. "
+        + "pushed (0 is the player's own nexus, 1 the enemy's, the middle of the lane about 0.5), where the "
+        + "enemy's front is (`their_front_place`, by the player's turrets) and where the two waves meet, and how "
+        + "far that is from the player; an empty one is a lane the minimap shows no minions in. "
         + "When the lanes carry no `wave`, the minions were not read, so read a lane as its wave. Each lane's "
         + "`walk_to` is the farthest spot up it the player can walk to safely: their farthest turret still "
         + "standing, or behind their own minions when those have pushed beyond it, never into the enemy's; and "
-        + "`you_are` says whether the player is short of that spot, at it, or past it. Right when they are in "
-        + "their fountain or base (`your fountain`, `your base`) and nothing keeps them there. At the start of the game a good player "
-        + "spends the first half minute or so buying and is on the way to lane by about 0:45, well before the "
-        + "first minions meet around 1:30: standing in the fountain before then, with the allies still in base "
-        + "too, is shopping, not idling, and after it is. After a recall or a respawn later in the game they buy "
-        + "in a few seconds and walk straight back out. Right when they are in a lane but `short of it`: back at "
-        + "their own inner or inhibitor turret with the lane's safe spot far up it is still the walk out, not "
-        + "laning; and when `walk_to` is `behind your minions`, their wave has pushed out past their turret and "
-        + "they have stayed back at it, where every minion that dies is a last hit they are not there to take: a "
-        + "good player walks up behind their wave to farm it, and the spot is safe by construction, behind their "
-        + "own minions and short of the enemy's. Right when they are in the jungle or river with no enemy on the screen and nothing to do "
-        + "there. Not when they are `at it` or `past it` in a lane: being there, waiting for the minions or "
-        + "holding ground against a visible enemy, is laning, not idling. Not when an enemy champion is close on "
-        + "the screen and the moment is a fight with them or a retreat from them, because then the moment is "
-        + "about that enemy; but an enemy laner standing back behind their own wave is the lane as usual, not a "
-        + "reason to stay under the turret while the player's own wave goes unfarmed. Whether they stand or are already walking "
-        + "makes no difference.";
+        + "`you_are` says whether the player is short of that spot, at it, or past it. This is offered while they "
+        + "are short of every lane's spot, and while an enemy wave is at one of their turrets away from them. "
+        + "Back at their own inner or inhibitor turret with the lane's safe spot far up it is still the walk out, "
+        + "not laning; and when `walk_to` is `behind your minions`, their wave has pushed out past their turret "
+        + "and they have stayed back at it, where every minion that dies is a last hit they are not there to "
+        + "take. An enemy wave left to crash into a turret is gold and experience lost for good and the turret "
+        + "worn down (a wave past a fallen turret has nothing in its way until the next one in, and every turret "
+        + "nearer the base is costlier to lose), so a good player does not leave their own lane's wave alone, nor "
+        + "one nobody else is there to catch. "
+        + "Not right in two cases. First, in the fountain at the start of the game: a good player spends the first "
+        + "half minute or so buying and is on the way to lane by about 0:45, well before the first minions meet "
+        + "around 1:30, so standing in the fountain before then, with the allies still in base too, is shopping, "
+        + "not idling (after a recall or a respawn later in the game they buy in a few seconds and walk straight "
+        + "back out). Second, when an enemy champion is close on the screen and the moment is a fight with them "
+        + "or a retreat from them, because then the moment is about that enemy; but an enemy laner standing back "
+        + "behind their own wave is the lane as usual, not a reason to stay under the turret while the player's "
+        + "own wave goes unfarmed. Whether they stand or are already walking makes no difference.";
 
     public const string Lane =
         "If the player were to walk to a lane now, which lane? Each option gives its distance and "
@@ -252,34 +279,10 @@ public static class CoachQuestions
         + "support belongs in bot lane, a mid champion in mid, a top champion in top), then by the allies: "
         + "the lane their partner or their team is in, and not a lane that already has the allies it needs. "
         + "Where an option says how far it is safe to walk, that is where the walk goes; neither it nor where "
-        + "the minions are changes which lane is theirs. Distance decides only between lanes that are "
-        + "otherwise equally theirs.";
-
-    /// <summary>
-    /// Offered while an enemy wave is at one of the player's turrets and the
-    /// player is not at it. Where each lane's minions are is in
-    /// `whereabouts`; whose wave it is to catch is decided here.
-    /// </summary>
-    public const string CatchWaveOption =
-        "catch_wave: a step toward an enemy minion wave that is at one of the player's own turrets, which the "
-        + "player is not at. Each lane's `wave` in `whereabouts` says how many minions of each side the minimap "
-        + "shows in it, where the enemy's front is (`their_front_place`, by the player's turrets), how far that is "
-        + "from the player, and which allies are in the lane; `your_turrets` says which of the player's turrets in "
-        + "it still stand. A wave past a fallen turret has nothing in its way until the next one in, which "
-        + "`their_front_place` names, and every turret nearer the base is costlier to lose. A wave left to crash "
-        + "into a turret is gold and experience lost for good and the turret worn down, so a good player keeps "
-        + "their own lane's wave from being left alone: the lane their role belongs in (a marksman or a support in "
-        + "bot, a mid champion in mid, a top champion in top). Right when the wave is in their own lane and no ally "
-        + "is there to take it, and nothing on the screen holds them: they are roaming, in the jungle or river, in "
-        + "another lane, or dawdling in base after buying. Not when an ally is already in that lane to catch it; "
-        + "not when it is not their lane and their own needs them; not when an enemy champion is close on the "
-        + "screen and the moment is a fight with them; not when the wave is too far to reach before the turret "
-        + "kills it and their own lane has its own wave. Whether they are already on their way makes no difference.";
-
-    public const string TendLane =
-        "If the player were to go and catch a wave now, which lane's? Each option is a lane whose enemy wave is at "
-        + "one of the player's turrets, with how far it is and which allies are there. Their own lane by role "
-        + "comes first, then the one nobody is in, and distance decides only between lanes otherwise equal.";
+        + "the minions are changes which lane is theirs, with one exception: an option whose enemy wave is at a "
+        + "turret of the player's with nobody there to catch it is the one to walk to when the player's own lane "
+        + "has an ally in it to take its wave, or when it is their own lane. Distance decides only between lanes "
+        + "that are otherwise equally theirs.";
 
     /// <summary>
     /// Offered while the player stands outside the brush with a patch near

@@ -247,7 +247,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private readonly List<(double At, bool Taken)> _farm = [];
 
     // The roots of the last few seconds, for what a missed last hit is put
-    // down to: whether attack was offered (or what closed it) and what was
+    // down to: whether attack_minion was offered (or what closed it) and what was
     // picked. A pick is filled in when its answer lands.
     private sealed class RootSeen(double at, string? attackGate)
     {
@@ -608,20 +608,20 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             LevelUp(self, moment, asked),
             RunAway(frame, self, moment, asked),
             UseAbility(frame, self, moment, asked),
-            Attack(frame, self, asked),
+            AttackMinion(frame, self, asked),
+            AttackChampion(frame, self, asked),
             StepBack(frame, self, moment, asked),
             HideInBrush(frame, self, moment, asked),
-            CatchWave(frame, self, moment, asked),
-            WalkToLane(frame, self, moment, asked),
             Recall(frame, self, moment, asked),
             Buy(frame, self, moment, asked),
+            WalkToLane(frame, self, moment, asked),
         };
         if (recalling)
             considered = considered
                 .Select(b => b.Gate is null && b.Option != "level_up" ? Closed(b.Option, "channelling a recall") : b)
                 .ToArray();
         var branches = considered.Where(b => b.Gate is null).ToArray();
-        var root = new RootSeen(asked, considered.First(b => b.Option == "attack").Gate);
+        var root = new RootSeen(asked, considered.First(b => b.Option == "attack_minion").Gate);
         _roots.RemoveAll(r => asked - r.At > RootsKeptSeconds);
         _roots.Add(root);
         if (branches.Length == 0)
@@ -920,29 +920,33 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <summary>How many enemy minions near the player, lowest bars first, are offered as targets.</summary>
     private const int MinionTargets = 4;
 
-    /// <summary>
-    /// Offered while the player is alive and placed with something to
-    /// attack: an enemy minion whose bar was read, or a visible enemy
-    /// champion, within (or a step or two beyond) the player's basic-attack
-    /// range. Not offered for <see cref="JevOptions.AttackEverySeconds"/>
-    /// after the coach's last attack, which the champion is still carrying
-    /// out. Whether an attack is worth it -- a last hit, a trade, clearing the
-    /// wave -- is the root's call, and which target the follow-up's; a pick
-    /// is one right-click on the target, the order that has the champion
-    /// attack it.
-    /// </summary>
-    private Branch Attack(FrameEnvelope frame, ChampionRow self, double asked)
-    {
-        const string option = "attack";
-        if (Unplaced(self) is { } unplaced)
-            return Closed(option, unplaced);
-        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
-        if (frame.VideoTime - _lastAttackAt < _options.AttackEverySeconds)
-            return Closed(option, $"attacked {frame.VideoTime - _lastAttackAt:0.0}s ago; still carrying it out");
-        var range = AbilityKits.AttackRange(self.Champion);
-        var reach = (range ?? ReachWithoutARange) + ApproachUnits;
+    /// <summary>A target a basic attack could be ordered at: who, where, and the sentence a pick of it says.</summary>
+    private sealed record Strikeable(AttackTarget Target, double X, double Y, string Reason);
 
-        var targets = new Dictionary<string, (AttackTarget Target, double X, double Y, string Reason)>();
+    /// <summary>What keeps the player from any basic attack: being dead or unplaced, or the last attack still being carried out.</summary>
+    private string? AttackGate(FrameEnvelope frame, ChampionRow self) =>
+        Unplaced(self)
+        ?? (frame.VideoTime - _lastAttackAt < _options.AttackEverySeconds
+            ? $"attacked {frame.VideoTime - _lastAttackAt:0.0}s ago; still carrying it out"
+            : null);
+
+    /// <summary>
+    /// Offered while the player is alive and placed with an enemy minion
+    /// whose bar was read within (or a step or two beyond) their
+    /// basic-attack range. Not offered for
+    /// <see cref="JevOptions.AttackEverySeconds"/> after the coach's last
+    /// attack, which the champion is still carrying out. Whether hitting a
+    /// minion is worth it -- a last hit, setting one up, clearing the wave --
+    /// is the root's call, and which minion the follow-up's; a pick is one
+    /// right-click on it.
+    /// </summary>
+    private Branch AttackMinion(FrameEnvelope frame, ChampionRow self, double asked)
+    {
+        const string option = "attack_minion";
+        if (AttackGate(frame, self) is { } gate)
+            return Closed(option, gate);
+
+        var targets = new Dictionary<string, Strikeable>();
         var criteria = new ChoiceCriteria();
         foreach (var (minion, mx, my) in NearMinions(frame, self))
         {
@@ -956,9 +960,32 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             };
             criteria[minion.Name] = $"{minion.Name}: an enemy minion with {minion.Health:0%} of its health bar left{fall}, "
                 + $"{where}, {InReach(minion.InAttackRange)}";
-            targets[minion.Name] = (new AttackTarget(name, minion.DistanceUnits), mx, my,
+            targets[minion.Name] = new(new AttackTarget(name, minion.DistanceUnits), mx, my,
                 $"it is {where} with {minion.Health:0%} of its bar left, {InReach(minion.InAttackRange)}; a good player would attack it now");
         }
+        if (targets.Count == 0)
+            return Closed(option, "no enemy minion in reach of a basic attack");
+        return Strike(option, CoachQuestions.AttackMinionOption, "minion", CoachQuestions.WhichMinion, targets, criteria, self, asked);
+    }
+
+    /// <summary>
+    /// Offered while the player is alive and placed with a visible enemy
+    /// champion within (or a step or two beyond) their basic-attack range,
+    /// and not for <see cref="JevOptions.AttackEverySeconds"/> after the
+    /// coach's last attack. Whether the trade is the player's is the root's
+    /// call, and which champion the follow-up's; a pick is one right-click
+    /// on them.
+    /// </summary>
+    private Branch AttackChampion(FrameEnvelope frame, ChampionRow self, double asked)
+    {
+        const string option = "attack_champion";
+        if (AttackGate(frame, self) is { } gate)
+            return Closed(option, gate);
+        var range = AbilityKits.AttackRange(self.Champion);
+        var reach = (range ?? ReachWithoutARange) + ApproachUnits;
+
+        var targets = new Dictionary<string, Strikeable>();
+        var criteria = new ChoiceCriteria();
         foreach (var row in Visible(frame, self).OrderBy(r => Distance(self, r)))
         {
             var distance = Distance(self, row)!.Value;
@@ -969,17 +996,30 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             var health = row.Health is { } h ? $"{h:0%} health" : "health not read";
             var covered = TurretCover(row.WorldX!.Value, row.WorldY!.Value) is { } turret ? $", standing under {turret.Said}" : "";
             criteria[champion] = $"{champion}: the enemy champion, {health}, {distance:0} units {Direction(self, row)}, {InReach(inRange)}{covered}";
-            targets[champion] = (new AttackTarget(champion, distance), row.WorldX!.Value, row.WorldY!.Value,
+            targets[champion] = new(new AttackTarget(champion, distance), row.WorldX!.Value, row.WorldY!.Value,
                 $"{champion} is {distance:0} units {Direction(self, row)} with {health}, {InReach(inRange)}; a good player would attack them now");
         }
         if (targets.Count == 0)
-            return Closed(option, "nothing in reach of a basic attack");
+            return Closed(option, "no enemy champion in reach of a basic attack");
+        return Strike(option, CoachQuestions.AttackChampionOption, "champion", CoachQuestions.WhichChampion, targets, criteria, self, asked);
+    }
 
-        return new Branch(option, CoachQuestions.AttackOption,
-            targets.Count > 1 ? q => q.Choice("target", CoachQuestions.AttackTarget, criteria) : null,
+    /// <summary>
+    /// An attack branch over <paramref name="targets"/>: the follow-up
+    /// <paramref name="question"/> when there is more than one, and a pick is
+    /// one right-click on the chosen target, the order that has the champion
+    /// attack it.
+    /// </summary>
+    private Branch Strike(
+        string option, string criterion, string question, string rubric,
+        Dictionary<string, Strikeable> targets, ChoiceCriteria criteria, ChampionRow self, double asked)
+    {
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        return new Branch(option, criterion,
+            targets.Count > 1 ? q => q.Choice(question, rubric, criteria) : null,
             response =>
             {
-                if (Picked(response, "target", targets.Keys) is not { } chosen)
+                if (Picked(response, question, targets.Keys) is not { } chosen)
                     return;
                 var target = targets[chosen];
                 // World y grows north, screen y grows down: flip for the click.
@@ -991,14 +1031,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _lastAttackAt = asked;
                 Remember($"attacked {target.Target.Name}", asked);
             }) { Only = targets.Count == 1 ? targets.Keys.First() : null };
-
-        static string InReach(bool? inRange) => inRange switch
-        {
-            true => "inside your attack range",
-            false => "a step outside your attack range",
-            null => "your attack range is not on file",
-        };
     }
+
+    private static string InReach(bool? inRange) => inRange switch
+    {
+        true => "inside your attack range",
+        false => "a step outside your attack range",
+        null => "your attack range is not on file",
+    };
 
     /// <summary>
     /// The enemy minions on the player's screen near enough to attack, or a
@@ -1092,17 +1132,27 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         });
     }
 
-    // --- Away from the action: would a good player be heading to lane? ---
+    // --- The default: on the way to a lane's wave ---
 
     /// <summary>
-    /// Offered while the player is alive and placed on the map, the game
-    /// clock is running (before it the player cannot move), no movement
-    /// click came in the last <see cref="JevOptions.MoveEverySeconds"/>, and
-    /// they are not already at or past a lane's safe spot: whether they stand
-    /// or walk, and whatever the coach's last step was. Whether they belong
-    /// somewhere else is the root's call and which lane the follow-up's; a
-    /// pick is one step on the ground toward the farthest spot up that lane
-    /// the player can walk to safely (<see cref="RiftMap.WalkTo"/>). The trip is a string of such steps, one a second, each
+    /// How near an enemy wave the player already is when they are at it: about
+    /// a screen's width, inside which the wave is already in view.
+    /// </summary>
+    private const double AtTheWaveUnits = 1500;
+
+    /// <summary>
+    /// The player's default: offered while they are alive and placed on the
+    /// map, the game clock is running (before it the player cannot move), no
+    /// movement click came in the last <see cref="JevOptions.MoveEverySeconds"/>,
+    /// and they are not already at or past a lane's safe spot -- unless an
+    /// enemy wave the minimap shows at one of their turrets is more than
+    /// <see cref="AtTheWaveUnits"/> away, a wave left to crash with nobody
+    /// catching it. Whether they stand or walk, and whatever the coach's last
+    /// step was. Whether something else comes first is the root's call and
+    /// which lane the follow-up's; a pick is one step on the ground toward
+    /// the farthest spot up that lane the player can walk to safely
+    /// (<see cref="RiftMap.WalkTo"/>), which stops short of an enemy wave at
+    /// their turret. The trip is a string of such steps, one a second, each
     /// decided afresh.
     /// </summary>
     private Branch WalkToLane(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
@@ -1118,8 +1168,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (moment.Whereabouts is not { } whereabouts)
             return Closed(option, "whereabouts not known");
         // At or past a lane's safe spot is laning, not idling: a pick would
-        // be no step at all, asked again the next moment.
-        if (whereabouts.Lanes.FirstOrDefault(l => l.YouAre is "at it" or "past it") is { } there)
+        // be no step at all, asked again the next moment -- unless a wave is
+        // crashing into a turret of theirs somewhere else.
+        var crashing = whereabouts.Lanes.Where(l => Crashing(l)).Select(l => l.Lane).ToHashSet();
+        if (crashing.Count == 0 && whereabouts.Lanes.FirstOrDefault(l => l.YouAre is "at it" or "past it") is { } there)
             return Closed(option, $"already {(there.YouAre == "at it" ? "at" : "past")} {there.WalkTo} in {there.Lane} lane");
 
         var criteria = new ChoiceCriteria();
@@ -1129,7 +1181,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             criteria[lane.Lane] = (lane.ScreenDirection is { } direction
                 ? $"{lane.Lane} lane: {lane.DistanceUnits:0} units away, {direction} on the screen; allies there: {allies}"
                 : $"{lane.Lane} lane: the player is standing in it; allies there: {allies}")
-                + DescribeWave(lane.Wave) + DescribeWalkTo(lane);
+                + DescribeWave(lane.Wave) + DescribeWalkTo(lane)
+                + (crashing.Contains(lane.Lane)
+                    ? $"; its enemy wave is at a turret of the player's, {lane.Wave!.TheirFrontUnitsAway:0} units from them, with nobody there to catch it but whoever walks there"
+                    : "");
         }
         return new Branch(option, CoachQuestions.WalkToLaneOption,
             q => q.Choice("lane", CoachQuestions.Lane, criteria),
@@ -1154,7 +1209,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     ? $"you have stood still for {whereabouts.StoodStillForSeconds:0.0}s in {whereabouts.Place}{clock}"
                     : $"you are in {whereabouts.Place}{clock}";
                 var place = Map.Place(spot.X, spot.Y);
-                var reason = $"{where}; a good player would be on the way up {lane.Choice} lane ({AtPlace(name, place)}, {length:0} units {direction})";
+                var catching = crashing.Contains(lane.Choice);
+                var reason = catching
+                    ? $"the enemy wave is {facts.Wave!.TheirFrontPlace} in {lane.Choice} lane"
+                      + (facts.AlliesThere.Count == 0 ? " with none of your team there" : "")
+                      + $"; a good player would be on the way to catch it ({AtPlace(name, place)}, {length:0} units {direction})"
+                    : $"{where}; a good player would be on the way up {lane.Choice} lane ({AtPlace(name, place)}, {length:0} units {direction})";
                 _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
                 {
                     Destination = new Destination(place, spot.X, spot.Y),
@@ -1163,9 +1223,17 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     AttackMove = true,
                 });
                 _lastMoveAt = asked;
-                Remember($"stepped toward {lane.Choice} lane", asked);
+                Remember(catching ? $"stepped toward {lane.Choice} lane's wave at your turret" : $"stepped toward {lane.Choice} lane", asked);
             });
     }
+
+    /// <summary>
+    /// Whether a lane's enemy wave is one left to crash: the minimap shows its
+    /// front at one of the player's turrets, farther than
+    /// <see cref="AtTheWaveUnits"/> from them.
+    /// </summary>
+    private bool Crashing(LaneFacts lane) =>
+        lane.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits } && Map.AtOurTurret(lane.Lane, front);
 
     /// <summary>A lane's minimap minions, as an option of the lane follow-up says them.</summary>
     private static string DescribeWave(WaveFacts? wave)
@@ -1201,75 +1269,6 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             ? $"; the farthest it is safe to walk: {spot}, {lane.WalkToUnitsAway:0} units away, {way} on the screen"
             : $"; the farthest it is safe to walk: {spot}, where the player stands";
         return lane.YouAre is { } you ? $"{said}; the player is {you}" : said;
-    }
-
-    // --- A wave at the player's turret: go and catch it ---
-
-    /// <summary>
-    /// How near an enemy wave the player already is when they are at it: about
-    /// a screen's width, inside which the wave is already in view.
-    /// </summary>
-    private const double AtTheWaveUnits = 1500;
-
-    /// <summary>
-    /// Offered while the player is alive and placed, an enemy wave the
-    /// minimap shows at one of their own turrets is more than
-    /// <see cref="AtTheWaveUnits"/> away, and no movement click came in the
-    /// last <see cref="JevOptions.MoveEverySeconds"/>. Whether it is theirs
-    /// to catch is the root's call, and which one when more than one lane is
-    /// crashing the follow-up's; a pick is one step on the ground toward that
-    /// wave's front, and the next is decided afresh.
-    /// </summary>
-    private Branch CatchWave(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
-    {
-        const string option = "catch_wave";
-        if (Unplaced(self) is { } unplaced)
-            return Closed(option, unplaced);
-        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
-        if (Stepping(frame.VideoTime))
-            return Closed(option, SteppedAgo(frame.VideoTime));
-        if (moment.Whereabouts is not { } whereabouts)
-            return Closed(option, "whereabouts not known");
-        var crashing = whereabouts.Lanes
-            .Where(l => l.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits }
-                && Map.AtOurTurret(l.Lane, front))
-            .ToArray();
-        if (crashing.Length == 0)
-            return Closed(option, "no enemy wave at a turret of yours, away from you");
-
-        var criteria = new ChoiceCriteria();
-        foreach (var lane in crashing)
-        {
-            var allies = lane.AlliesThere.Count == 0 ? "none" : string.Join(", ", lane.AlliesThere);
-            criteria[lane.Lane] = $"{lane.Lane} lane: the enemy wave is {lane.Wave!.TheirFrontPlace}, "
-                + $"{lane.Wave.TheirFrontUnitsAway:0} units away, {lane.Wave.TheirFrontScreenDirection} on the screen; allies there: {allies}";
-        }
-        return new Branch(option, CoachQuestions.CatchWaveOption,
-            crashing.Length > 1 ? q => q.Choice("tend_lane", CoachQuestions.TendLane, criteria) : null,
-            response =>
-            {
-                var chosen = Picked(response, "tend_lane", crashing.Select(l => l.Lane).ToArray());
-                if (crashing.FirstOrDefault(l => l.Lane == chosen) is not { Wave: { TheirFront: { } front } wave } lane)
-                    return;
-                var spot = Map.At(lane.Lane, front);
-                // World y grows north, screen y grows down: flip for the step.
-                var (dx, dy) = (spot.X - x, -(spot.Y - y));
-                var length = double.Hypot(dx, dy);
-                var direction = ScreenDirections.Name(dx, dy);
-                var place = Map.Place(spot.X, spot.Y);
-                var alone = lane.AlliesThere.Count == 0 ? " with none of your team there" : "";
-                var reason = $"the enemy wave is {wave.TheirFrontPlace} in {lane.Lane} lane{alone}; "
-                    + $"a good player would be on the way to catch it (in {place}, {length:0} units {direction})";
-                _moves.Add(new MoveStep(asked, direction, dx / length, dy / length, 2, reason)
-                {
-                    Destination = new Destination(place, spot.X, spot.Y),
-                    DistanceUnits = length,
-                    From = (x, y),
-                    AttackMove = true,
-                });
-                _lastMoveAt = asked;
-                Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);
-            }) { Only = crashing.Length == 1 ? crashing[0].Lane : null };
     }
 
     // --- Brush: out of sight ---
@@ -2113,7 +2112,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var window = _roots.Where(r => r.At >= at - LastHitWindowSeconds && r.At <= at).ToArray();
         if (window.Length == 0)
             return "not asked";
-        if (window.Any(r => r.Pick == "attack"))
+        if (window.Any(r => r.Pick == "attack_minion"))
             return "coach attacked";
         var offered = window.Where(r => r.AttackGate is null).ToArray();
         if (offered.Length > 0)
