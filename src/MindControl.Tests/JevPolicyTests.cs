@@ -2191,14 +2191,14 @@ public sealed class JevPolicyTests
             policy.OnFrame(Clocked(t, 300, Idle()));
 
         var cues = policy.DrainCues().Where(c => c.Reason.StartsWith("coach would")).ToArray();   // not the side found in the fountain
-        CollectionAssert.AreEqual(new[] { 200.0, 205.1 }, cues.Select(c => c.VideoTime).ToArray(), "SayEverySeconds apart");
+        CollectionAssert.AreEqual(new[] { 200.0 }, cues.Select(c => c.VideoTime).ToArray(), "once a visit");
         Assert.AreEqual("coach would have bought here: you are in the fountain at 5:00; no enemy on the screen", cues[0].Reason);
         Assert.AreEqual(2, cues[0].Priority);
         Assert.IsFalse(cues[0].Failure);
         Assert.IsEmpty(policy.DrainKeys(), "no key for it yet");
         Assert.IsEmpty(policy.DrainMoves());
         CollectionAssert.DoesNotContain(Offered(jev.Asks[1]), "buy", "just said");
-        Assert.AreEqual("said buy", Offering(jev, "buy")[^1].State.Coach[^1].Did);
+        Assert.AreEqual("said buy", jev.Last.State.Coach[^1].Did);
     }
 
     [TestMethod]
@@ -2211,6 +2211,105 @@ public sealed class JevPolicyTests
         CollectionAssert.IsSubsetOf(new[] { "run_away", "recall" }, Offered(jev.Last));
         CollectionAssert.DoesNotContain(Offered(jev.Last), "go_to_turret", "folded into run_away");
         CollectionAssert.DoesNotContain(Offered(jev.Last), "buy");
+    }
+
+    [TestMethod]
+    public void Without_gold_in_the_feed_buying_is_said_once_a_visit_to_the_fountain()
+    {
+        // No has_gold: after one trip to the shop, asking again only tells a
+        // player to buy what they cannot afford.
+        var (policy, jev, heard) = Watched();
+        jev.Script = Choose("buy");
+        for (var t = 200.0; t <= 220.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, Idle()));
+        Assert.AreEqual(1, policy.DrainCues().Count(c => c.Reason.StartsWith("coach would have bought")));
+        Assert.AreEqual("already said this visit; no gold to tell what else is affordable",
+            heard[^1].Branches!.Single(b => b.Option == "buy").Gate);
+
+        policy.OnFrame(Clocked(221, 321, Self(x: 9000, y: 1400)));   // out to lane
+        for (var t = 240.0; t <= 241.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 340, Idle()));                   // and home again
+        Assert.AreEqual(1, policy.DrainCues().Count(c => c.Reason.StartsWith("coach would have bought")), "a new visit");
+    }
+
+    /// <summary>A coach on a feed whose gold reader runs, told its thoughts.</summary>
+    private static (JevPolicy Policy, FakeJev Jev, List<Thought> Heard) WatchedWithGold()
+    {
+        var (policy, jev) = Coach(meta: Coaching with { HasGold = true });
+        List<Thought> heard = [];
+        policy.Thinking += heard.Add;
+        return (policy, jev, heard);
+    }
+
+    private static string BuyGate(List<Thought> heard) => heard[^1].Branches!.Single(b => b.Option == "buy").Gate!;
+
+    private static int Bought(JevPolicy policy) => policy.DrainCues().Count(c => c.Reason.StartsWith("coach would have bought"));
+
+    /// <summary>The player standing in the fountain from <paramref name="from"/> to <paramref name="to"/>, with this gold on every frame (null: none read).</summary>
+    private static void InFountain(JevPolicy policy, double from, double to, int? gold)
+    {
+        for (var t = from; t <= to + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, Idle() with { Gold = gold }));
+    }
+
+    [TestMethod]
+    public void With_gold_buying_goes_on_being_offered_until_a_purchase_leaves_too_little()
+    {
+        var (policy, jev, heard) = WatchedWithGold();
+        jev.Script = Choose("buy");
+        InFountain(policy, 200, 206, gold: 1300);
+        Assert.AreEqual(2, Bought(policy), "again after SayEverySeconds, not once a visit");
+
+        InFountain(policy, 206.1, 220, gold: 250);   // spent: a drop is taken on its frame
+        Assert.AreEqual(0, Bought(policy));
+        Assert.AreEqual("250 gold buys nothing; the floor is 300", BuyGate(heard));
+        Assert.IsFalse(Offered(jev.Last).Contains("buy"));
+    }
+
+    [TestMethod]
+    public void With_gold_buying_is_offered_again_once_the_gold_climbs_over_the_floor()
+    {
+        var (policy, jev, _) = WatchedWithGold();
+        jev.Script = Choose("buy");
+        InFountain(policy, 200, 203, gold: 120);
+        Assert.AreEqual(0, Bought(policy));
+
+        InFountain(policy, 203.1, 204, gold: 300);
+        var cues = policy.DrainCues().Where(c => c.Reason.StartsWith("coach would have bought")).ToArray();
+        Assert.HasCount(1, cues);
+        Assert.IsGreaterThanOrEqualTo(203.1, cues[0].VideoTime, "on the reading that covers the floor");
+    }
+
+    [TestMethod]
+    public void A_frame_without_gold_holds_the_last_decision_either_way()
+    {
+        var (policy, jev, heard) = WatchedWithGold();
+        jev.Script = Choose("buy");
+        InFountain(policy, 200, 201, gold: null);
+        Assert.AreEqual(0, Bought(policy), "nothing read yet is not enough gold");
+        Assert.AreEqual("gold not read yet", BuyGate(heard));
+
+        InFountain(policy, 201.1, 201.1, gold: 250);
+        InFountain(policy, 201.2, 210, gold: null);
+        Assert.AreEqual(0, Bought(policy), "an unread box does not open it");
+        Assert.AreEqual("250 gold buys nothing; the floor is 300", BuyGate(heard));
+
+        InFountain(policy, 210.1, 210.1, gold: 900);
+        InFountain(policy, 210.2, 216, gold: null);
+        Assert.AreEqual(2, Bought(policy), "and does not close it: read as zero it would stop after one");
+    }
+
+    [TestMethod]
+    public void With_gold_a_new_game_forgets_the_last_reading()
+    {
+        var (policy, jev, heard) = WatchedWithGold();
+        jev.Script = Choose("buy");
+        InFountain(policy, 200, 200, gold: 900);
+        Assert.AreEqual(1, Bought(policy));
+        policy.NewGame(1);
+        InFountain(policy, 300, 301, gold: null);
+        Assert.AreEqual(0, Bought(policy));
+        Assert.AreEqual("gold not read yet", BuyGate(heard));
     }
 
     // --- The brain view: each question told as a thought ---

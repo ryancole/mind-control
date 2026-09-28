@@ -183,6 +183,20 @@ public sealed class FeedMessageTests
     }
 
     [TestMethod]
+    public void Gold_on_the_self_row_parses_with_missing_and_zero_kept_apart()
+    {
+        Assert.IsTrue(JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":2,"has_gold":true}""", FeedJson.Options)!.HasGold);
+        Assert.IsFalse(JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":2}""", FeedJson.Options)!.HasGold,
+            "older feeds lack the key: nothing looked");
+
+        static ChampionRow Row(string gold) => JsonSerializer.Deserialize<ChampionRow>(
+            $$"""{"video_time":410.0,"track_id":3,"team":"blue","is_self":true,"cs":27{{gold}}}""", FeedJson.Options)!;
+        Assert.AreEqual(1375, Row(",\"gold\":1375").Gold);
+        Assert.AreEqual(0, Row(",\"gold\":0").Gold, "a read 0 is a real 0");
+        Assert.IsNull(Row("").Gold, "absent means not read on this frame");
+    }
+
+    [TestMethod]
     public void Turrets_on_the_self_row_and_their_events_parse()
     {
         const string meta = """{"t":"meta","schema":1,"has_turrets":true}""";

@@ -71,6 +71,17 @@ public sealed record JevOptions
     public double RecallChannelSeconds { get; init; } = 8;
 
     /// <summary>
+    /// The least gold, read off the HUD, that buys something worth a trip to
+    /// the shop: 300 is the price of the cheapest basic components (boots,
+    /// cloth armor, a rejuvenation bead), below which only potions and wards
+    /// are left. While the player's gold is this or more the fountain keeps
+    /// offering the buy; below it the offer stops. Set high rather than low:
+    /// offering a buy the player cannot afford is the costly mistake, while
+    /// holding one back only waits for the next reading.
+    /// </summary>
+    public int BuyFloorGold { get; init; } = 300;
+
+    /// <summary>
     /// How long, in video seconds, after the coach put in every point it
     /// counts waiting, before it offers to show the point again while the HUD
     /// still lights it. The coach's chord never reaches the game it watches,
@@ -277,6 +288,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _recallUntil = double.NegativeInfinity;
     private double _lastAttackAt = double.NegativeInfinity;
     private readonly Dictionary<string, double> _lastSaid = [];
+    private bool _boughtThisVisit;
+
+    // The buy's gold gate. Whether the feed reads gold at all; the last
+    // reading, and whether it covered the floor. A frame without a reading
+    // keeps both: an unread box is unknown, never zero.
+    private bool _hasGold;
+    private int? _gold;
+    private bool? _goldCovers;
 
     private bool _failing;
 
@@ -320,6 +339,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         // A false flag means the stage did not run, not that nothing happened.
         // Without it the questions that need it are never asked, so say why,
         // once, rather than be a silent coach that looks broken.
+        _hasGold = meta.HasGold;
         List<string> missing = [];
         if (!meta.HasAbilities)
             missing.Add("ability HUD (no button will be pressed, no point put into an ability)");
@@ -366,6 +386,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _lastMoveAt = double.NegativeInfinity;
         _lastAttackAt = double.NegativeInfinity;
         _lastSaid.Clear();
+        _boughtThisVisit = false;
+        _gold = null;
+        _goldCovers = null;
         _recallUntil = double.NegativeInfinity;
 
         _frame = latest;
@@ -402,6 +425,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 // The spot restarts from the baseline too: standing still across
                 // a gap is a claim about frames we never saw.
                 TrackStillness(latest, self);
+                TrackGold(self);
                 // A point the baseline shows waiting is state the feed will
                 // not announce again; it is asked about from the frames.
                 TrackPoint(latest, self);
@@ -454,6 +478,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _resource = resource;
             if (self.Health is { } health)
                 _health = health;
+            TrackGold(self);
             TrackReach(frame, self);
             TrackStillness(frame, self);
             TrackPoint(frame, self);
@@ -1511,14 +1536,63 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     /// <summary>
     /// Offered while the player is alive in the fountain, where the shop is.
-    /// The ghost's hands have no move for it yet, so a pick is a cue naming it
-    /// (<see cref="Said"/>).
+    /// With gold in the feed, for as long as it covers
+    /// <see cref="JevOptions.BuyFloorGold"/>, paced by <see cref="Said"/>: a
+    /// purchase shows as a drop on its frame, so the offer stops once the
+    /// rest buys nothing and comes back if the gold climbs over again. A frame
+    /// without a reading holds the last decision, and before the first one
+    /// the buy is not offered. Without gold, at most once a visit: after one
+    /// shopping trip there is no telling whether the rest buys anything, and
+    /// asking again only says "buy" to a player who cannot afford it; leaving
+    /// the fountain, or dying, opens it for the next visit. The ghost's hands
+    /// have no move for it yet, so a pick is a cue naming it.
     /// </summary>
-    private Branch Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
-        self.Alive == false ? Closed("buy", "dead")
-        : moment.Whereabouts is { Place: RiftMap.FountainPlace }
-            ? Said(frame, "buy", CoachQuestions.BuyOption, "bought", moment, asked)
-            : Closed("buy", "not in the fountain");
+    private Branch Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    {
+        const string option = "buy";
+        if (self.Alive == false)
+        {
+            _boughtThisVisit = false;
+            return Closed(option, "dead");
+        }
+        if (moment.Whereabouts is not { Place: RiftMap.FountainPlace })
+        {
+            _boughtThisVisit = false;
+            return Closed(option, "not in the fountain");
+        }
+        if (_hasGold)
+        {
+            return _goldCovers switch
+            {
+                null => Closed(option, "gold not read yet"),
+                false => Closed(option, $"{_gold} gold buys nothing; the floor is {_options.BuyFloorGold}"),
+                true => Said(frame, option, CoachQuestions.BuyOption, "bought", moment, asked),
+            };
+        }
+        if (_boughtThisVisit)
+            return Closed(option, "already said this visit; no gold to tell what else is affordable");
+        var branch = Said(frame, option, CoachQuestions.BuyOption, "bought", moment, asked);
+        return branch.Gate is not null ? branch : branch with
+        {
+            Act = answer =>
+            {
+                branch.Act(answer);
+                _boughtThisVisit = true;
+            },
+        };
+    }
+
+    /// <summary>
+    /// Takes the frame's gold reading, when there is one, for the buy's gate.
+    /// No reading changes nothing: absence is not zero.
+    /// </summary>
+    private void TrackGold(ChampionRow self)
+    {
+        if (self.Gold is not { } gold)
+            return;
+        _gold = gold;
+        _goldCovers = gold >= _options.BuyFloorGold;
+    }
 
     private static bool AtHome(string place) => place is RiftMap.FountainPlace or RiftMap.BasePlace;
 
