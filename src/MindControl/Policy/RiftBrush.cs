@@ -39,15 +39,6 @@ public static class RiftBrush
     /// </summary>
     private const double LaneBrushReach = 1050;
 
-    /// <summary>
-    /// How far either side of the river's middle a brush is in the river. The
-    /// river runs corner to corner across mid, where x + y is the map's
-    /// width; its entrance brush lies up to about this far off that line.
-    /// </summary>
-    private const double RiverHalfWidth = 1100;
-
-    private const double RiverLine = 14800;
-
     /// <summary>One patch of brush: every cell a champion can stand on in it, and its middle.</summary>
     public sealed record Patch((double X, double Y)[] Cells, double X, double Y)
     {
@@ -111,19 +102,19 @@ public static class RiftBrush
 
     /// <summary>
     /// Where a patch at (<paramref name="x"/>, <paramref name="y"/>) lies:
-    /// its lane, the river, or the side of mid of a jungle and whose jungle
-    /// that is, blue's below the river and red's above it.
+    /// its lane, or off the lanes the river or a jungle as
+    /// <see cref="RiftMap.OffLane"/> says.
     /// </summary>
     private static (string Place, MapSide? Jungle) WhereOf(double x, double y)
     {
         var lane = RiftMap.Lanes.MinBy(l => RiftMap.Toward(l, x, y).Distance)!;
         if (RiftMap.Toward(lane, x, y).Distance <= LaneBrushReach)
             return ($"{lane} lane", null);
-        var side = y > x ? "top side" : "bot side";
-        var offRiver = (x + y - RiverLine) / Math.Sqrt(2);
-        if (Math.Abs(offRiver) <= RiverHalfWidth)
-            return ($"the river, {side}", null);
-        return (side, offRiver < 0 ? MapSide.Blue : MapSide.Red);
+        return RiftMap.OffLane(x, y) switch
+        {
+            (var half, null) => ($"the river, {half}", null),
+            var (half, jungle) => (half, jungle),
+        };
     }
 
     /// <summary>The patch a point stands in, or null when it stands in none.</summary>

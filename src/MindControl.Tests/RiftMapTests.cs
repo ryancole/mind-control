@@ -19,8 +19,19 @@ public sealed class RiftMapTests
         Assert.AreEqual("bot lane", RiftMap.Blue.Place(12111, 1283));
         Assert.AreEqual("top lane", RiftMap.Blue.Place(1100, 8000));
         Assert.AreEqual("mid lane", RiftMap.Blue.Place(7400, 7400));
-        Assert.AreEqual("the jungle or river", RiftMap.Blue.Place(7000, 3000));
+        Assert.AreEqual("your jungle, bot side", RiftMap.Blue.Place(7000, 3000));
+        Assert.AreEqual("their jungle, top side", RiftMap.Blue.Place(7000, 11000));
+        Assert.AreEqual("the river, bot side", RiftMap.Blue.Place(9866, 4414));   // the dragon pit
+        Assert.AreEqual("the river, top side", RiftMap.Blue.Place(5007, 10471));  // the baron pit
         Assert.AreEqual("the enemy base", RiftMap.Blue.Place(13500, 13500));
+    }
+
+    [TestMethod]
+    public void The_jungles_are_named_by_whose_they_are()
+    {
+        Assert.AreEqual("their jungle, bot side", RiftMap.Red.Place(7000, 3000));
+        Assert.AreEqual("your jungle, top side", RiftMap.Red.Place(7000, 11000));
+        Assert.AreEqual("the river, bot side", RiftMap.Red.Place(9866, 4414), "the river is nobody's");
     }
 
     [TestMethod]

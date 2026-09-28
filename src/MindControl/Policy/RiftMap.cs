@@ -69,6 +69,14 @@ public sealed class RiftMap
     /// </summary>
     public const double LaneHalfWidth = 800;
 
+    /// <summary>
+    /// The river runs corner to corner across mid, where x + y is the map's
+    /// width, and counts as the river this far either side of that line: its
+    /// entrances and the two pits lie within it. Blue's jungle is below it and
+    /// red's above.
+    /// </summary>
+    private const double RiverLine = 14800, RiverHalfWidth = 1100;
+
     /// <summary>What <see cref="Place"/> calls the player's fountain, where the shop is.</summary>
     public const string FountainPlace = "the fountain";
 
@@ -172,14 +180,42 @@ public sealed class RiftMap
     /// <summary>The middle of the player's own fountain, where they respawn: home.</summary>
     public (double X, double Y) Fountain => Side == MapSide.Blue ? BlueFountain : RedFountain;
 
-    /// <summary>Where a point is, named the way a coach says it: "the fountain", "bot lane", "the jungle or river".</summary>
+    /// <summary>
+    /// Where a point is, named the way a coach says it: "the fountain",
+    /// "their own base", "the enemy base", "bot lane", and off the lanes "the
+    /// river, top side", "your jungle, bot side" or "their jungle, top side".
+    /// </summary>
     public string Place(double x, double y)
     {
         if (FountainOf(x, y) == Side)
             return FountainPlace;
         if (BaseOf(x, y) is { } side)
             return side == Side ? BasePlace : "the enemy base";
-        return LaneOf(x, y) is { } lane ? $"{lane} lane" : "the jungle or river";
+        return LaneOf(x, y) is { } lane ? $"{lane} lane" : OffLanePlace(x, y);
+    }
+
+    /// <summary>
+    /// Where a point off the lanes lies, as <see cref="Place"/> names it: the
+    /// river or whose jungle, with the side of mid ("the river, bot side",
+    /// "their jungle, top side").
+    /// </summary>
+    public string OffLanePlace(double x, double y) => OffLane(x, y) switch
+    {
+        (var half, null) => $"the river, {half}",
+        var (half, jungle) => $"{(jungle == Side ? "your" : "their")} jungle, {half}",
+    };
+
+    /// <summary>
+    /// Where a point off the lanes lies, the same from either side: which
+    /// side of mid lane's line it is on ("top side", "bot side") and whose
+    /// jungle it is in, null in the river.
+    /// </summary>
+    public static (string Half, MapSide? Jungle) OffLane(double x, double y)
+    {
+        var half = y > x ? "top side" : "bot side";
+        var offRiver = (x + y - RiverLine) / Math.Sqrt(2);
+        return Math.Abs(offRiver) <= RiverHalfWidth ? (half, null)
+            : (half, offRiver < 0 ? MapSide.Blue : MapSide.Red);
     }
 
     /// <summary>The player's own turret of a tier in a lane.</summary>
