@@ -2118,4 +2118,128 @@ public sealed class JevPolicyTests
         CollectionAssert.DoesNotContain(Offered(jev.Last), "go_to_turret", "folded into run_away");
         CollectionAssert.DoesNotContain(Offered(jev.Last), "buy");
     }
+
+    // --- The brain view: each question told as a thought ---
+
+    private static (JevPolicy Policy, FakeJev Jev, List<Thought> Heard) Watched(FrameEnvelope? baseline = null)
+    {
+        var (policy, jev) = Coach(baseline: baseline);
+        List<Thought> heard = [];
+        policy.Thinking += heard.Add;
+        return (policy, jev, heard);
+    }
+
+    [TestMethod]
+    public void A_root_is_told_as_asked_with_every_branch_and_what_closed_the_rest()
+    {
+        var (policy, jev, heard) = Watched();
+        jev.Hold = true;
+        policy.OnFrame(Clocked(100, 50, Idle()));
+
+        var asked = heard.Single();
+        Assert.AreEqual("asked", asked.Phase);
+        Assert.AreEqual("decide", asked.Occasion);
+        Assert.AreEqual(100, asked.VideoTime);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "carry_on", "level_up", "run_away", "use_ability", "attack", "step_back",
+                "hide_in_brush", "catch_wave", "walk_to_lane", "recall", "buy",
+            },
+            asked.Branches!.Select(b => b.Option).ToArray(), "every branch, in the rubric's order");
+        CollectionAssert.AreEqual(Offered(jev.Last), asked.Branches!.Where(b => b.Gate is null).Select(b => b.Option).ToArray(),
+            "the ungated branches are exactly the root's options");
+        Assert.AreEqual("no enemy on the screen", asked.Branches!.Single(b => b.Option == "run_away").Gate);
+        Assert.AreEqual("already in the fountain", asked.Branches!.Single(b => b.Option == "recall").Gate);
+        Assert.AreEqual("lane", asked.Branches!.Single(b => b.Option == "walk_to_lane").FollowUp);
+        CollectionAssert.AreEqual(jev.Last.Questions.Keys.ToArray(), asked.Questions!.Select(q => q.Id).ToArray());
+        Assert.AreSame(jev.Last.State, asked.State, "the state the model was shown");
+        Assert.AreEqual(0.4, asked.DecideAt);
+    }
+
+    [TestMethod]
+    public void An_answer_is_told_under_the_same_id_with_what_the_hands_did()
+    {
+        var (policy, jev, heard) = Watched();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        policy.OnFrame(Clocked(103, 50, Idle()));
+
+        Assert.HasCount(2, heard);
+        var answered = heard[1];
+        Assert.AreEqual("answered", answered.Phase);
+        Assert.AreEqual(heard[0].Id, answered.Id);
+        Assert.AreEqual("jev-test", answered.Model);
+        Assert.AreEqual("acted", answered.Verdict);
+        Assert.AreEqual("walk_to_lane", answered.Answers!["decide"].Choice);
+        Assert.AreEqual(1.0, answered.Answers["decide"].Probabilities!["walk_to_lane"]);
+        Assert.AreEqual("bot", answered.Answers["lane"].Choice);
+        var deed = answered.Did!.Single();
+        Assert.AreEqual("attack_move", deed.Hand);
+        Assert.AreEqual("bot lane", deed.Toward);
+        Assert.AreEqual(policy.DrainMoves().Single().Sentence, deed.Said);
+
+        policy.OnFrame(Clocked(103.3, 50, Idle()));
+        Assert.AreEqual("stepped 0.3s ago; a step a second",
+            heard[2].Branches!.Single(b => b.Option == "walk_to_lane").Gate, "the pace of steps is a gate, and says so");
+    }
+
+    [TestMethod]
+    public void A_pick_that_is_no_order_is_told_as_carry_on_or_weak()
+    {
+        var (policy, jev, heard) = Watched();
+        policy.OnFrame(Clocked(100, 50, Idle()));
+        Assert.AreEqual("carry_on", heard.Last().Verdict, "the silent model picks carry_on");
+        Assert.IsNull(heard.Last().Did);
+
+        jev.Script = (id, _) => id == "decide"
+            ? new ChoiceAnswer("buy", new Dictionary<string, double> { ["carry_on"] = 0.3, ["buy"] = 0.35, ["walk_to_lane"] = 0.35 }, 0.5)
+            : null;
+        policy.OnFrame(Clocked(100.3, 50, Idle()));
+        Assert.AreEqual("weak", heard.Last().Verdict, "0.35 is under DecideAt");
+        Assert.IsNull(heard.Last().Did);
+    }
+
+    [TestMethod]
+    public void An_answer_after_a_resync_is_told_as_stale()
+    {
+        var (policy, jev, heard) = Watched();
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        jev.Hold = true;
+        policy.OnFrame(Clocked(100, 50, Idle()));
+        policy.Resync(Clocked(100.1, 50, Idle()));
+        jev.Release();
+        policy.OnFrame(Clocked(100.2, 50, Idle()));
+
+        Assert.AreEqual("stale", heard.Single(t => t.Phase == "answered").Verdict);
+        Assert.IsEmpty(policy.DrainMoves());
+    }
+
+    [TestMethod]
+    public void A_root_with_nothing_to_offer_is_told_as_idle_no_faster_than_a_root_is_asked()
+    {
+        var (policy, jev, heard) = Watched();
+        Run(policy, 100, 101, Self(alive: false, x: 400, y: 460));
+
+        Assert.IsEmpty(jev.Asks, "nothing to offer, so nothing asked");
+        CollectionAssert.AreEqual(new[] { 100, 100.3, 100.6, 100.9 }, heard.Select(t => t.VideoTime).ToArray());
+        Assert.IsTrue(heard.All(t => t.Phase == "idle"));
+        Assert.AreEqual("dead", heard[0].Branches!.Single(b => b.Option == "walk_to_lane").Gate);
+        Assert.AreEqual("no skill point waiting", heard[0].Branches!.Single(b => b.Option == "level_up").Gate);
+    }
+
+    [TestMethod]
+    public void A_bolt_is_told_with_its_yes_and_no_answers_and_the_step_it_took()
+    {
+        var (policy, jev, heard) = Watched(baseline: Clocked(218, 79, Self(x: 12400, y: 1900), Enemy(900)));
+        jev.Script = (id, _) => id is "remark" or "step" ? FakeJev.Yes : null;
+        policy.OnEvent(Event(HitWhileStill));
+
+        var answered = heard.Single(t => t.Occasion == "bolt" && t.Phase == "answered");
+        Assert.AreEqual(0.6, answered.YesAt);
+        Assert.AreEqual(0.95, answered.Answers!["step"].Yes);
+        Assert.IsNotNull(answered.Answers["side"].Choice);
+        Assert.AreEqual("acted", answered.Verdict);
+        CollectionAssert.AreEquivalent(new[] { "voice", "move" }, answered.Did!.Select(d => d.Hand).ToArray());
+        Assert.IsNull(answered.Branches, "an event has no root branches");
+    }
 }

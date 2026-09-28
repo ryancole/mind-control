@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The brain view, served at / by CoachServer. -->
+    <EmbeddedResource Include="Brain\brain.html" LogicalName="MindControl.Brain.brain.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\submodules\jev\src\Jev\Jev.csproj" />
     <ProjectReference Include="..\..\submodules\misdirection-client\src\Misdirection.Client\Misdirection.Client.csproj" />
   </ItemGroup>

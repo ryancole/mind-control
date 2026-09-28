@@ -108,6 +108,43 @@ coaching, so a panel can light a "thinking" indicator off it. It changes
 several times a second, so it stays out of the stream's replay, and a newly
 connected client gets only the latest one. The stream is output-only, like the console.
 
+## The brain view
+
+Open `http://localhost:8724/` while a run is going to watch the coach think.
+It draws the tree of questions below as it is walked, a quarter video-second
+at a time:
+
+- **Senses**: the state Jev was shown (the `Moment`): health and mana, the
+  buttons and which are up, where the player stands, the enemies on the
+  screen, the minions, the team, and what the coach did lately. A dot flashes
+  when a reading changes.
+- **Cortex**: the root, `decide`, wired to all of its branches. A branch the
+  moment did not offer is dark, with what closed it written under it (`no
+  enemy on the screen`, `stepped 0.3s ago; a step a second`); an offered one
+  is lit, with Jev's probability as a bar against `DecideAt`, and its
+  follow-up's options beside it. While a question is on the wire the root
+  pulses and the branches it offered shimmer; when the answer lands, a spark
+  runs to the pick and, if it came to a deed, on to the hand that did it
+  (keyboard, a click on an enemy, a click on the ground, an attack-move, or
+  a cue). A bolt and a shot are the reflexes underneath, with their yes/no
+  answers against `YesAt`.
+- **Hands**: every key, step and cue, with the frames it recorded; tick
+  *hesitations* to see the picks that fell below `DecideAt` too.
+- **Brainwaves**: every root answer over the last minute of video, one
+  column per answer and one row per branch, bright by probability, gold for
+  the pick and green for a deed. Hover to look back at a moment, click to pin
+  it.
+
+It reads `/brain`, which is everything `/stream` carries plus a `thought`
+line per question (`Thought` in `Policy/Thought.cs`): once when it is sent,
+with the branches considered, the questions and the state, and once when it
+is answered, with the answers, the verdict (`acted`, `carry_on`, `weak`,
+`nothing`, `no answer`, `stale`) and what the hands did. A root with nothing to
+offer is sent once as `idle`. Thoughts stay off `/stream`, so the dashboard's
+panel is unchanged. The page is one self-contained file,
+`src/MindControl/Brain/brain.html`, embedded in the build; open it as
+`/?demo` to see it run on made-up thoughts with nothing else running.
+
 ## Coaching by Jev
 
 The coaching is a tree of questions with one root. Every quarter of a

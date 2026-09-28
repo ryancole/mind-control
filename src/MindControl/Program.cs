@@ -114,7 +114,7 @@ for (var i = 0; i < args.Length; i++)
                   --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
-                                     coaching panel (default 8724; 0 disables)
+                                     coaching panel, and the brain view at / (default 8724; 0 disables)
                   --kinds <a,b|all>  event kinds passed to the policy (default: the ones the coach uses)
 
                 The Jev API key is read from this project's user secrets (entry "Jev"):
@@ -170,14 +170,17 @@ var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
     audit is null ? null : audit.Write);
 using var coach = servePort == 0 ? null : new CoachServer(servePort, model);
 if (coach is not null)
+{
     policy.AskingChanged += coach.PublishAsking;
+    policy.Thinking += coach.PublishThought;
+}
 var reactor = new Reactor(feed, policy, options, log, trace, coach, recording);
 
 try
 {
     Console.WriteLine($"coaching against {feedUri} with {model} — feedback to the console" +
         (logPath is null ? "" : $" and {logPath}") +
-        (coach is null ? "" : $", served at http://localhost:{servePort}/stream") +
+        (coach is null ? "" : $", served at http://localhost:{servePort}/stream (the brain view: http://localhost:{servePort}/)") +
         (recording is null ? "" : $"; ghost input recorded to {recordPath}, opened with {recording.Header}") +
         (auditPath is null ? "" : $"; questions and answers to {auditPath}") +
         "; no input is sent anywhere");
