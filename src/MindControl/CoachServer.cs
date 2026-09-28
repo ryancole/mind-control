@@ -20,17 +20,27 @@ namespace MindControl;
 /// An <c>asking</c> line says which questions are on their way to Jev right
 /// now (<c>occasions</c>, empty when none), for a panel's "thinking" light;
 /// it is state, not advice, so it carries no <c>model</c>.
+/// <para>The brain view is served here too: <c>/</c> is the page
+/// (<c>Brain/brain.html</c>, embedded) and <c>/brain</c> its stream, every
+/// line <c>/stream</c> carries plus a <c>thought</c> line per question the
+/// coach asked (<see cref="Thought"/>). Thoughts stay off <c>/stream</c>, so
+/// the dashboard's panel reads what it always has.</para>
 /// </summary>
 public sealed class CoachServer : IDisposable
 {
     private const int ReplayCount = 32;
 
+    /// <summary>How many thoughts a brain view that connects late is sent: a minute of roots, give or take.</summary>
+    private const int ThoughtReplayCount = 240;
+
     private readonly string _model;
     private readonly HttpListener _listener = new();
-    private readonly List<StreamWriter> _clients = [];
+    private readonly List<(StreamWriter Writer, bool Brain)> _clients = [];
     private readonly Queue<string> _replay = new();
+    private readonly Queue<string> _thoughts = new();
     private string? _asking;
     private readonly Lock _lock = new();
+    private readonly byte[] _page = BrainPage();
 
     public CoachServer(int port, string model)
     {
@@ -109,6 +119,29 @@ public sealed class CoachServer : IDisposable
     public void PublishAsking(IReadOnlyList<string> occasions) =>
         Publish(new { T = "asking", Occasions = occasions }, replay: false);
 
+    /// <summary>
+    /// A question the coach asked, or its answer, for the brain view only.
+    /// Written with the model's own wire options (snake_case, nulls left
+    /// out), since it carries the state the model was shown.
+    /// </summary>
+    public void PublishThought(Thought thought)
+    {
+        var data = $"data: {JsonSerializer.Serialize(new ThoughtLine(thought), Moment.JsonOptions)}\n\n";
+        lock (_lock)
+        {
+            _thoughts.Enqueue(data);
+            while (_thoughts.Count > ThoughtReplayCount)
+                _thoughts.Dequeue();
+            Send(data, brainOnly: true);
+        }
+    }
+
+    /// <summary>The thought as a line: under <c>thought</c>, with a <c>t</c> like every other line.</summary>
+    private sealed record ThoughtLine(Thought Thought)
+    {
+        public string T => "thought";
+    }
+
     private void Publish<TLine>(TLine line, bool replay = true)
     {
         var data = $"data: {JsonSerializer.Serialize(line, FeedJson.Options)}\n\n";
@@ -122,18 +155,35 @@ public sealed class CoachServer : IDisposable
             }
             else
                 _asking = data;
-            // Localhost writes land in http.sys buffers; a client that has
-            // gone away throws and is dropped rather than stalling the loop.
-            _clients.RemoveAll(client =>
-            {
-                try { client.Write(data); return false; }
-                catch (Exception e) when (e is IOException or ObjectDisposedException or HttpListenerException)
-                {
-                    client.Dispose();
-                    return true;
-                }
-            });
+            Send(data, brainOnly: false);
         }
+    }
+
+    private void Send(string data, bool brainOnly)
+    {
+        // Localhost writes land in http.sys buffers; a client that has
+        // gone away throws and is dropped rather than stalling the loop.
+        _clients.RemoveAll(client =>
+        {
+            if (brainOnly && !client.Brain)
+                return false;
+            try { client.Writer.Write(data); return false; }
+            catch (Exception e) when (e is IOException or ObjectDisposedException or HttpListenerException)
+            {
+                client.Writer.Dispose();
+                return true;
+            }
+        });
+    }
+
+    private static byte[] BrainPage()
+    {
+        using var stream = typeof(CoachServer).Assembly.GetManifestResourceStream("MindControl.Brain.brain.html");
+        if (stream is null)
+            return "brain.html was not embedded in this build"u8.ToArray();
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
     }
 
     private async Task AcceptLoopAsync()
@@ -148,12 +198,22 @@ public sealed class CoachServer : IDisposable
             }
 
             var response = context.Response;
-            if (context.Request.Url?.AbsolutePath != "/stream")
+            var path = context.Request.Url?.AbsolutePath;
+            if (path is "/" or "/index.html")
+            {
+                response.ContentType = "text/html; charset=utf-8";
+                response.AppendHeader("Cache-Control", "no-cache");
+                try { response.Close(_page, willBlock: false); }
+                catch (Exception e) when (e is IOException or HttpListenerException) { }
+                continue;
+            }
+            if (path is not ("/stream" or "/brain"))
             {
                 response.StatusCode = 404;
                 response.Close();
                 continue;
             }
+            var brain = path == "/brain";
 
             response.ContentType = "text/event-stream";
             // The dashboard is served from another local origin (the feed's).
@@ -167,9 +227,12 @@ public sealed class CoachServer : IDisposable
                 {
                     foreach (var line in _replay)
                         writer.Write(line);
+                    if (brain)
+                        foreach (var line in _thoughts)
+                            writer.Write(line);
                     if (_asking is not null)
                         writer.Write(_asking);
-                    _clients.Add(writer);
+                    _clients.Add((writer, brain));
                 }
                 catch (Exception e) when (e is IOException or ObjectDisposedException or HttpListenerException)
                 {
@@ -185,7 +248,7 @@ public sealed class CoachServer : IDisposable
         // throws once the listener's request queue handle is closed.
         lock (_lock)
         {
-            foreach (var client in _clients)
+            foreach (var (client, _) in _clients)
             {
                 try { client.Dispose(); }
                 catch (Exception e) when (e is IOException or ObjectDisposedException or HttpListenerException)

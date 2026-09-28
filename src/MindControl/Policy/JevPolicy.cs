@@ -279,6 +279,18 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// </summary>
     public event Action<IReadOnlyList<string>>? AskingChanged;
 
+    /// <summary>
+    /// Each question as it is sent and as its answer is applied (see
+    /// <see cref="Thought"/>), and each root that had nothing to offer: the
+    /// tree the coach walked, for the brain view. Raised on the caller's
+    /// thread, from <see cref="OnFrame"/> and <see cref="OnEvent"/>. It
+    /// decides nothing.
+    /// </summary>
+    public event Action<Thought>? Thinking;
+
+    private int _thoughtId;
+    private double _lastIdleAt = double.NegativeInfinity;
+
     public void Configure(Meta meta)
     {
         // A false flag means the stage did not run, not that nothing happened.
@@ -462,7 +474,24 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// which lane, which target, which brush), and what a pick of it does.
     /// </summary>
     private sealed record Branch(
-        string Option, string Criterion, Action<Questions>? FollowUp, Action<SystemOneResponse> Act);
+        string Option, string Criterion, Action<Questions>? FollowUp, Action<SystemOneResponse> Act)
+    {
+        /// <summary>What closed the branch, when the moment did not offer it; null when it is offered.</summary>
+        public string? Gate { get; init; }
+
+        /// <summary>The branch's one candidate, when it had only one and so asks no follow-up; for the brain view.</summary>
+        public string? Only { get; init; }
+    }
+
+    /// <summary>A branch the moment does not offer, and why: nothing is asked of it, and the brain view shows the gate.</summary>
+    private static Branch Closed(string option, string why) => new(option, "", null, _ => { }) { Gate = why };
+
+    /// <summary>What keeps a player from any branch that moves or aims: being dead, or off the map.</summary>
+    private static string? Unplaced(ChampionRow self) =>
+        self.Alive == false ? "dead" : self is { WorldX: null } or { WorldY: null } ? "not placed on the map" : null;
+
+    /// <summary>The gate of a movement branch while the last movement click is less than a second old.</summary>
+    private string SteppedAgo(double now) => $"stepped {now - _lastMoveAt:0.0}s ago; a step a second";
 
     /// <summary>
     /// Asks the root of the moment: of the things the state makes possible
@@ -485,9 +514,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var moment = Describe(frame, self, occasion: null, asked);
         // Channelling a recall: only what does not move the player, until an
         // enemy shows up or the channel is done.
-        var branches = Recalling(frame, moment)
-            ? new[] { LevelUp(self, moment, asked) }.OfType<Branch>().ToArray()
-            : new[]
+        var recalling = Recalling(frame, moment);
+        var considered = new[]
         {
             LevelUp(self, moment, asked),
             RunAway(frame, self, moment, asked),
@@ -499,10 +527,27 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             WalkToLane(frame, self, moment, asked),
             Recall(frame, self, moment, asked),
             Buy(frame, self, moment, asked),
-        }.OfType<Branch>().ToArray();
+        };
+        if (recalling)
+            considered = considered
+                .Select(b => b.Gate is null && b.Option != "level_up" ? Closed(b.Option, "channelling a recall") : b)
+                .ToArray();
+        var branches = considered.Where(b => b.Gate is null).ToArray();
         if (branches.Length == 0)
         {
             _nothingToOffer++;
+            // Nothing is asked, so nothing paces this: the brain view hears
+            // of it no more often than a root would be asked.
+            if (Thinking is not null && asked - _lastIdleAt >= _options.AskEverySeconds)
+            {
+                _lastIdleAt = asked;
+                Thinking(new Thought
+                {
+                    Id = ++_thoughtId, Phase = "idle", Occasion = "decide", VideoTime = asked,
+                    Branches = Considered(considered, new Dictionary<string, string>()), Mode = recalling ? "channelling a recall" : null,
+                    State = moment, DecideAt = _options.DecideAt,
+                });
+            }
             return;
         }
 
@@ -510,33 +555,56 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         foreach (var branch in branches)
             criteria[branch.Option] = branch.Criterion;
         var questions = new Questions().Choice("decide", CoachQuestions.Decide, criteria);
+        // Which follow-up each branch added, for the brain view's tree.
+        Dictionary<string, string> followUps = [];
         foreach (var branch in branches)
+        {
+            var before = questions.Keys.ToHashSet();
             branch.FollowUp?.Invoke(questions);
+            if (questions.Keys.FirstOrDefault(k => !before.Contains(k)) is { } added)
+                followUps[branch.Option] = added;
+        }
 
         _deciding = true;
         _lastDecideAt = asked;
         _rootsAsked++;
-        Ask("decide", moment, questions, asked, NowRequest, released: () => _deciding = false, answered: response =>
+        var thought = new Thought
+        {
+            Occasion = "decide", VideoTime = asked, Branches = Considered(considered, followUps),
+            Mode = recalling ? "channelling a recall" : null, DecideAt = _options.DecideAt,
+        };
+        Ask("decide", moment, questions, asked, NowRequest, released: () => _deciding = false, thought, answered: response =>
         {
             if (!response.TryGet<ChoiceAnswer>("decide", out var decide))
             {
                 Tally("unreadable");
-                return;
+                return "unreadable";
             }
             if (decide!.Choice == CarryOn)
             {
                 Tally(CarryOn);
-                return;
+                return CarryOn;
             }
             if (decide.Probabilities.GetValueOrDefault(decide.Choice) < _options.DecideAt)
             {
                 Tally($"{decide.Choice} (weak)");
-                return;
+                return "weak";
             }
             Tally(decide.Choice);
             branches.FirstOrDefault(b => b.Option == decide.Choice)?.Act(response);
+            return null;
         });
     }
+
+    /// <summary>The root's branches as the brain view draws them, carry_on first.</summary>
+    private static ThoughtBranch[] Considered(IEnumerable<Branch> considered, IReadOnlyDictionary<string, string> followUps) =>
+        [
+            new ThoughtBranch(CarryOn, null),
+            .. considered.Select(b => new ThoughtBranch(b.Option, b.Gate)
+            {
+                FollowUp = followUps.GetValueOrDefault(b.Option), Only = b.Gate is null ? b.Only : null,
+            }),
+        ];
 
     /// <summary>
     /// The pick of a follow-up choice: the one option when there was only
@@ -559,17 +627,20 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// A greyed button and an empty screen offer nothing. A pick is one key
     /// press; with more than one button up, which is the follow-up's call.
     /// </summary>
-    private Branch? UseAbility(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch UseAbility(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: not null, WorldY: not null })
-            return null;
+        const string option = "use_ability";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
         var slots = _casts
             .Where(c => c.Value.Countdown is { } countdown && frame.VideoTime >= c.Value.At + countdown)
             .Select(c => c.Key)
             .Order()
             .ToArray();
-        if (slots.Length == 0 || moment.VisibleEnemies.Count == 0)
-            return null;
+        if (slots.Length == 0)
+            return Closed(option, _casts.Count == 0 ? "no button seen cast yet" : "no button known to be up");
+        if (moment.VisibleEnemies.Count == 0)
+            return Closed(option, "no enemy on the screen");
 
         var criteria = new ChoiceCriteria();
         foreach (var slot in slots)
@@ -580,7 +651,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 + (facts.Range is { } range ? $"reaching {range:0} units" : "its range not on file")
                 + (inside.Length > 0 ? $"; inside its range: {string.Join(", ", inside)}" : "; no visible enemy inside its range");
         }
-        return new Branch("use_ability", CoachQuestions.UseAbilityOption(slots),
+        return new Branch(option, CoachQuestions.UseAbilityOption(slots),
             slots.Length > 1 ? q => q.Choice("ability", CoachQuestions.Ability, criteria) : null,
             response =>
             {
@@ -595,7 +666,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     : $"{nearest.Champion} is {nearest.DistanceUnits:0} units away with {slot} up";
                 _keys.Add(new KeyPress(asked, slot, 2, reason));
                 Remember($"pressed {slot}", asked);
-            });
+            }) { Only = slots.Length == 1 ? slots[0] : null };
     }
 
     // --- A skill point waiting: which ability it goes into ---
@@ -618,12 +689,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// Ctrl and the slot. An answer that lands after the point was spent, or
     /// announced anew with another set, is about nothing and is dropped.
     /// </summary>
-    private Branch? LevelUp(ChampionRow self, Moment moment, double asked)
+    private Branch LevelUp(ChampionRow self, Moment moment, double asked)
     {
+        const string option = "level_up";
         if (_point is not { } point || moment.SkillPoint is not { } facts)
-            return null;
+            return Closed(option, "no skill point waiting");
         if (_pressedFor.Count >= facts.Waiting && asked - _lastChordAt < _options.PointAgainEverySeconds)
-            return null;
+            return Closed(option, $"pressed the chord {asked - _lastChordAt:0.0}s ago; again every {_options.PointAgainEverySeconds:0}s while lit");
         var again = _pointAsked;
         _pointAsked = true;
         var slots = point.Slots;
@@ -652,7 +724,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var clock = moment.GameClock is { } time ? $" at {time}" : "";
         var since = facts.Level is { } l ? $"level {l}" : "your last level";
-        return new Branch("level_up", CoachQuestions.LevelUpOption,
+        return new Branch(option, CoachQuestions.LevelUpOption,
             slots.Length > 1 ? q => q.Choice("slot", CoachQuestions.Slot, criteria) : null,
             response =>
             {
@@ -673,7 +745,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     _pressedFor[^1] = slot;   // shown again: the same point, still unspent
                 _lastChordAt = asked;
                 Remember($"put the point in {slot}", asked);
-            });
+            }) { Only = slots.Length == 1 ? slots[0] : null };
     }
 
     /// <summary>The skill point the HUD shows waiting, as the state tells it; null when none is.</summary>
@@ -722,12 +794,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// is one right-click on the target, the order that has the champion
     /// attack it.
     /// </summary>
-    private Branch? Attack(FrameEnvelope frame, ChampionRow self, double asked)
+    private Branch Attack(FrameEnvelope frame, ChampionRow self, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
-            return null;
+        const string option = "attack";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
         if (frame.VideoTime - _lastAttackAt < _options.AttackEverySeconds)
-            return null;
+            return Closed(option, $"attacked {frame.VideoTime - _lastAttackAt:0.0}s ago; still carrying it out");
         var range = AbilityKits.AttackRange(self.Champion);
         var reach = (range ?? ReachWithoutARange) + ApproachUnits;
 
@@ -762,9 +836,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 $"{champion} is {distance:0} units {Direction(self, row)} with {health}, {InReach(inRange)}; a good player would attack them now");
         }
         if (targets.Count == 0)
-            return null;
+            return Closed(option, "nothing in reach of a basic attack");
 
-        return new Branch("attack", CoachQuestions.AttackOption,
+        return new Branch(option, CoachQuestions.AttackOption,
             targets.Count > 1 ? q => q.Choice("target", CoachQuestions.AttackTarget, criteria) : null,
             response =>
             {
@@ -779,7 +853,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target });
                 _lastAttackAt = asked;
                 Remember($"attacked {target.Target.Name}", asked);
-            });
+            }) { Only = targets.Count == 1 ? targets.Keys.First() : null };
 
         static string InReach(bool? inRange) => inRange switch
         {
@@ -839,14 +913,20 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// too far forward is the root's call, from <see cref="Moment.Minions"/>;
     /// a pick is one sidestep back down the lane toward their own nexus.
     /// </summary>
-    private Branch? StepBack(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch StepBack(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || RiftMap.LaneOf(x, y) is not { } lane)
-            return null;
-        if (Stepping(frame.VideoTime) || moment.Minions is not { NearestTheirsUnits: { } nearest } minions)
-            return null;
+        const string option = "step_back";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        if (RiftMap.LaneOf(x, y) is not { } lane)
+            return Closed(option, "not in a lane");
+        if (Stepping(frame.VideoTime))
+            return Closed(option, SteppedAgo(frame.VideoTime));
+        if (moment.Minions is not { NearestTheirsUnits: { } nearest } minions)
+            return Closed(option, "no enemy minion near");
 
-        return new Branch("step_back", CoachQuestions.StepBackOption, null, _ =>
+        return new Branch(option, CoachQuestions.StepBackOption, null, _ =>
         {
             var (_, progress) = Map.Along(lane, x, y);
             var behind = Map.At(lane, progress - BackStepUnits / RiftMap.Length(lane));
@@ -889,12 +969,18 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// or past it. The trip is a string of such steps, one a second, each
     /// decided afresh.
     /// </summary>
-    private Branch? WalkToLane(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch WalkToLane(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || frame.GameTime is null)
-            return null;
-        if (Stepping(frame.VideoTime) || moment.Whereabouts is not { } whereabouts)
-            return null;
+        const string option = "walk_to_lane";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        if (frame.GameTime is null)
+            return Closed(option, "the game clock is not running");
+        if (Stepping(frame.VideoTime))
+            return Closed(option, SteppedAgo(frame.VideoTime));
+        if (moment.Whereabouts is not { } whereabouts)
+            return Closed(option, "whereabouts not known");
 
         var criteria = new ChoiceCriteria();
         foreach (var lane in whereabouts.Lanes)
@@ -905,7 +991,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 : $"{lane.Lane} lane: the player is standing in it; allies there: {allies}")
                 + DescribeWave(lane.Wave) + DescribeWalkTo(lane);
         }
-        return new Branch("walk_to_lane", CoachQuestions.WalkToLaneOption,
+        return new Branch(option, CoachQuestions.WalkToLaneOption,
             q => q.Choice("lane", CoachQuestions.Lane, criteria),
             response =>
             {
@@ -985,18 +1071,22 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// crashing the follow-up's; a pick is one step on the ground toward that
     /// wave's front, and the next is decided afresh.
     /// </summary>
-    private Branch? CatchWave(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch CatchWave(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y })
-            return null;
-        if (Stepping(frame.VideoTime) || moment.Whereabouts is not { } whereabouts)
-            return null;
+        const string option = "catch_wave";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        if (Stepping(frame.VideoTime))
+            return Closed(option, SteppedAgo(frame.VideoTime));
+        if (moment.Whereabouts is not { } whereabouts)
+            return Closed(option, "whereabouts not known");
         var crashing = whereabouts.Lanes
             .Where(l => l.Wave is { TheirFront: { } front, TheirFrontUnitsAway: > AtTheWaveUnits }
                 && Map.AtOurTurret(l.Lane, front))
             .ToArray();
         if (crashing.Length == 0)
-            return null;
+            return Closed(option, "no enemy wave at a turret of yours, away from you");
 
         var criteria = new ChoiceCriteria();
         foreach (var lane in crashing)
@@ -1005,7 +1095,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             criteria[lane.Lane] = $"{lane.Lane} lane: the enemy wave is {lane.Wave!.TheirFrontPlace}, "
                 + $"{lane.Wave.TheirFrontUnitsAway:0} units away, {lane.Wave.TheirFrontScreenDirection} on the screen; allies there: {allies}";
         }
-        return new Branch("catch_wave", CoachQuestions.CatchWaveOption,
+        return new Branch(option, CoachQuestions.CatchWaveOption,
             crashing.Length > 1 ? q => q.Choice("tend_lane", CoachQuestions.TendLane, criteria) : null,
             response =>
             {
@@ -1028,7 +1118,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 });
                 _lastMoveAt = asked;
                 Remember($"stepped toward {lane.Lane} lane's wave at your turret", asked);
-            });
+            }) { Only = crashing.Length == 1 ? crashing[0].Lane : null };
     }
 
     // --- Brush: out of sight ---
@@ -1053,20 +1143,26 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// patch the follow-up's; a pick is one step on the ground toward the
     /// nearest point well inside the grass, and the next is decided afresh.
     /// </summary>
-    private Branch? HideInBrush(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch HideInBrush(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || frame.GameTime is null || self is not { WorldX: { } x, WorldY: { } y })
-            return null;
-        if (Stepping(frame.VideoTime) || RiftBrush.At(x, y) is not null)
-            return null;
+        const string option = "hide_in_brush";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        if (frame.GameTime is null)
+            return Closed(option, "the game clock is not running");
+        if (Stepping(frame.VideoTime))
+            return Closed(option, SteppedAgo(frame.VideoTime));
+        if (RiftBrush.At(x, y) is not null)
+            return Closed(option, "already in the brush");
         var near = NearBrushes(frame, self);
         if (near.Length == 0)
-            return null;
+            return Closed(option, "no brush near");
 
         var criteria = new ChoiceCriteria();
         foreach (var (fact, _) in near)
             criteria[fact.Name] = DescribeBrush(fact);
-        return new Branch("hide_in_brush", CoachQuestions.HideInBrushOption,
+        return new Branch(option, CoachQuestions.HideInBrushOption,
             near.Length > 1 ? q => q.Choice("brush", CoachQuestions.WhichBrush, criteria) : null,
             response =>
             {
@@ -1097,7 +1193,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 });
                 _lastMoveAt = asked;
                 Remember($"stepped toward {patch.NameFrom(_side)}", asked);
-            });
+            }) { Only = near.Length == 1 ? near[0].Fact.Name : null };
     }
 
     // --- Out ahead with enemies near: back to cover ---
@@ -1123,20 +1219,24 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// follow-up's; a pick is one step on the ground toward it, and the next
     /// is decided afresh.
     /// </summary>
-    private Branch? RunAway(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch RunAway(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || self is not { WorldX: { } x, WorldY: { } y } || moment.VisibleEnemies.Count == 0)
-            return null;
+        const string option = "run_away";
+        if (Unplaced(self) is { } unplaced)
+            return Closed(option, unplaced);
+        var (x, y) = (self.WorldX!.Value, self.WorldY!.Value);
+        if (moment.VisibleEnemies.Count == 0)
+            return Closed(option, "no enemy on the screen");
         if (Stepping(frame.VideoTime))
-            return null;
+            return Closed(option, SteppedAgo(frame.VideoTime));
         var refuges = Cover(frame, self).Away;
         if (refuges.Length == 0)
-            return null;
+            return Closed(option, "no refuge to run back to");
 
         var criteria = new ChoiceCriteria();
         foreach (var (fact, _, _) in refuges)
             criteria[fact.Name] = DescribeRefuge(fact);
-        return new Branch("run_away", CoachQuestions.RunAwayOption,
+        return new Branch(option, CoachQuestions.RunAwayOption,
             refuges.Length > 1 ? q => q.Choice("refuge", CoachQuestions.WhichRefuge, criteria) : null,
             response =>
             {
@@ -1162,7 +1262,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 });
                 _lastMoveAt = asked;
                 Remember($"ran back toward {refuge.Name}", asked);
-            });
+            }) { Only = refuges.Length == 1 ? refuges[0].Fact.Name : null };
     }
 
     /// <summary>A refuge, as an option of the refuge follow-up says it.</summary>
@@ -1277,13 +1377,20 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// and <see cref="Moment.Cover"/>; a pick is the recall key, and for the
     /// channel's length the root offers nothing that would move the player.
     /// </summary>
-    private Branch? Recall(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
+    private Branch Recall(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
-        if (self.Alive == false || frame.GameTime is null || moment.Whereabouts is not { } where || AtHome(where.Place))
-            return null;
+        const string option = "recall";
+        if (self.Alive == false)
+            return Closed(option, "dead");
+        if (frame.GameTime is null)
+            return Closed(option, "the game clock is not running");
+        if (moment.Whereabouts is not { } where)
+            return Closed(option, "whereabouts not known");
+        if (AtHome(where.Place))
+            return Closed(option, $"already in {where.Place}");
         if (frame.VideoTime < _recallUntil)
-            return null;
-        return new Branch("recall", CoachQuestions.RecallOption, null, _ =>
+            return Closed(option, "already recalling");
+        return new Branch(option, CoachQuestions.RecallOption, null, _ =>
         {
             List<string> why = [];
             if (moment.Player?.Health is { } health)
@@ -1317,10 +1424,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// The ghost's hands have no move for it yet, so a pick is a cue naming it
     /// (<see cref="Said"/>).
     /// </summary>
-    private Branch? Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
-        self.Alive != false && moment.Whereabouts is { Place: RiftMap.FountainPlace }
+    private Branch Buy(FrameEnvelope frame, ChampionRow self, Moment moment, double asked) =>
+        self.Alive == false ? Closed("buy", "dead")
+        : moment.Whereabouts is { Place: RiftMap.FountainPlace }
             ? Said(frame, "buy", CoachQuestions.BuyOption, "bought", moment, asked)
-            : null;
+            : Closed("buy", "not in the fountain");
 
     private static bool AtHome(string place) => place is RiftMap.FountainPlace or RiftMap.BasePlace;
 
@@ -1331,10 +1439,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <see cref="JevOptions.SayEverySeconds"/> after it was last said, so a
     /// moment that goes on being right for it is not said four times a second.
     /// </summary>
-    private Branch? Said(FrameEnvelope frame, string option, string criterion, string done, Moment moment, double asked)
+    private Branch Said(FrameEnvelope frame, string option, string criterion, string done, Moment moment, double asked)
     {
         if (_lastSaid.TryGetValue(option, out var at) && frame.VideoTime - at < _options.SayEverySeconds)
-            return null;
+            return Closed(option, $"said {frame.VideoTime - at:0.0}s ago; once every {_options.SayEverySeconds:0}s");
         return new Branch(option, criterion, null, _ =>
         {
             List<string> facts = [];
@@ -1494,7 +1602,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var sentence = BoltSentence(occasion);
         var stamp = evt.At ?? evt.VideoTime;
-        Ask("bolt", moment, questions, evt.VideoTime, OccasionRequest, released: null, answered: response =>
+        Ask("bolt", moment, questions, evt.VideoTime, OccasionRequest, released: null,
+            new Thought { YesAt = _options.YesAt }, answered: response =>
         {
             if (response.TryGet<NoulAnswer>("remark", out var remark) && remark!.IsYes(_options.YesAt))
             {
@@ -1504,10 +1613,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             if (sides is null
                 || !response.TryGet<NoulAnswer>("step", out var step) || !step!.IsYes(_options.YesAt)
                 || !response.TryGet<ChoiceAnswer>("side", out var side) || !sides.TryGetValue(side!.Choice, out var way))
-                return;
+                return null;
             _moves.Add(new MoveStep(stamp, side.Choice, way.Dx, way.Dy, 3, sentence));
             _lastMoveAt = Math.Max(_lastMoveAt, stamp);
             Remember($"stepped {side.Choice}", stamp);
+            return null;
         });
     }
 
@@ -1597,12 +1707,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             + $"{wideCount} of the last {recent.Length} shots that were seen went wide";
 
         Ask("shot", moment, new Questions().Noul("remark", CoachQuestions.ShotRemark),
-            evt.VideoTime, OccasionRequest, released: null, answered: response =>
+            evt.VideoTime, OccasionRequest, released: null, new Thought { YesAt = _options.YesAt }, answered: response =>
             {
                 if (!response.TryGet<NoulAnswer>("remark", out var remark) || !remark!.IsYes(_options.YesAt))
-                    return;
+                    return null;
                 _cues.Add(new CoachCue(evt.VideoTime, 2, sentence));
                 Remember("remarked on aim", evt.VideoTime);
+                return null;
             });
     }
 
@@ -1742,10 +1853,20 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// about the moment once its answer is in, good or bad; an event's
     /// question has none.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="thought"/> is what the brain view is told of the
+    /// question beyond the question itself (the root's branches); it is told
+    /// when the question is sent and again, with the answers and what came of
+    /// them, when it is applied. <paramref name="answered"/> returns the
+    /// verdict when the answer came to no order ("carry_on", "weak"), or null
+    /// to let what it produced say it.
+    /// </remarks>
     private void Ask(string occasion, Moment moment, Questions questions, double videoTime,
-        RequestOptions request, Action? released, Action<SystemOneResponse> answered)
+        RequestOptions request, Action? released, Thought thought, Func<SystemOneResponse, string?> answered)
     {
         var generation = _generation;
+        thought = thought with { Id = ++_thoughtId, Occasion = occasion, VideoTime = videoTime };
+        Thinking?.Invoke(thought with { Phase = "asked", Questions = Asked(questions), State = moment });
         OnTheWire(occasion, sent: true);
         _ = RunAsync();
 
@@ -1769,27 +1890,67 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 if (generation == _generation)
                     released?.Invoke();
                 audit?.Invoke(new Consultation(videoTime, occasion, moment, questions, response, error, elapsed));
+                var told = thought with
+                {
+                    Phase = "answered", ElapsedMs = elapsed, Model = response?.Model, Error = error,
+                    Answers = response?.Answers
+                        .Select(a => (a.Key, Answer: ThoughtAnswer.From(a.Value)))
+                        .Where(a => a.Answer is not null)
+                        .ToDictionary(a => a.Key, a => a.Answer!),
+                };
                 if (generation != _generation)
+                {
+                    Thinking?.Invoke(told with { Verdict = "stale" });
                     return;
+                }
                 if (response is null)
                 {
                     if (occasion == "decide")
                         Tally("no answer");
                     Fail(videoTime, error ?? "no answer");
+                    Thinking?.Invoke(told with { Verdict = "no answer" });
                     return;
                 }
                 _failing = false;
+                var (keys, moves, cues) = (_keys.Count, _moves.Count, _cues.Count);
+                string? verdict;
                 try
                 {
-                    answered(response);
+                    verdict = answered(response);
                 }
                 catch (Exception e)
                 {
                     Fail(videoTime, $"the answer could not be read: {e.Message}");
+                    verdict = "unreadable";
                 }
+                if (Thinking is null)
+                    return;
+                ThoughtDeed[] did =
+                [
+                    .. _keys.Skip(keys).Select(k => new ThoughtDeed("keyboard", k.Sentence) { Key = k.Chord }),
+                    .. _moves.Skip(moves).Select(m => new ThoughtDeed(
+                            m.Target is not null ? "attack" : m.AttackMove ? "attack_move" : "move", m.Sentence)
+                        {
+                            Direction = m.Direction, Toward = m.Destination?.Name ?? m.Target?.Name,
+                        }),
+                    .. _cues.Skip(cues).Where(c => !c.Failure).Select(c => new ThoughtDeed("voice", c.Reason)),
+                ];
+                Thinking(told with
+                {
+                    Verdict = verdict ?? (did.Length > 0 ? "acted" : "nothing"),
+                    Did = did.Length > 0 ? did : null,
+                });
             });
         }
     }
+
+    /// <summary>The questions as the brain view shows them: each one's kind, rubric and options.</summary>
+    private static ThoughtQuestion[] Asked(Questions questions) =>
+        questions.Select(q => new ThoughtQuestion(q.Key, q.Value.Type, q.Value.Instructions as string,
+                q.Value is ChoiceQuestion choice
+                    ? choice.Criteria.Select(c => new ThoughtOption(c.Key, c.Value as string)).ToArray()
+                    : null))
+            .ToArray();
 
     /// <summary>
     /// Raised under the lock, so two threads' changes reach a listener in the
