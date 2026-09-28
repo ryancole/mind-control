@@ -31,6 +31,9 @@ public static class CoachQuestions
         + "and is never in the way of anything else); `run_away`; `use_ability`; `attack`; `step_back`; "
         + "`hide_in_brush`; `catch_wave`; `walk_to_lane`; `recall`; `buy`. Pick `carry_on` "
         + "when none of the offered options is right: a good player does not click for the sake of clicking. "
+        + "But in a lane with enemy minions in reach, farming them is what a good player is doing: gold comes "
+        + "only from minions, so while `attack` or `use_ability` is offered there, `carry_on` is right only when "
+        + "their own texts say they are not. "
         + "`coach` lists what you, the coach, did in the last few seconds: a button pressed or an attack ordered "
         + "moments ago is still being carried out, but a step is not a reason to hold the next one, since a "
         + "good player gets around in short right-clicks on the ground, a fresh one about every second.";
@@ -42,18 +45,28 @@ public static class CoachQuestions
 
     /// <summary>Throw a button that is up at a visible enemy; <see cref="Ability"/> picks which.</summary>
     public static string UseAbilityOption(IEnumerable<string> slots) =>
-        $"use_ability: throw one of the buttons that is up ({string.Join(", ", slots)}) at one of the visible "
-        + "enemies. Right when a visible enemy has stood inside that ability's range long enough to be a target "
-        + "(an enemy passing through the edge of range is not yet a target, one who has sat there a couple of "
-        + "seconds is), the ability is really up (the HUD prints whole seconds, so a countdown that ended a "
-        + "fraction of a second ago may have a fraction left) and the resource bar can pay for it. Not when "
-        + "nobody is worth throwing at yet, or the coach pressed it moments ago without the player following: a "
-        + "good player does not throw an ability into nothing and does not spam it.";
+        $"use_ability: throw one of the buttons that is up ({string.Join(", ", slots)}) at a visible enemy "
+        + "champion or at the enemy minions. `abilities` says of each button what it is, its range, whether it "
+        + "is `up` (the HUD showed it come back; it prints whole seconds, so one that came back a fraction of a "
+        + "second ago may have a fraction left) or never seen cast this game (so up if it holds a point, which "
+        + "every basic ability does from about level three), and `enemy_minions_in_range` with the lowest of "
+        + "their bars. Right when a visible enemy champion has stood inside that ability's range long enough to "
+        + "be a target (one passing through the edge of range is not yet, one who has sat there a couple of "
+        + "seconds is) and the resource bar can pay for it. Right too for farming: an ability that damages "
+        + "enemies (not a shield, a blink or a dash) with enemy minions inside its range (`enemy_minions_in_range` "
+        + "above 0), when `lowest_enemy_minion_in_range` is about 0.4 or less and the mana bar is above about a "
+        + "quarter: right, and ahead of a basic attack on that minion, since the ability lands at once where "
+        + "the attack has to wind up, and an ability whose `kind` names it the champion's last-hitting tool "
+        + "gives its cost back for the kill. Right too when no enemy champion is within about 1000 units, "
+        + "several enemy minions are inside its range and the mana bar is above about half, to clear the wave fast. Not when the coach pressed it moments ago "
+        + "without the player following: a good player does not throw an ability into nothing and does not spam it.";
 
     public const string Ability =
         "If the player were to throw an ability now, which one? Each option is a button that is up, with what it "
-        + "is, how far it reaches and which visible enemies stand inside that. The one whose target has sat inside "
-        + "its range longest, and never one no visible enemy stands inside the range of.";
+        + "is, how far it reaches, which visible enemy champions stand inside that and how many enemy minions do. "
+        + "Against a champion, the one whose target has sat inside its range longest. For farming, the one that "
+        + "damages enemies and has the minions inside its range, a champion's usual last-hitting tool first. "
+        + "Never one that is not thrown at enemies (a shield, a blink), and never one with nothing inside its range.";
 
     /// <summary>
     /// Put the waiting point into an ability; <see cref="Slot"/> picks which.
@@ -109,28 +122,37 @@ public static class CoachQuestions
         + "last hits; attacking a champion draws every nearby enemy minion's attacks onto the attacker; and a "
         + "turret shoots an enemy champion who attacks a champion inside its range, and shoots whoever stands in "
         + "its range with no minions of their own there to shoot first. "
+        + "Farming is what a laner does between everything else: a good player's basic attacks go into the enemy "
+        + "wave all through the lane, and an enemy champion somewhere on the screen does not stop them. "
         + "Go by these rules in order; the first that applies decides whether this is right. "
-        + "First: `coach` has an entry that begins \"attacked\" with `seconds_ago` under 1.5: not right, whatever "
-        + "else holds, since that right-click is still being carried out (the champion keeps attacking its target "
-        + "and a basic attack takes over a second to come round). "
+        + "First: `coach` has an entry that begins \"attacked\" with `seconds_ago` under 1: not right, whatever "
+        + "else holds, since that right-click is still being carried out (the champion keeps attacking its target). "
         + "Second: `attack.you_under_their_turret` is set and `your_minions_under_that_turret` is 0: not right, the "
         + "turret has nobody else to shoot. "
-        + "Third: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.35 or less, or has more "
-        + "left but a `seconds_to_empty` under about 1 (the attack takes about half a second to wind up and land, "
+        + "Third: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.4 or less, or has more "
+        + "left but a `seconds_to_empty` under about 2 (the attack takes about half a second to wind up and land, "
         + "and the minions' own fight finishes the rest): right, it is a last hit. This holds whatever its "
         + "`in_attack_range` says, because the right-click walks the champion the last step and attacks, and "
-        + "whoever else is on the screen, an enemy champion in range included. "
-        + "Fourth: the player's own health is low and the enemy champion's is not: not right. "
+        + "whoever else is on the screen, an enemy champion in range included. A last hit outranks trading, "
+        + "stepping back and hiding: it is the gold. The one exception is a better tool for it: when an entry in "
+        + "`abilities` whose `kind` names it the champion's last-hitting tool has that minion inside its range "
+        + "(`lowest_enemy_minion_in_range` about 0.4 or less), is not on `cooldown`, and the mana bar is above "
+        + "about a quarter, the ability takes the last hit and the basic attack is not right. "
+        + "Fourth: the player's own health is low and an enemy champion within about 1000 units is healthier: "
+        + "not right. "
         + "Fifth: the only enemy champion worth attacking has `under_their_turret` set, or "
         + "`attack.you_under_their_turret` is set: not right for the champion, since the turret would shoot the "
-        + "player for it. "
+        + "player for it; a minion is still right by the rules below. "
         + "Sixth: an enemy champion has `in_attack_range` true, health no higher than the player's, and at most "
         + "one enemy minion is within 550 units of the player: right, a trade the player wins. "
-        + "Seventh: `visible_enemies` is empty: right, attack the wave to clear it, since there is nobody to trade "
-        + "with and nobody to push the wave away from. "
-        + "Otherwise not right: a minion with more bar left than a last hit and no quick fall is not yet worth an "
-        + "attack while an enemy champion is on the screen, because hitting it early only pushes the wave toward "
-        + "the enemy's turret and hands the last hit to the player's own minions.";
+        + "Seventh: no enemy champion in `visible_enemies` is within about 1000 units: right, attack the wave. An "
+        + "enemy champion farther off cannot punish the attack, and a wave taken down fast is gold, experience "
+        + "and pressure on their turret. "
+        + "Eighth: an enemy minion in `attack.enemy_minions_near` has `health` of about 0.6 or less and its bar is "
+        + "falling (`falling_per_second` above 0): right, one basic attack now sets up the last hit that follows, "
+        + "which the player's own minions would otherwise take. "
+        + "Otherwise not right: with an enemy champion close and every minion near still healthy and holding, "
+        + "hitting them only pushes the wave toward the enemy's turret; the player waits for a bar to drop.";
 
     public const string AttackTarget =
         "If the player were to right-click an enemy now, which? Each option is an enemy minion, with how much of "
@@ -139,7 +161,7 @@ public static class CoachQuestions
         + "attack finishes comes first, since a last hit is gold that is gone the moment it dies to anything else: "
         + "the one whose bar will be empty soonest, within range before one the player would have to walk to. Then "
         + "an enemy champion in range whose trade is the player's and who does not stand under their turret; never "
-        + "one who does. Then, with no enemy champion on the screen, the lowest minion in range, to clear the wave.";
+        + "one who does. Then the lowest minion in range, to farm the wave.";
 
     /// <summary>
     /// A step back down the lane, out of the enemy wave. The counts and

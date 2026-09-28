@@ -718,25 +718,40 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // --- Buttons: which one a good player would throw now ---
 
     /// <summary>
-    /// Offered while the player is alive and placed, a button the HUD has
-    /// shown come back is up, and an enemy is on the screen to throw it at.
-    /// A greyed button and an empty screen offer nothing. A pick is one key
-    /// press; with more than one button up, which is the follow-up's call.
+    /// The buttons a press could go to at <paramref name="now"/>: each one the
+    /// HUD has shown come back, and each basic one never seen cast this game,
+    /// which has no cooldown running that anything saw (the ultimate only from
+    /// level six, when it can hold a point). A button seen cast whose
+    /// countdown could not be read is not one of them: it was just thrown.
+    /// </summary>
+    private string[] ButtonsUp(double now, int? level) =>
+        AbilityKits.Slots.Union(_casts.Keys)
+            .Where(slot => _casts.TryGetValue(slot, out var cast)
+                ? cast.Countdown is { } countdown && now >= cast.At + countdown
+                : slot != "R" || level >= 6)
+            .Order()
+            .ToArray();
+
+    /// <summary>
+    /// Offered while the player is alive and placed, a button is up (the HUD
+    /// has shown it come back, or it has never been seen cast), and something
+    /// is there to throw it at: an enemy champion on the screen, or an enemy
+    /// minion within the button's reach, since a good player farms with
+    /// abilities too. A pick is one key press; with more than one button up,
+    /// which is the follow-up's call.
     /// </summary>
     private Branch UseAbility(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
     {
         const string option = "use_ability";
         if (Unplaced(self) is { } unplaced)
             return Closed(option, unplaced);
-        var slots = _casts
-            .Where(c => c.Value.Countdown is { } countdown && frame.VideoTime >= c.Value.At + countdown)
-            .Select(c => c.Key)
-            .Order()
-            .ToArray();
+        var slots = ButtonsUp(frame.VideoTime, self.Level);
         if (slots.Length == 0)
-            return Closed(option, _casts.Count == 0 ? "no button seen cast yet" : "no button known to be up");
-        if (moment.VisibleEnemies.Count == 0)
-            return Closed(option, "no enemy on the screen");
+            return Closed(option, "no button known to be up");
+        var minionsNear = NearMinions(frame, self).Length > 0;
+        if (moment.VisibleEnemies.Count == 0
+            && !moment.Abilities.Any(a => slots.Contains(a.Slot) && (a.EnemyMinionsInRange > 0 || a.Range is null && minionsNear)))
+            return Closed(option, "no enemy on the screen and no enemy minion in reach");
 
         var criteria = new ChoiceCriteria();
         foreach (var slot in slots)
@@ -744,8 +759,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             var facts = moment.Abilities.First(a => a.Slot == slot);
             var inside = moment.VisibleEnemies.Where(e => e.InRangeOf.Contains(slot)).Select(e => e.Champion).ToArray();
             criteria[slot] = $"{slot}: {facts.Kind ?? "what it is is not on file"}, "
+                + (facts.Status == "up" ? "up" : "never seen cast this game, so up if it holds a point") + ", "
                 + (facts.Range is { } range ? $"reaching {range:0} units" : "its range not on file")
-                + (inside.Length > 0 ? $"; inside its range: {string.Join(", ", inside)}" : "; no visible enemy inside its range");
+                + (inside.Length > 0 ? $"; inside its range: {string.Join(", ", inside)}" : "; no visible enemy inside its range")
+                + (facts.EnemyMinionsInRange is { } count
+                    ? $"; enemy minions inside its range: {count}, the lowest at {facts.LowestEnemyMinionInRange:0%} health"
+                    : "");
         }
         return new Branch(option, CoachQuestions.UseAbilityOption(slots),
             slots.Length > 1 ? q => q.Choice("ability", CoachQuestions.Ability, criteria) : null,
@@ -753,16 +772,38 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             {
                 if (Picked(response, "ability", slots) is not { } slot)
                     return;
-                var nearest = moment.VisibleEnemies[0];
                 var facts = moment.Abilities.First(a => a.Slot == slot);
-                var reason = facts.Range is { } range && nearest.DistanceUnits <= range
+                var up = facts.Status == "up" ? $"{slot} up" : $"{slot} never seen on cooldown";
+                var nearest = moment.VisibleEnemies.FirstOrDefault();
+                var reason = nearest is not null && facts.Range is { } range && nearest.DistanceUnits <= range
                     ? $"{nearest.Champion} has been in {slot} range ({nearest.DistanceUnits:0} units)"
                       + (nearest.WithinReachForSeconds is { } held ? $" for {held:0.0}s" : "")
-                      + $" with {slot} up"
-                    : $"{nearest.Champion} is {nearest.DistanceUnits:0} units away with {slot} up";
+                      + $" with {up}"
+                    : facts.EnemyMinionsInRange is { } count
+                    ? $"{(count == 1 ? "an enemy minion" : $"{count} enemy minions")} in {slot} range, the lowest at "
+                      + $"{facts.LowestEnemyMinionInRange:0%} health, with {up}"
+                    : nearest is not null
+                    ? $"{nearest.Champion} is {nearest.DistanceUnits:0} units away with {up}"
+                    : $"enemy minions are in reach with {up}";
                 _keys.Add(new KeyPress(asked, slot, 2, reason));
                 Remember($"pressed {slot}", asked);
             }) { Only = slots.Length == 1 ? slots[0] : null };
+    }
+
+    /// <summary>
+    /// How many enemy minions whose bars were read stand within
+    /// <paramref name="range"/> of the player, and the lowest bar among them;
+    /// null when none do.
+    /// </summary>
+    private static (int Count, double Lowest)? EnemyMinionsWithin(FrameEnvelope frame, ChampionRow self, double range)
+    {
+        if (Carried(frame, r => r.Minions) is not { } minions || self is not { WorldX: { } x, WorldY: { } y })
+            return null;
+        var inside = minions
+            .Where(m => m.Team != MinionTeam.Blue && m.Health is not null
+                && m is { WorldX: { } mx, WorldY: { } my } && double.Hypot(mx - x, my - y) <= range)
+            .ToArray();
+        return inside.Length == 0 ? null : (inside.Length, Math.Round(inside.Min(m => m.Health!.Value), 2));
     }
 
     // --- A skill point waiting: which ability it goes into ---
@@ -1721,16 +1762,14 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <summary>
     /// The player's own cast, named to a button off the HUD: the one fact that
     /// tells us a slot exists and when it comes back. A cast whose countdown
-    /// could not be read leaves the slot unknown until the next one that can.
+    /// could not be read leaves the slot unknown until the next one that can,
+    /// but still seen cast: a button just thrown is not one never thrown.
     /// </summary>
     private void OnAbility(GameEvent evt)
     {
         if (evt.Slot is not { } slot || evt.At is not { } at)
             return;
-        if (evt.Countdown is { } countdown)
-            _casts[slot] = (at, countdown);
-        else
-            _casts.Remove(slot);
+        _casts[slot] = (at, evt.Countdown);
     }
 
     // --- A bolt at the player: a remark, and a step ---
@@ -2252,18 +2291,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         foreach (var slot in AbilityKits.Slots.Union(_casts.Keys).Order())
         {
             var note = AbilityKits.For(champion, slot);
+            SlotFacts facts;
             if (_casts.TryGetValue(slot, out var cast) && cast.Countdown is { } countdown)
             {
                 var ready = cast.At + countdown;
-                abilities.Add(now >= ready
+                facts = now >= ready
                     ? new SlotFacts(slot, note?.Kind, note?.Range, "up", Math.Round(now - ready, 1), null, null)
-                    : new SlotFacts(slot, note?.Kind, note?.Range, "cooldown", null, Math.Round(ready - now, 1), null));
+                    : new SlotFacts(slot, note?.Kind, note?.Range, "cooldown", null, Math.Round(ready - now, 1), null);
             }
             else
-                abilities.Add(new SlotFacts(slot, note?.Kind, note?.Range, "unknown", null, null,
+                facts = new SlotFacts(slot, note?.Kind, note?.Range, "unknown", null, null,
                     _casts.ContainsKey(slot)
                         ? "the last cast's cooldown could not be read"
-                        : "never seen cast; it may not be skilled yet"));
+                        : "never seen cast this game, so no cooldown is running that the coach saw: up if it holds a point");
+            if (frame is not null && self is not null && note?.Range is { } reach
+                && EnemyMinionsWithin(frame, self, reach) is { } inside)
+                facts = facts with { EnemyMinionsInRange = inside.Count, LowestEnemyMinionInRange = inside.Lowest };
+            abilities.Add(facts);
         }
 
         List<EnemyFacts> enemies = [];

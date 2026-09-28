@@ -23,6 +23,13 @@ public static class AbilityKits
 
     private static readonly Dictionary<string, Note[]> Kits = new()
     {
+        ["Annie"] =
+        [
+            new Note("Q", "Disintegrate: a targeted nuke that refunds its mana and half its cooldown when it kills, so her last-hitting tool", 625, UsuallyMaxed: "first"),
+            new Note("W", "Incinerate: a cone of fire that hits everything in front of her", 600, UsuallyMaxed: "second"),
+            new Note("E", "Molten Shield: a shield on herself or an ally, not something to throw at an enemy", null, UsuallyMaxed: "last"),
+            new Note("R", "Summon: Tibbers: an area-damage ultimate", 600),
+        ],
         ["Ezreal"] =
         [
             new Note("Q", "Mystic Shot: a skillshot poke", 1150, UsuallyMaxed: "first"),
@@ -39,7 +46,7 @@ public static class AbilityKits
     /// </summary>
     private static readonly Dictionary<string, double> AttackRanges = new()
     {
-        ["Akali"] = 125, ["Braum"] = 125, ["Ezreal"] = 550, ["Hecarim"] = 175, ["Jinx"] = 525,
+        ["Akali"] = 125, ["Annie"] = 625, ["Braum"] = 125, ["Ezreal"] = 550, ["Hecarim"] = 175, ["Jinx"] = 525,
         ["Karma"] = 525, ["Leblanc"] = 525, ["Leona"] = 125, ["MissFortune"] = 550, ["Shaco"] = 125,
         ["Swain"] = 525,
     };

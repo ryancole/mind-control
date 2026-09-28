@@ -67,6 +67,17 @@ public sealed class JevPolicyTests
         Slot = slot, At = at, Countdown = countdown, Confirmed = true,
     };
 
+    /// <summary>
+    /// Casts of <paramref name="slots"/> long ago whose countdowns were not
+    /// read: seen cast, so not up, and not offered as never seen cast either.
+    /// Leaves the one button a test sets up as the only one to press.
+    /// </summary>
+    private static void Unread(JevPolicy policy, params string[] slots)
+    {
+        foreach (var slot in slots)
+            policy.OnEvent(Cast(slot, 1, countdown: null));
+    }
+
     private static GameEvent Event(string json) =>
         JsonSerializer.Deserialize<GameEvent>(json, FeedJson.Options)!;
 
@@ -179,20 +190,55 @@ public sealed class JevPolicyTests
     // --- Buttons ---
 
     [TestMethod]
-    public void Nothing_is_asked_before_the_HUD_has_shown_a_button_come_back()
+    public void A_button_never_seen_cast_is_offered_as_up_if_it_holds_a_point()
     {
-        // A slot may not be skilled; until a cooldown has been printed for it
-        // there is no button to offer, only a guess.
+        // No cooldown was ever seen running on it, so it is up if it is
+        // skilled; whether it is, at the player's level, is the model's call.
         var (policy, jev) = Coach();
-        Run(policy, 10, 12, Self(), Enemy(900));
-        Assert.IsNotEmpty(jev.Asks, "the enemy on the screen is something to decide about");
-        Assert.IsEmpty(Offering(jev, "use_ability"));
+        policy.OnFrame(Frame(10, Self(level: 5), Enemy(900)));
+
+        var ask = Offering(jev, "use_ability").Single();
+        StringAssert.StartsWith(Criterion(ask, "use_ability"), "use_ability: throw one of the buttons that is up (E, Q, W)",
+            "the ultimate only from level six");
+        var q = (string)((ChoiceQuestion)ask.Questions["ability"]).Criteria["Q"]!;
+        StringAssert.Contains(q, "never seen cast this game, so up if it holds a point");
+        StringAssert.Contains(ask.State.Abilities.Single(a => a.Slot == "Q").Note!, "up if it holds a point");
+    }
+
+    [TestMethod]
+    public void A_yes_on_a_button_never_seen_cast_says_so()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("use_ability", ("ability", "Q"));
+        policy.OnFrame(Frame(10, Self(), Enemy(900)));
+
+        Assert.AreEqual("coach would have pressed Q here: Karma has been in Q range (900 units) for 0.0s with Q never seen on cooldown",
+            policy.DrainKeys().Single().Sentence);
+    }
+
+    [TestMethod]
+    public void Enemy_minions_in_a_buttons_reach_are_something_to_throw_it_at()
+    {
+        // Farming with abilities: no enemy champion on the screen, but the
+        // wave inside Q's reach.
+        var (policy, jev) = Coach();
+        jev.Script = Choose("use_ability", ("ability", "Q"));
+        policy.OnFrame(Clocked(200, 300, InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.3), Bar(MinionTeam.Red, 9700, 1400))));
+
+        var ask = Offering(jev, "use_ability").Single();
+        var q = ask.State.Abilities.Single(a => a.Slot == "Q");
+        Assert.AreEqual((2, 0.3), (q.EnemyMinionsInRange, q.LowestEnemyMinionInRange));
+        StringAssert.Contains((string)((ChoiceQuestion)ask.Questions["ability"]).Criteria["Q"]!,
+            "enemy minions inside its range: 2, the lowest at 30% health");
+        Assert.AreEqual("coach would have pressed Q here: 2 enemy minions in Q range, the lowest at 30% health, with Q never seen on cooldown",
+            policy.DrainKeys().Single().Sentence);
     }
 
     [TestMethod]
     public void A_button_that_is_up_with_an_enemy_in_view_is_a_question()
     {
         var (policy, jev) = Coach();
+        Unread(policy, "W", "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         Run(policy, 14.5, 14.9, Self(), Enemy(900));   // still on the printed cooldown
         Assert.IsEmpty(Offering(jev, "use_ability"));
@@ -200,7 +246,7 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
 
         var ask = Offering(jev, "use_ability").Single();
-        Assert.IsFalse(ask.Questions.ContainsKey("ability"), "one button up, since W has never been seen cast: no choice to make");
+        Assert.IsFalse(ask.Questions.ContainsKey("ability"), "one button up, since W was last cast with its countdown unread: no choice to make");
         StringAssert.StartsWith(Criterion(ask, "use_ability"), "use_ability: throw one of the buttons that is up (Q)");
         Assert.AreEqual(15.5, ask.State.VideoTime);
         var q = ask.State.Abilities.Single(a => a.Slot == "Q");
@@ -223,6 +269,7 @@ public sealed class JevPolicyTests
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("use_ability");
+        Unread(policy, "W", "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         Run(policy, 15.5, 17.5, Self(), Enemy(900));
 
@@ -240,6 +287,7 @@ public sealed class JevPolicyTests
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("use_ability");
+        Unread(policy, "W", "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
         policy.OnFrame(Frame(16.0, Self(), Enemy(900)));
@@ -299,6 +347,7 @@ public sealed class JevPolicyTests
     public void A_button_the_player_just_pressed_is_not_offered()
     {
         var (policy, jev) = Coach();
+        Unread(policy, "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnEvent(Cast("W", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
@@ -318,10 +367,11 @@ public sealed class JevPolicyTests
     public void A_cast_whose_countdown_was_not_read_makes_the_button_unknown_again()
     {
         var (policy, jev) = Coach();
+        Unread(policy, "W", "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnEvent(Cast("Q", 16, countdown: null));
         Run(policy, 16, 30, Self(), Enemy(900));
-        Assert.IsEmpty(Offering(jev, "use_ability"));
+        Assert.IsEmpty(Offering(jev, "use_ability"), "just thrown, and not a button never seen cast");
     }
 
     [TestMethod]
@@ -329,6 +379,7 @@ public sealed class JevPolicyTests
     {
         var (policy, jev) = Coach();
         jev.Script = Choose("use_ability");
+        Unread(policy, "W", "E", "R");
         policy.OnEvent(Cast("Q", 10, 5));
         jev.Hold = true;
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
@@ -339,7 +390,9 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(15.7, Self(), Enemy(900)));
 
         Assert.IsEmpty(policy.DrainKeys(), "an answer about a past we stopped trusting");
-        Assert.HasCount(1, Offering(jev, "use_ability"), "and the cooldown was forgotten with the gap, so no button to offer");
+        Assert.IsEmpty(policy.DrainKeys());
+        CollectionAssert.AreEqual(new[] { "E", "Q", "R", "W" }, ((ChoiceQuestion)jev.Last.Questions["ability"]).Options.ToArray(),
+            "the casts were forgotten with the gap, so every button is one never seen cast");
     }
 
     [TestMethod]
