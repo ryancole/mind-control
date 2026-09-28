@@ -64,6 +64,11 @@ public sealed record Meta
     /// calibration and a minimap panel of 400px or more, like
     /// <see cref="HasMinionDots"/>.</summary>
     public bool HasTurrets { get; init; }
+
+    /// <summary>Gates <c>gold</c>: true while the gold reader runs. False
+    /// (or absent, on older feeds) means no row carries it because nothing
+    /// looked, never that the player has none.</summary>
+    public bool HasGold { get; init; }
     public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
 }
@@ -147,6 +152,17 @@ public sealed record ChampionRow
     /// <summary>The player's creep score. Filtered upstream so it never falls,
     /// and a rise can lag the HUD by a reading or two. Null until first read.</summary>
     public int? Cs { get; init; }
+
+    /// <summary>
+    /// The player's gold, on the is_self row only, off the HUD's gold box.
+    /// Null when the box was not read on this frame: not unchanged and not
+    /// zero, so no earlier value stands in for it; a read 0 is a real 0.
+    /// Filtered upstream to lean low: a drop (a purchase) is taken on the
+    /// first reading, a rise once two agree, so it can trail the HUD by a
+    /// reading and is never above the frame's own. Read on the dead screen
+    /// too. Gated by <see cref="Meta.HasGold"/>.
+    /// </summary>
+    public int? Gold { get; init; }
 
     /// <summary>Enemy minion deaths on the player's screen, judged against the
     /// creep score. A moment, not state: only on the frame an entry resolved,
