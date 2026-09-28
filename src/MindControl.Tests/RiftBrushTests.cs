@@ -23,9 +23,9 @@ public sealed class RiftBrushTests
     [TestMethod]
     public void Patches_are_named_by_where_they_lie()
     {
-        Assert.AreEqual("the bot lane brush", Nearest(12455, 1321).NameFrom(MapSide.Blue), "bot lane's corner");
+        Assert.AreEqual("the bot lane brush, your half, past your outer turret", Nearest(12455, 1321).NameFrom(MapSide.Blue), "bot lane's corner");
         Assert.AreEqual("bot", Nearest(12455, 1321).Lane);
-        Assert.AreEqual("the top lane brush", Nearest(1127, 12405).NameFrom(MapSide.Blue), "top lane's corner");
+        Assert.AreEqual("the top lane brush, your half, past your outer turret", Nearest(1127, 12405).NameFrom(MapSide.Blue), "top lane's corner");
         Assert.AreEqual("a river brush, top side", Nearest(6267, 8351).NameFrom(MapSide.Blue), "the long one beside mid");
         Assert.AreEqual("a river brush, bot side", Nearest(8674, 6404).NameFrom(MapSide.Blue));
         Assert.AreEqual("a brush in their jungle, top side", Nearest(6238, 10301).NameFrom(MapSide.Blue));
@@ -40,7 +40,7 @@ public sealed class RiftBrushTests
         Assert.AreEqual("a brush in their jungle, bot side", Nearest(6544, 4660).NameFrom(MapSide.Red));
         Assert.IsTrue(Nearest(6544, 4660).InEnemyJungle(MapSide.Red));
         Assert.IsFalse(Nearest(6544, 4660).InEnemyJungle(MapSide.Blue));
-        Assert.AreEqual("the bot lane brush", Nearest(12455, 1321).NameFrom(MapSide.Red), "lanes and river are the same from either side");
+        Assert.AreEqual("the bot lane brush, their half, short of their outer turret", Nearest(12455, 1321).NameFrom(MapSide.Red), "a lane brush is placed from the side played");
     }
 
     [TestMethod]

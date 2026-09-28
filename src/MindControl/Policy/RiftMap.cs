@@ -202,8 +202,39 @@ public sealed class RiftMap
         if (BaseOf(x, y) is { } side)
             return side == Side ? BasePlace : EnemyBasePlace;
         if ((LaneOf(x, y) ?? RiftBrush.At(x, y)?.Lane) is { } lane)
-            return $"{lane} lane";
+            return LanePlace(lane, x, y);
         return OffLanePlace(x, y);
+    }
+
+    /// <summary>
+    /// Where along a lane a point is, by the lane's six turret spots, as
+    /// <see cref="Place"/> names it: "bot lane, at your outer turret" within a
+    /// turret's range of one along the lane, else between two ("bot lane,
+    /// between your inner and outer turrets"); between the two outer turrets,
+    /// by the half of the lane it is in ("bot lane, your half, past your
+    /// outer turret"). Spots, not turrets: a turret that has fallen still
+    /// names its spot.
+    /// </summary>
+    public string LanePlace(string lane, double x, double y)
+    {
+        var progress = Along(lane, x, y).Progress;
+        var length = Length(lane);
+        // From the player's nexus to the enemy's: their own inhibitor turret first.
+        var spots = Enumerable.Reverse(Tiers).Select(tier => (Whose: "your", Tier: tier, OurTurret(lane, tier)))
+            .Concat(Tiers.Select(tier => (Whose: "their", Tier: tier, TheirTurret(lane, tier))))
+            .Select(s => (s.Whose, s.Tier, Progress: Along(lane, s.Item3.X, s.Item3.Y).Progress))
+            .ToArray();
+        var at = spots.MinBy(s => Math.Abs(progress - s.Progress));
+        if (Math.Abs(progress - at.Progress) * length <= TurretRange)
+            return $"{lane} lane, at {at.Whose} {at.Tier} turret";
+        var next = Array.FindIndex(spots, s => progress < s.Progress);
+        return $"{lane} lane, " + next switch
+        {
+            0 => "behind your inhibitor turret",
+            -1 => "past their inhibitor turret",
+            3 => progress < 0.5 ? "your half, past your outer turret" : "their half, short of their outer turret",
+            _ => $"between {spots[next - 1].Whose} {spots[next - 1].Tier} and {spots[next].Tier} turrets",
+        };
     }
 
     /// <summary>
@@ -233,6 +264,10 @@ public sealed class RiftMap
     /// <summary>The player's own turret of a tier in a lane.</summary>
     public TurretSpot OurTurret(string lane, string tier) =>
         Turrets.First(t => t.Owner == Side && t.Lane == lane && t.Tier == tier);
+
+    /// <summary>The enemy's turret of a tier in a lane.</summary>
+    public TurretSpot TheirTurret(string lane, string tier) =>
+        Turrets.First(t => t.Owner != Side && t.Lane == lane && t.Tier == tier);
 
     /// <summary>The enemy's eleven turrets.</summary>
     public IEnumerable<TurretSpot> TheirTurrets => Turrets.Where(t => t.Owner != Side);

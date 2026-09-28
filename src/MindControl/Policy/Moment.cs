@@ -186,6 +186,10 @@ public sealed record LaneFacts(string Lane, double DistanceUnits, string? Screen
     /// when the player stands on it).
     /// </summary>
     public string? WalkTo { get; init; }
+
+    /// <summary>Where on the map that spot is (<see cref="RiftMap.Place"/>): "bot lane, at your outer turret".</summary>
+    public string? WalkToPlace { get; init; }
+
     public double? WalkToUnitsAway { get; init; }
     public string? WalkToScreenDirection { get; init; }
 
@@ -223,6 +227,9 @@ public sealed record WaveFacts(
     /// shows none of theirs in the lane.
     /// </summary>
     public string? TheirFrontPlace { get; init; }
+
+    /// <summary>Where on the map <see cref="MeetAt"/> is (<see cref="RiftMap.Place"/>); null with no <see cref="MeetAt"/>.</summary>
+    public string? MeetPlace { get; init; }
 
     /// <summary>How far the enemy's front is from the player, and which way on the screen.</summary>
     public double? TheirFrontUnitsAway { get; init; }
@@ -299,6 +306,9 @@ public sealed record CoverFacts(int? AlliesNearerTheEnemy, IReadOnlyList<string>
 /// </summary>
 public sealed record Refuge(string Name, string Kind, double DistanceUnits, string? ScreenDirection, bool TowardYourBase)
 {
+    /// <summary>Where on the map the spot a run back aims at is (<see cref="RiftMap.Place"/>).</summary>
+    public string? Place { get; init; }
+
     public double? NearestEnemyUnits { get; init; }
 }
 
