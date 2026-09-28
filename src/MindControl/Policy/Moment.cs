@@ -264,7 +264,8 @@ public sealed record BrushNear(string Name, string Kind, string Place, double Di
 /// minimap places nearer the enemy champion nearest the player on the screen
 /// than the player is: 0 is the player out in front; null with no enemy
 /// champion on the screen. <see cref="YouAreBy"/> names the cover the player
-/// is already at: their nearest standing turret, their nearest ally, or "your
+/// is already at: their nearest standing turret (inside its range), their
+/// nearest ally, or "your
 /// minions" when they stand behind their own foremost minion in a lane.
 /// <see cref="Refuges"/> are the rest, nearest first.
 /// </summary>

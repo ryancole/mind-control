@@ -512,17 +512,19 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
-    public void A_walk_to_the_lane_they_stand_in_is_no_step()
+    public void A_player_at_the_lanes_safe_spot_is_not_offered_the_walk()
     {
-        var (policy, jev) = Coach();
+        var (policy, jev, heard) = Watched();
         jev.Script = Choose("walk_to_lane", ("lane", "bot"));
         for (var t = 200.0; t <= 203.0 + 1e-9; t = Math.Round(t + 0.1, 3))
             policy.OnFrame(Clocked(t, 150, Self(x: 12400, y: 1900)));
-        var asked = jev.Asks.Last(a => a.Questions.ContainsKey("lane"));
-        var where = asked.State.Whereabouts!;
+
+        var where = jev.Last.State.Whereabouts!;
         Assert.AreEqual("bot lane", where.Place);
-        Assert.IsNull(where.Lanes.Single(l => l.Lane == "bot").ScreenDirection);
-        StringAssert.Contains((string)((ChoiceQuestion)asked.Questions["lane"]).Criteria["bot"]!, "standing in it");
+        Assert.AreEqual("past it", where.Lanes.Single(l => l.Lane == "bot").YouAre);
+        Assert.IsFalse(jev.Asks.Any(a => Offered(a).Contains("walk_to_lane")), "a pick would be no step, asked again and again");
+        Assert.AreEqual("already past your outer turret in bot lane",
+            heard[^1].Branches!.Single(b => b.Option == "walk_to_lane").Gate);
         Assert.IsEmpty(policy.DrainMoves());
     }
 
@@ -2158,6 +2160,24 @@ public sealed class JevPolicyTests
         policy.OnFrame(Clocked(200, 300, Self(x: 10300, y: 1300) with { Minions = [Bar(MinionTeam.Blue, 10800, 1300)] }));
 
         CollectionAssert.AreEqual(new[] { "your bot outer turret", "your minions" }, jev.Last.State.Cover!.YouAreBy.ToArray());
+    }
+
+    [TestMethod]
+    public void Anywhere_in_their_turrets_range_is_under_it_and_nothing_to_run_back_from()
+    {
+        var (policy, jev, heard) = Watched();
+        jev.Script = Choose("run_away");
+        // 650 units out in front of the bot outer turret: inside its range,
+        // though well past the spot a run back to it would aim at.
+        var turret = RiftMap.Turrets.Single(t => t.Owner == MapSide.Blue && t.Lane == "bot" && t.Tier == TurretTier.Outer);
+        for (var t = 200.0; t <= 203.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 300, Self(x: turret.X + 650, y: turret.Y) with { Health = 0.3 },
+                Enemy() with { WorldX = turret.X + 1500, WorldY = turret.Y }));
+
+        CollectionAssert.Contains(jev.Last.State.Cover!.YouAreBy.ToArray(), "your bot outer turret");
+        Assert.IsFalse(jev.Asks.Any(a => Offered(a).Contains("run_away")), "a step back from under it is no retreat");
+        Assert.AreEqual("already under your bot outer turret", heard[^1].Branches!.Single(b => b.Option == "run_away").Gate);
+        Assert.IsEmpty(policy.DrainMoves());
     }
 
     // --- Said, not yet done ---

@@ -1030,14 +1030,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     /// <summary>
     /// Offered while the player is alive and placed on the map, the game
-    /// clock is running (before it the player cannot move), and no movement
-    /// click came in the last <see cref="JevOptions.MoveEverySeconds"/>:
-    /// whether they stand or walk, and whatever the coach's last step was.
-    /// Whether they belong somewhere else is the root's call and which lane
-    /// the follow-up's; a pick is one step on the ground toward the farthest
-    /// spot up that lane the player can walk to safely
-    /// (<see cref="RiftMap.WalkTo"/>), and none when they are already at it
-    /// or past it. The trip is a string of such steps, one a second, each
+    /// clock is running (before it the player cannot move), no movement
+    /// click came in the last <see cref="JevOptions.MoveEverySeconds"/>, and
+    /// they are not already at or past a lane's safe spot: whether they stand
+    /// or walk, and whatever the coach's last step was. Whether they belong
+    /// somewhere else is the root's call and which lane the follow-up's; a
+    /// pick is one step on the ground toward the farthest spot up that lane
+    /// the player can walk to safely (<see cref="RiftMap.WalkTo"/>). The trip is a string of such steps, one a second, each
     /// decided afresh.
     /// </summary>
     private Branch WalkToLane(FrameEnvelope frame, ChampionRow self, Moment moment, double asked)
@@ -1052,6 +1051,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             return Closed(option, SteppedAgo(frame.VideoTime));
         if (moment.Whereabouts is not { } whereabouts)
             return Closed(option, "whereabouts not known");
+        // At or past a lane's safe spot is laning, not idling: a pick would
+        // be no step at all, asked again the next moment.
+        if (whereabouts.Lanes.FirstOrDefault(l => l.YouAre is "at it" or "past it") is { } there)
+            return Closed(option, $"already {(there.YouAre == "at it" ? "at" : "past")} {there.WalkTo} in {there.Lane} lane");
 
         var criteria = new ChoiceCriteria();
         foreach (var lane in whereabouts.Lanes)
@@ -1072,8 +1075,6 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 // farthest turret standing, or behind the minions pushed beyond it --
                 // never the lane's nearest point, which from base is only its mouth.
                 var facts = whereabouts.Lanes.First(l => l.Lane == lane.Choice);
-                if (facts.YouAre is "at it" or "past it")
-                    return;   // already as far up it as is safe: nothing to demonstrate
                 var (progress, name) = WalkTo(lane.Choice, facts.Wave);
                 var spot = Map.At(lane.Choice, progress);
                 // World y grows north, screen y grows down: flip for the step.
@@ -1286,8 +1287,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     /// <summary>
     /// Offered while the player is alive and placed with an enemy champion on
-    /// the screen, a refuge to run back to (<see cref="Cover"/>), and no
-    /// movement click in the last <see cref="JevOptions.MoveEverySeconds"/>.
+    /// the screen, a refuge to run back to (<see cref="Cover"/>), no
+    /// movement click in the last <see cref="JevOptions.MoveEverySeconds"/>,
+    /// and the player not already under one of their own turrets.
     /// Whether they stand out ahead of their minions and their team is the
     /// root's call, from <see cref="Moment.Cover"/>, and which refuge the
     /// follow-up's; a pick is one step on the ground toward it, and the next
@@ -1303,7 +1305,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             return Closed(option, "no enemy on the screen");
         if (Stepping(frame.VideoTime))
             return Closed(option, SteppedAgo(frame.VideoTime));
-        var refuges = Cover(frame, self).Away;
+        var (by, refuges) = Cover(frame, self);
+        // Under their own turret is the cover a retreat ends at: from there,
+        // any step "back" is to a worse refuge, or no step at all.
+        if (RiftMap.Turrets.FirstOrDefault(t => t.Owner == _side && by.Contains(t.NameFrom(_side))) is { } under)
+            return Closed(option, $"already under {under.NameFrom(_side)}");
         if (refuges.Length == 0)
             return Closed(option, "no refuge to run back to");
 
@@ -1353,8 +1359,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// <summary>
     /// The cover around the player: the nearest of their own turrets still
     /// standing, the nearest ally the minimap places, and their own minions in
-    /// the lane they stand in. Those the player is already by
-    /// (<see cref="AtARefugeUnits"/>, or behind their own foremost minion) are
+    /// the lane they stand in. Those the player is already by (in the
+    /// turret's range, <see cref="AtARefugeUnits"/> of an ally, or behind
+    /// their own foremost minion) are
     /// named in <c>By</c>; the rest are refuges to run back to, nearest first,
     /// each with the spot a step aims at: under the turret, the ally, or just
     /// behind the foremost minion when the player stands in front of it.
@@ -1372,11 +1379,18 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 .Where(t => t.Owner == _side && OurTurretStanding(t) != false)
                 .MinBy(t => double.Hypot(t.X - x, t.Y - y)) is { } turret)
         {
-            var toHome = double.Hypot(home.X - turret.X, home.Y - turret.Y);
-            var (tx, ty) = toHome < 1 ? (turret.X, turret.Y)
-                : (turret.X + (home.X - turret.X) / toHome * BehindATurretUnits,
-                   turret.Y + (home.Y - turret.Y) / toHome * BehindATurretUnits);
-            spots.Add((turret.NameFrom(_side), "turret", tx, ty));
+            // Anywhere in its range is under it: the turret shoots whoever
+            // chases them there, so a step to the spot behind it is no retreat.
+            if (double.Hypot(turret.X - x, turret.Y - y) <= RiftMap.TurretRange)
+                by.Add(turret.NameFrom(_side));
+            else
+            {
+                var toHome = double.Hypot(home.X - turret.X, home.Y - turret.Y);
+                var (tx, ty) = toHome < 1 ? (turret.X, turret.Y)
+                    : (turret.X + (home.X - turret.X) / toHome * BehindATurretUnits,
+                       turret.Y + (home.Y - turret.Y) / toHome * BehindATurretUnits);
+                spots.Add((turret.NameFrom(_side), "turret", tx, ty));
+            }
         }
         if (frame.Champions
                 .Where(c => c.Team == self.Team && c.TrackId != self.TrackId && c.Alive != false
@@ -1396,7 +1410,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var fromHome = double.Hypot(x - home.X, y - home.Y);
         var measured = spots.Select(s => (s, Distance: double.Hypot(s.X - x, s.Y - y))).ToArray();
-        by.InsertRange(0, measured.Where(p => p.Distance <= AtARefugeUnits).Select(p => p.s.Name));
+        by.InsertRange(by.IndexOf("your minions") is >= 0 and var mine ? mine : by.Count,
+            measured.Where(p => p.Distance <= AtARefugeUnits).Select(p => p.s.Name));
         var away = measured
             .Where(p => p.Distance > AtARefugeUnits)
             .OrderBy(p => p.Distance)
