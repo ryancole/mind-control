@@ -31,7 +31,7 @@ var servePort = 8724;
 HashSet<string>? kinds =
 [
     // Identity corrections and rosters are bookkeeping the policy and the
-    // dashboard keep; the rest are the coaching stages (level_up is kept for
+    // brain view keep; the rest are the coaching stages (level_up is kept for
     // the log, where it explains the skill_point half a second behind it). Listed explicitly,
     // which means a kind spectral-sight adds later is dropped until it is
     // named here -- worth knowing, because the symptom is silence rather
@@ -113,8 +113,8 @@ for (var i = 0; i < args.Length; i++)
                   --record [file|none] append the ghost's mouse and key input as a misdirection
                                      protocol file (.msdr)  (default data/msdr/ghost-<stamp>.msdr)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
-                  --serve <port>     SSE stream of coaching feedback for the dashboard's
-                                     coaching panel, and the brain view at / (default 8724; 0 disables)
+                  --serve <port>     SSE stream of coaching feedback at /stream, and the
+                                     brain view at / (default 8724; 0 disables)
                   --kinds <a,b|all>  event kinds passed to the policy (default: the ones the coach uses)
 
                 The Jev API key is read from this project's user secrets (entry "Jev"):

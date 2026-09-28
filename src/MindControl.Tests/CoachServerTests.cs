@@ -6,7 +6,7 @@ namespace MindControl.Tests;
 
 /// <summary>
 /// The brain view's plumbing: the page is served, and the thoughts reach
-/// <c>/brain</c> and stay off <c>/stream</c>, which the dashboard reads.
+/// <c>/brain</c> and stay off <c>/stream</c>, the lean advice-and-status stream.
 /// </summary>
 [TestClass]
 public sealed class CoachServerTests
@@ -40,7 +40,7 @@ public sealed class CoachServerTests
     }
 
     [TestMethod]
-    public async Task Thoughts_reach_the_brain_stream_and_not_the_dashboards()
+    public async Task Thoughts_reach_the_brain_stream_and_not_the_plain_one()
     {
         var port = FreePort();
         using var server = new CoachServer(port, "jev-test");

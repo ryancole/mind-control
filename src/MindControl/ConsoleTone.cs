@@ -6,7 +6,7 @@ public enum Tone { Plain, Advice, Error }
 /// <summary>
 /// Colours console lines by <see cref="Tone"/>: advice green, errors red.
 /// Only the console is coloured -- a redirected stream, the --log file and
-/// the stream to the dashboard stay plain text -- and NO_COLOR turns it off.
+/// the coach stream stay plain text -- and NO_COLOR turns it off.
 /// Lines come from the feed loop and from Jev's answers at once, so setting
 /// the colour, writing and resetting it happen under one lock.
 /// </summary>
