@@ -127,7 +127,8 @@ at a time:
   runs to the pick and, if it came to a deed, on to the hand that did it
   (keyboard, a click on an enemy, a click on the ground, an attack-move, or
   a cue). A bolt and a shot are the reflexes underneath, with their yes/no
-  answers against `YesAt`.
+  answers against `YesAt`. A `carry_on` pick is no order and is not drawn:
+  the view stays on the last answer that picked something else.
 - **Hands**: every key, step and cue, with the frames it recorded; tick
   *hesitations* to see the picks that fell below `DecideAt` too.
 - **Brainwaves**: every root answer over the last minute of video, one
