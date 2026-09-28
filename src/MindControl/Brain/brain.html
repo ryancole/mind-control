@@ -1048,6 +1048,10 @@ function onLine(line) {
     }
     case "roster":
       break;
+    case "game":
+      latestState = null;
+      addDeed("status", "⟳", `game ${line.game} began`, when(line), "everything about the last game is forgotten");
+      break;
   }
 }
 

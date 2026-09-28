@@ -79,6 +79,11 @@ public sealed record WorldBounds
 public sealed record ChampionRow
 {
     public double VideoTime { get; init; }
+
+    /// <summary>Which match of the run the row is from: 0 for the first, one
+    /// more at each new match. Absent (older timelines) reads as 0.</summary>
+    public int Game { get; init; }
+
     public int? GameTime { get; init; }
     public bool GameTimeObserved { get; init; }
     public int TrackId { get; init; }
@@ -345,6 +350,21 @@ public sealed record FrameEnvelope
     public long Seq { get; init; }
     public double VideoTime { get; init; }
     public double? CapturedAt { get; init; }
+
+    /// <summary>
+    /// Which match of the run this frame is from: 0 for the first, one more
+    /// each time a new match starts (a VOD holding several, or a live run left
+    /// up across a queue). On every frame, rowless ones included; absent
+    /// (older timelines) reads as 0. Within a run it never goes down.
+    /// </summary>
+    public int Game { get; init; }
+
+    /// <summary>
+    /// The match clock, in seconds. Null before the first reading and between
+    /// matches (loading screen, lobby, post-game: 20 s with no clock on the
+    /// screen), and back to about 0 at a new match, so it neither stays set
+    /// once set nor only ever rises.
+    /// </summary>
     public int? GameTime { get; init; }
     public bool GameTimeObserved { get; init; }
     public int? AlliesDead { get; init; }
@@ -367,6 +387,9 @@ public sealed record GameEvent
     public string? Team { get; init; }
     public string? Champion { get; init; }
     public int? TrackId { get; init; }
+
+    // new_game: the match that began. Team, Champion and TrackId are null.
+    public int? Game { get; init; }
 
     // identified
     public bool? IsSelf { get; init; }
@@ -477,4 +500,14 @@ public static class EventKind
 
     /// <summary>A fallen nexus turret stands again. Lane turrets never do.</summary>
     public const string TurretRebuilt = "turret_rebuilt";
+
+    /// <summary>
+    /// A new match began: everything held about the last one -- tracks,
+    /// names, roster, liveness, levels, turrets, skill points, the farm -- is
+    /// about another game. On the new match's first frame with rows, before
+    /// any other event on it; never for game 0. Carries <see cref="GameEvent.Game"/>
+    /// and no team, champion or track. Seeking a VOD back to the very start
+    /// of the same match raises it too.
+    /// </summary>
+    public const string NewGame = "new_game";
 }

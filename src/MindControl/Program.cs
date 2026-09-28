@@ -24,7 +24,6 @@ string? auditPath = defaultAuditPath;
 // The ghost's input in misdirection's wire format. On by default: this file is
 // the demonstration the whole pipeline exists to produce.
 string? recordPath = $"data/msdr/ghost-{runStamp}.msdr";
-string? selfChampion = null;
 // Pinned, not the alias: the thresholds in JevOptions were tuned against one
 // release's calibration, and jev-latest moves without notice.
 var model = JevModels.Jev1_13_0;
@@ -38,6 +37,10 @@ HashSet<string>? kinds =
     // named here -- worth knowing, because the symptom is silence rather
     // than an error.
     EventKind.Identified, EventKind.Roster,
+    // A new match: the reactor makes the policy forget the last one. The
+    // envelope's game says the same a frame later, so dropping it would only
+    // delay the reset, but it is named here all the same.
+    EventKind.NewGame,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
     EventKind.SkillPoint, EventKind.SkillSpent,
     // No question is asked of these: last hits are counted into the state
@@ -76,9 +79,6 @@ for (var i = 0; i < args.Length; i++)
         case "--record":
             recordPath = FilePath(ref i, $"data/msdr/ghost-{runStamp}.msdr");
             break;
-        case "--self":
-            selfChampion = args[++i];
-            break;
         case "--model":
             model = args[++i];
             break;
@@ -112,7 +112,6 @@ for (var i = 0; i < args.Length; i++)
                                      (default data/audits/audit-<stamp>.jsonl)
                   --record [file|none] append the ghost's mouse and key input as a misdirection
                                      protocol file (.msdr)  (default data/msdr/ghost-<stamp>.msdr)
-                  --self <champion>  the coached player's champion (default: majority-vote is_self)
                   --model <id>       the Jev model to ask (default jev-1.13.0)
                   --serve <port>     SSE stream of coaching feedback for the dashboard's
                                      coaching panel, and the brain view at / (default 8724; 0 disables)
@@ -167,7 +166,7 @@ using var recording = recordPath is null
     : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
 // One policy owns everything -- hands and feet -- because they are one set
 // of questions about one moment, and the model answers them together.
-var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
+var policy = new JevPolicy(jev, new JevOptions(),
     audit is null ? null : audit.Write);
 if (audit is not null)
     policy.Farmed += audit.WriteFarm;
