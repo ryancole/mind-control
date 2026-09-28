@@ -97,11 +97,11 @@ at its median latency), whatever the speed.
 
 While it runs it also serves the coaching feedback as SSE at
 `http://localhost:8724/stream` (`--serve <port>` to move it, `--serve 0` to
-turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
-open `http://127.0.0.1:8723/` and the cues appear next to the event log. Every line
-that is advice carries `model`, the Jev release whose answer it is, and the
-panel marks those with a ✦; status and roster lines are the code's own and
-go unmarked. A `game` line — `{"t":"game","game":1,"video_time":…}` — says a
+turn it off). To watch it in a browser, open the brain view at
+`http://localhost:8724/` (below), which reads the same lines. Every line
+that is advice carries `model`, the Jev release whose answer it is, so a
+client can tell the model's answers apart; status and roster lines are the
+code's own and carry none. A `game` line — `{"t":"game","game":1,"video_time":…}` — says a
 new match began in the same run (a VOD holding several, or a live run left up
 across a queue): the coach has forgotten the last one, its rosters leave the
 replay, and a panel clears its header. An `asking` line — `{"t":"asking","occasions":["decide","bolt"]}` —
@@ -144,9 +144,10 @@ line per question (`Thought` in `Policy/Thought.cs`): once when it is sent,
 with the branches considered, the questions and the state, and once when it
 is answered, with the answers, the verdict (`acted`, `carry_on`, `weak`,
 `nothing`, `no answer`, `stale`) and what the hands did. A root with nothing to
-offer is sent once as `idle`. Thoughts stay off `/stream`, so the dashboard's
-panel is unchanged. The page is one self-contained file,
-`src/MindControl/Brain/brain.html`, embedded in the build; open it as
+offer is sent once as `idle`. Thoughts stay off `/stream`: they are bulky (a
+state and its answers per question, several a second), and `/stream` stays
+the lean advice-and-status stream for anything else that subscribes. The page
+is one self-contained file, `src/MindControl/Brain/brain.html`, embedded in the build; open it as
 `/?demo` to see it run on made-up thoughts with nothing else running.
 
 ## Coaching by Jev

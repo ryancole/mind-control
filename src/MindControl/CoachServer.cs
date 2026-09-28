@@ -8,9 +8,8 @@ namespace MindControl;
 
 /// <summary>
 /// Publishes the coaching feedback as a local SSE stream (`/stream`) so a
-/// browser — e.g. the spectral-sight dashboard's coaching panel — can show it
-/// live. Strictly output: it serves what the reactor already decided and
-/// accepts nothing back; the observe-and-advise boundary is unchanged.
+/// browser or any other local client can show it live. Strictly output: it
+/// serves what the reactor already decided and accepts nothing back; the observe-and-advise boundary is unchanged.
 /// Every line that is advice (a cue, a key, a step) carries <c>model</c>, the
 /// Jev model whose answer it is, so a panel can mark what the model said
 /// apart from what the code reports (status, roster). A key or a step also
@@ -23,8 +22,9 @@ namespace MindControl;
 /// <para>The brain view is served here too: <c>/</c> is the page
 /// (<c>Brain/brain.html</c>, embedded) and <c>/brain</c> its stream, every
 /// line <c>/stream</c> carries plus a <c>thought</c> line per question the
-/// coach asked (<see cref="Thought"/>). Thoughts stay off <c>/stream</c>, so
-/// the dashboard's panel reads what it always has.</para>
+/// coach asked (<see cref="Thought"/>). Thoughts stay off <c>/stream</c>: they are
+/// bulky, and <c>/stream</c> stays the lean advice-and-status contract for
+/// other subscribers.</para>
 /// </summary>
 public sealed class CoachServer : IDisposable
 {
@@ -53,8 +53,8 @@ public sealed class CoachServer : IDisposable
     }
 
     /// <summary>
-    /// Coaching in words only -- see <see cref="Policy.CoachCue"/>. The
-    /// dashboard writes it to the log.
+    /// Coaching in words only -- see <see cref="Policy.CoachCue"/>. A
+    /// client writes it to its log.
     /// </summary>
     public void PublishCue(CoachCue cue, int? gameTime) =>
         Publish(new
@@ -102,7 +102,7 @@ public sealed class CoachServer : IDisposable
     public void PublishStatus(string state, string? reason = null) =>
         Publish(new { T = "status", State = state, Reason = reason });
 
-    /// <summary>A team's locked five, for the dashboard's header — state, not advice.</summary>
+    /// <summary>A team's locked five, for a client's header — state, not advice.</summary>
     public void PublishRoster(GameEvent evt) =>
         Publish(new
         {
@@ -239,7 +239,7 @@ public sealed class CoachServer : IDisposable
             var brain = path == "/brain";
 
             response.ContentType = "text/event-stream";
-            // The dashboard is served from another local origin (the feed's).
+            // A page served from another local origin can subscribe too.
             response.AppendHeader("Access-Control-Allow-Origin", "*");
             response.AppendHeader("Cache-Control", "no-cache");
             response.SendChunked = true;
