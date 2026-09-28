@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Jev;
 using MindControl.Feed;
 
@@ -235,6 +236,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private int? _firstLevelAsked;
     private readonly Dictionary<string, int> _pointsPlaced = [];
 
+    // Perception: the farm. The creep score the HUD last printed, and the
+    // enemy minions that died on the screen in the last minute, by when their
+    // bar was last seen and whether the player's score rose for it.
+    private int? _cs;
+    private readonly List<(double At, bool Taken)> _farm = [];
+
+    // The roots of the last few seconds, for what a missed last hit is put
+    // down to: whether attack was offered (or what closed it) and what was
+    // picked. A pick is filled in when its answer lands.
+    private sealed class RootSeen(double at, string? attackGate)
+    {
+        public double At { get; } = at;
+        public string? AttackGate { get; } = attackGate;
+        public string? Pick { get; set; }
+    }
+    private readonly List<RootSeen> _roots = [];
+
     // What the coach said since the last drain.
     private readonly List<CoachCue> _cues = [];
     private readonly List<KeyPress> _keys = [];
@@ -254,6 +272,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private string? _seatSeen;
     private readonly SortedDictionary<string, int> _answers = new(StringComparer.Ordinal);
     private double _lastDecideAt = double.NegativeInfinity;
+
+    // Last hits since the health log last drained them, and each miss by what
+    // it was put down to; and the totals since the coach started, which
+    // outlive a resync as the votes do.
+    private int _takenSeen, _missedSeen, _takenTotal, _missedTotal;
+    private readonly SortedDictionary<string, int> _missedWhy = new(StringComparer.Ordinal);
 
     // What the coach last did, by kind, for the pace of the next.
     private double _lastMoveAt = double.NegativeInfinity;
@@ -287,6 +311,13 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// decides nothing.
     /// </summary>
     public event Action<Thought>? Thinking;
+
+    /// <summary>
+    /// Each enemy minion that died on the player's screen low enough to be a
+    /// last hit, taken or missed, with what a miss is put down to: the
+    /// measure of the farming, for the audit. It decides nothing.
+    /// </summary>
+    public event Action<FarmOutcome>? Farmed;
 
     private int _thoughtId;
     private double _lastIdleAt = double.NegativeInfinity;
@@ -361,6 +392,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _restAt = null;
         _turrets = null;
         _minionTracks.Clear();
+        _cs = null;
+        _farm.Clear();
+        _roots.Clear();
         ForgetPoint();
         _firstLevelAsked = null;
         _pointsPlaced.Clear();
@@ -393,6 +427,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (Carried(frame, r => r.Turrets) is { } turrets)
             _turrets = turrets;
         _minionTracks.Update(frame.VideoTime, Carried(frame, r => r.Minions));
+        // The HUD's score, on whichever row carries it: it is the player's own.
+        if (frame.Champions.Select(r => r.Cs).FirstOrDefault(cs => cs is not null) is { } cs)
+            _cs = cs;
         _framesSeen++;
         var seat = Self();
         _seatSeen = seat is null ? null : seat.Champion ?? $"unnamed track {seat.TrackId}";
@@ -439,6 +476,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             case EventKind.TurretRebuilt:
                 OnTurret(evt);
                 break;
+            case EventKind.LastHit:
+            case EventKind.MissedCs:
+                OnFarmed(evt);
+                break;
         }
         Settle();
     }
@@ -453,8 +494,17 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         var answers = _answers.Count == 0 ? "" : $" ({string.Join(", ", _answers.Select(a => $"{a.Key} {a.Value}"))})";
         var nothing = _nothingToOffer > 0 ? $", nothing to offer {_nothingToOffer}" : "";
         var line = $"{seat}; asked {_rootsAsked}{answers}{nothing}";
+        if (_takenSeen + _missedSeen > 0)
+        {
+            var why = _missedWhy.Count == 0 ? "" : $" ({string.Join(", ", _missedWhy.Select(w => $"{w.Key} {w.Value}"))})";
+            line += $"; farm: {_takenSeen} taken, {_missedSeen} missed{why}";
+        }
+        if (_takenTotal + _missedTotal > 0)
+            line += $"; last hits {_takenTotal} of {_takenTotal + _missedTotal} since start";
         _framesSeen = _framesWithoutSelf = _nothingToOffer = _rootsAsked = 0;
+        _takenSeen = _missedSeen = 0;
         _answers.Clear();
+        _missedWhy.Clear();
         return line;
     }
 
@@ -533,8 +583,12 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 .Select(b => b.Gate is null && b.Option != "level_up" ? Closed(b.Option, "channelling a recall") : b)
                 .ToArray();
         var branches = considered.Where(b => b.Gate is null).ToArray();
+        var root = new RootSeen(asked, considered.First(b => b.Option == "attack").Gate);
+        _roots.RemoveAll(r => asked - r.At > RootsKeptSeconds);
+        _roots.Add(root);
         if (branches.Length == 0)
         {
+            root.Pick = "nothing to offer";
             _nothingToOffer++;
             // Nothing is asked, so nothing paces this: the brain view hears
             // of it no more often than a root would be asked.
@@ -578,19 +632,23 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             if (!response.TryGet<ChoiceAnswer>("decide", out var decide))
             {
                 Tally("unreadable");
+                root.Pick = "unreadable";
                 return "unreadable";
             }
             if (decide!.Choice == CarryOn)
             {
                 Tally(CarryOn);
+                root.Pick = CarryOn;
                 return CarryOn;
             }
             if (decide.Probabilities.GetValueOrDefault(decide.Choice) < _options.DecideAt)
             {
                 Tally($"{decide.Choice} (weak)");
+                root.Pick = $"{decide.Choice} (weak)";
                 return "weak";
             }
             Tally(decide.Choice);
+            root.Pick = decide.Choice;
             branches.FirstOrDefault(b => b.Option == decide.Choice)?.Act(response);
             return null;
         });
@@ -1843,6 +1901,91 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         _cues.Add(new CoachCue(evt.VideoTime, 1, $"{whose} {which} {what}"));
     }
 
+    // --- The farm: last hits taken and missed ---
+
+    /// <summary>How far back, in video seconds, the roots are kept: past a last hit's window and the event's lag behind it.</summary>
+    private const double RootsKeptSeconds = 5;
+
+    /// <summary>
+    /// How long before a minion's bar was last seen the roots count toward
+    /// what its last hit is put down to: the wind-up and a step or two.
+    /// </summary>
+    private const double LastHitWindowSeconds = 1.5;
+
+    /// <summary>How far back, in video seconds, the last hits are counted for the state.</summary>
+    private const double FarmWindowSeconds = 60;
+
+    /// <summary>
+    /// An enemy minion died on the player's screen low enough to be a last
+    /// hit, and their score rose for it or did not. Counted for the state and
+    /// the log, and put down to what the coach did in the moments before its
+    /// bar was last seen (<see cref="LastHitWindowSeconds"/>), for the audit.
+    /// The event comes about a second and a half after the death, and the
+    /// coach's orders never reach the game it watches, so this measures the
+    /// player; what it is put down to measures the coach.
+    /// </summary>
+    private void OnFarmed(GameEvent evt)
+    {
+        var at = evt.At ?? evt.VideoTime;
+        var taken = evt.Kind == EventKind.LastHit;
+        _farm.Add((at, taken));
+        var why = PutDownTo(at);
+        if (taken)
+        {
+            _takenSeen++;
+            _takenTotal++;
+        }
+        else
+        {
+            _missedSeen++;
+            _missedTotal++;
+            _missedWhy[why] = _missedWhy.GetValueOrDefault(why) + 1;
+        }
+        Farmed?.Invoke(new FarmOutcome(evt.VideoTime, at, evt.Kind, evt.Health, why));
+    }
+
+    /// <summary>
+    /// What the coach did about a last hit whose bar was last seen at
+    /// <paramref name="at"/>: ordered an attack; offered one that lost to
+    /// another pick (the most common); or offered none, and the gate that
+    /// most often closed it, its numbers left out so like gates count
+    /// together. "not asked" when no root came in the window.
+    /// </summary>
+    private string PutDownTo(double at)
+    {
+        var window = _roots.Where(r => r.At >= at - LastHitWindowSeconds && r.At <= at).ToArray();
+        if (window.Length == 0)
+            return "not asked";
+        if (window.Any(r => r.Pick == "attack"))
+            return "coach attacked";
+        var offered = window.Where(r => r.AttackGate is null).ToArray();
+        if (offered.Length > 0)
+            return $"attack offered, picked {MostCommon(offered.Select(r => r.Pick ?? "no answer"))}";
+        return $"attack closed: {MostCommon(window.Select(r => Regex.Replace(r.AttackGate!, @"\d+(\.\d+)?", "#")))}";
+
+        static string MostCommon(IEnumerable<string> said) =>
+            said.GroupBy(s => s).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal).First().Key;
+    }
+
+    /// <summary>
+    /// The farm as the state tells it: the HUD's score, a rate once the clock
+    /// is past 1:30, and the last minute's last hits by whether they were
+    /// taken. Null when the score has not been read and nothing has died.
+    /// </summary>
+    private FarmingFacts? FarmingNow(int? gameTime, double now)
+    {
+        _farm.RemoveAll(f => now - f.At > FarmWindowSeconds);
+        if (_cs is null && _farm.Count == 0)
+            return null;
+        var lastMiss = _farm.Where(f => !f.Taken).Select(f => (double?)f.At).LastOrDefault();
+        return new FarmingFacts(
+            _cs,
+            _cs is { } cs && gameTime is { } seconds && seconds >= 90 ? Math.Round(cs * 60.0 / seconds, 1) : null,
+            _farm.Count(f => f.Taken),
+            _farm.Count(f => !f.Taken),
+            lastMiss is { } miss ? Math.Round(Math.Max(0, now - miss), 1) : null);
+    }
+
     // --- Asking, and collecting the answers ---
 
     /// <summary>
@@ -2085,6 +2228,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             Occasion = occasion,
             Setting = Moment.SettingFrom(_side),
             SkillPoint = SkillPointNow(self, now),
+            Farming = FarmingNow(frame?.GameTime, now),
         };
     }
 

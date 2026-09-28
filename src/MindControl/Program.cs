@@ -40,8 +40,9 @@ HashSet<string>? kinds =
     EventKind.Identified, EventKind.Roster,
     EventKind.Ability, EventKind.Threat, EventKind.Skillshot, EventKind.LevelUp,
     EventKind.SkillPoint, EventKind.SkillSpent,
-    // Logged only for now: no question is asked of them yet. The turrets'
-    // state rides the self row, which is what the questions are told.
+    // No question is asked of these: last hits are counted into the state
+    // and the audit, and the turrets' state rides the self row, which is what
+    // the questions are told.
     EventKind.LastHit, EventKind.MissedCs, EventKind.TurretDestroyed, EventKind.TurretRebuilt,
 ];
 
@@ -168,6 +169,8 @@ using var recording = recordPath is null
 // of questions about one moment, and the model answers them together.
 var policy = new JevPolicy(jev, new JevOptions { SelfChampion = selfChampion },
     audit is null ? null : audit.Write);
+if (audit is not null)
+    policy.Farmed += audit.WriteFarm;
 using var coach = servePort == 0 ? null : new CoachServer(servePort, model);
 if (coach is not null)
 {
