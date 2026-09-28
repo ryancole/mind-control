@@ -511,7 +511,7 @@ public sealed class JevPolicyTests
         Assert.AreEqual(103.0, ask.State.VideoTime);
         Assert.AreEqual("0:53", ask.State.GameClock);
         var where = ask.State.Whereabouts!;
-        Assert.AreEqual("the fountain", where.Place);
+        Assert.AreEqual("your fountain", where.Place);
         Assert.AreEqual(3.0, where.StoodStillForSeconds);
         CollectionAssert.AreEqual(new[] { "top", "mid", "bot" }, where.Lanes.Select(l => l.Lane).ToArray());
         var bot = where.Lanes.Single(l => l.Lane == "bot");
@@ -519,6 +519,7 @@ public sealed class JevPolicyTests
         Assert.AreEqual("up-right", bot.ScreenDirection);
         CollectionAssert.AreEqual(new[] { "champ3" }, bot.AlliesThere.ToArray());
         Assert.IsEmpty(where.Lanes.Single(l => l.Lane == "mid").AlliesThere);
+        Assert.AreEqual("bot lane", ask.State.Allies.Single().Place, "an ally is placed on the map too");
         var lane = (ChoiceQuestion)ask.Questions["lane"];
         CollectionAssert.AreEquivalent(new[] { "top", "mid", "bot" }, lane.Options.ToArray());
         StringAssert.Contains((string)lane.Criteria["bot"]!, "2244 units away, up-right on the screen; allies there: champ3");
@@ -548,10 +549,10 @@ public sealed class JevPolicyTests
         var length = double.Hypot(x - 400, y - 460);
         Assert.IsTrue(steps[0].AttackMove, "a walk toward the lane stops to attack on the way");
         Assert.AreEqual(
-            "coach would have attack-moved right toward bot lane here: you are in the fountain at 0:50; "
+            "coach would have attack-moved right toward bot lane here: you are in your fountain at 0:50; "
             + $"a good player would be on the way up bot lane (your outer turret, {length:0} units right)",
             steps[0].Sentence);
-        StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.4s in the fountain");
+        StringAssert.StartsWith(steps[2].Reason, "you have stood still for 2.4s in your fountain");
         // Aimed at the farthest turret standing, not the lane's nearest point
         // (its mouth just outside the base); the recording clicks a step that
         // way on the ground.
@@ -965,7 +966,7 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEqual(new[] { "you play from the red side" }, policy.DrainCues().Select(c => c.Reason).ToArray());
         var state = jev.Asks[0].State;
         StringAssert.Contains(state.Setting, "their own base is at the upper right");
-        Assert.AreEqual("the fountain", state.Whereabouts!.Place);
+        Assert.AreEqual("your fountain", state.Whereabouts!.Place);
         var bot = state.Whereabouts.Lanes.Single(l => l.Lane == "bot");
         Assert.AreEqual(("your outer turret", "short of it"), (bot.WalkTo, bot.YouAre));
         var step = policy.DrainMoves().First();
@@ -1314,6 +1315,7 @@ public sealed class JevPolicyTests
         policy.OnFrame(Frame(10, ByTheirTurret(), KarmaUnderTurret()));
         var ask = Attacks(jev).Single();
         Assert.AreEqual("their bot outer turret, 405 units from it", ask.State.VisibleEnemies.Single().UnderTheirTurret);
+        Assert.AreEqual("bot lane", ask.State.VisibleEnemies.Single().Place);
         Assert.IsNull(ask.State.Attack!.YouUnderTheirTurret);
         Assert.IsNull(ask.State.Attack.YourMinionsUnderThatTurret);
     }
@@ -2245,7 +2247,7 @@ public sealed class JevPolicyTests
 
         var cues = policy.DrainCues().Where(c => c.Reason.StartsWith("coach would")).ToArray();   // not the side found in the fountain
         CollectionAssert.AreEqual(new[] { 200.0 }, cues.Select(c => c.VideoTime).ToArray(), "once a visit");
-        Assert.AreEqual("coach would have bought here: you are in the fountain at 5:00; no enemy on the screen", cues[0].Reason);
+        Assert.AreEqual("coach would have bought here: you are in your fountain at 5:00; no enemy on the screen", cues[0].Reason);
         Assert.AreEqual(2, cues[0].Priority);
         Assert.IsFalse(cues[0].Failure);
         Assert.IsEmpty(policy.DrainKeys(), "no key for it yet");
@@ -2396,7 +2398,7 @@ public sealed class JevPolicyTests
         CollectionAssert.AreEqual(Offered(jev.Last), asked.Branches!.Where(b => b.Gate is null).Select(b => b.Option).ToArray(),
             "the ungated branches are exactly the root's options");
         Assert.AreEqual("no enemy on the screen", asked.Branches!.Single(b => b.Option == "run_away").Gate);
-        Assert.AreEqual("already in the fountain", asked.Branches!.Single(b => b.Option == "recall").Gate);
+        Assert.AreEqual("already in your fountain", asked.Branches!.Single(b => b.Option == "recall").Gate);
         Assert.AreEqual("lane", asked.Branches!.Single(b => b.Option == "walk_to_lane").FollowUp);
         CollectionAssert.AreEqual(jev.Last.Questions.Keys.ToArray(), asked.Questions!.Select(q => q.Id).ToArray());
         Assert.AreSame(jev.Last.State, asked.State, "the state the model was shown");

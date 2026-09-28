@@ -99,6 +99,9 @@ public sealed record EnemyFacts(
     string Champion, double DistanceUnits, string ScreenDirection, double VisibleForSeconds,
     double? Health, int? Level, IReadOnlyList<string> InRangeOf, double? WithinReachForSeconds)
 {
+    /// <summary>Where on the map they stand (<see cref="RiftMap.Place"/>): "bot lane", "their jungle, top side".</summary>
+    public string? Place { get; init; }
+
     /// <summary>Whether the player's basic attack reaches them; null when the player's attack range is not on file.</summary>
     public bool? InAttackRange { get; init; }
 
@@ -148,7 +151,14 @@ public sealed record MinionTarget(string Name, double Health, double DistanceUni
 }
 
 /// <summary>An ally, always on the player's own minimap.</summary>
-public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits);
+public sealed record AllyFacts(string Champion, bool? Alive, double? DistanceUnits)
+{
+    /// <summary>
+    /// Where on the map they stand (<see cref="RiftMap.Place"/>); null when
+    /// the minimap did not place them or they are dead.
+    /// </summary>
+    public string? Place { get; init; }
+}
 
 /// <summary>
 /// Where the player stands, off their own minimap: the place named as a coach

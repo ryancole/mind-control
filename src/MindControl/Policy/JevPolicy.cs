@@ -2352,12 +2352,16 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     row.Health, row.Level, inRange,
                     _withinReachSince.TryGetValue(row.TrackId, out var since) ? Math.Round(now - since, 1) : null)
                 {
+                    Place = Map.Place(row.WorldX!.Value, row.WorldY!.Value),
                     InAttackRange = attackRange is { } r ? distance <= r : null,
                     UnderTheirTurret = TurretCover(row.WorldX!.Value, row.WorldY!.Value)?.Said,
                 });
             }
             foreach (var row in frame.Champions.Where(c => c.Team == self.Team && c.TrackId != self.TrackId))
-                allies.Add(new AllyFacts(row.Champion ?? $"track {row.TrackId}", row.Alive, Distance(self, row)));
+                allies.Add(new AllyFacts(row.Champion ?? $"track {row.TrackId}", row.Alive, Distance(self, row))
+                {
+                    Place = row is { Alive: not false, WorldX: { } ax, WorldY: { } ay } ? Map.Place(ax, ay) : null,
+                });
         }
 
         return new Moment

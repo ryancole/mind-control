@@ -185,7 +185,7 @@ is no order.
 
 ```
 key[p2]: coach would have pressed Q here: Karma has been in Q range (980 units) for 2.0s with Q up  recorded: KeyDown Q (0x14), KeyUp Q (0x14)
-step[p2]: coach would have attack-moved right toward bot lane here: you are in the fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None
+step[p2]: coach would have attack-moved right toward bot lane here: you are in your fountain at 0:50; a good player would be on the way to bot lane (12086 units right)  recorded: MouseMove 1159,516, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None
 key[p2]: coach would have pressed Ctrl+Q here: you reached level 7 at 5:12; a good player would put the point in Q (Mystic Shot: a skillshot poke)  recorded: KeyDown Ctrl (0xE0), KeyDown Q (0x14), KeyUp Q (0x14), KeyUp Ctrl (0xE0)
 cue[p2]: coach would have recalled here: you are in bot lane at 5:00; 20% health; no enemy on the screen
 ```

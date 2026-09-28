@@ -77,11 +77,18 @@ public sealed class RiftMap
     /// </summary>
     private const double RiverLine = 14800, RiverHalfWidth = 1100;
 
-    /// <summary>What <see cref="Place"/> calls the player's fountain, where the shop is.</summary>
-    public const string FountainPlace = "the fountain";
+    /// <summary>
+    /// What <see cref="Place"/> calls the player's fountain, where the shop
+    /// is. Places say "your" for the player's side and "their" for the
+    /// enemy's, always.
+    /// </summary>
+    public const string FountainPlace = "your fountain";
 
     /// <summary>What <see cref="Place"/> calls the rest of the player's own base.</summary>
-    public const string BasePlace = "their own base";
+    public const string BasePlace = "your base";
+
+    /// <summary>What <see cref="Place"/> calls the enemy's base, their fountain included.</summary>
+    public const string EnemyBasePlace = "their base";
 
     /// <summary>
     /// The side whose fountain a point stands in, or null when it stands in
@@ -181,17 +188,22 @@ public sealed class RiftMap
     public (double X, double Y) Fountain => Side == MapSide.Blue ? BlueFountain : RedFountain;
 
     /// <summary>
-    /// Where a point is, named the way a coach says it: "the fountain",
-    /// "their own base", "the enemy base", "bot lane", and off the lanes "the
-    /// river, top side", "your jungle, bot side" or "their jungle, top side".
+    /// Where a point is, named the way a coach says it: "your fountain",
+    /// "your base", "their base", "bot lane", and off the lanes "the river,
+    /// top side", "your jungle, bot side" or "their jungle, top side". A point
+    /// in a lane's brush is in that lane, as the brush is named
+    /// (<see cref="RiftBrush.Patch.Lane"/>), though the brush can lie farther
+    /// off the lane's line than <see cref="LaneHalfWidth"/>.
     /// </summary>
     public string Place(double x, double y)
     {
         if (FountainOf(x, y) == Side)
             return FountainPlace;
         if (BaseOf(x, y) is { } side)
-            return side == Side ? BasePlace : "the enemy base";
-        return LaneOf(x, y) is { } lane ? $"{lane} lane" : OffLanePlace(x, y);
+            return side == Side ? BasePlace : EnemyBasePlace;
+        if ((LaneOf(x, y) ?? RiftBrush.At(x, y)?.Lane) is { } lane)
+            return $"{lane} lane";
+        return OffLanePlace(x, y);
     }
 
     /// <summary>

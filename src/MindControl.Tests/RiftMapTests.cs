@@ -13,8 +13,8 @@ public sealed class RiftMapTests
     [TestMethod]
     public void Places_are_named_as_a_coach_says_them()
     {
-        Assert.AreEqual("the fountain", RiftMap.Blue.Place(400, 460));
-        Assert.AreEqual("their own base", RiftMap.Blue.Place(2500, 1500));
+        Assert.AreEqual("your fountain", RiftMap.Blue.Place(400, 460));
+        Assert.AreEqual("your base", RiftMap.Blue.Place(2500, 1500));
         Assert.AreEqual("bot lane", RiftMap.Blue.Place(13064, 2051));   // the fixture's laning spot
         Assert.AreEqual("bot lane", RiftMap.Blue.Place(12111, 1283));
         Assert.AreEqual("top lane", RiftMap.Blue.Place(1100, 8000));
@@ -23,7 +23,21 @@ public sealed class RiftMapTests
         Assert.AreEqual("their jungle, top side", RiftMap.Blue.Place(7000, 11000));
         Assert.AreEqual("the river, bot side", RiftMap.Blue.Place(9866, 4414));   // the dragon pit
         Assert.AreEqual("the river, top side", RiftMap.Blue.Place(5007, 10471));  // the baron pit
-        Assert.AreEqual("the enemy base", RiftMap.Blue.Place(13500, 13500));
+        Assert.AreEqual("their base", RiftMap.Blue.Place(13500, 13500));
+    }
+
+    [TestMethod]
+    public void A_player_in_a_lanes_brush_is_in_that_lane()
+    {
+        var far = RiftBrush.All
+            .Where(p => p.Lane is not null)
+            .SelectMany(p => p.Cells.Select(c => (p.Lane, c.X, c.Y)))
+            .Where(c => RiftMap.LaneOf(c.X, c.Y) is null)
+            .ToArray();
+        Assert.IsNotEmpty(far, "some lane brush lies farther off the line than a lane's half width");
+        foreach (var (lane, x, y) in far)
+            Assert.IsTrue(RiftMap.Blue.Place(x, y) is var place && (place == $"{lane} lane" || place.EndsWith(" base")),
+                $"({x}, {y}) in the {lane} lane brush");
     }
 
     [TestMethod]
@@ -143,10 +157,10 @@ public sealed class RiftMapTests
     [TestMethod]
     public void From_the_red_side_home_is_the_upper_right()
     {
-        Assert.AreEqual("the fountain", RiftMap.Red.Place(14300, 14400));
-        Assert.AreEqual("their own base", RiftMap.Red.Place(12500, 13500));
-        Assert.AreEqual("the enemy base", RiftMap.Red.Place(2500, 1500));
-        Assert.AreEqual("the enemy base", RiftMap.Blue.Place(14300, 14400), "and from blue the red fountain is theirs");
+        Assert.AreEqual("your fountain", RiftMap.Red.Place(14300, 14400));
+        Assert.AreEqual("your base", RiftMap.Red.Place(12500, 13500));
+        Assert.AreEqual("their base", RiftMap.Red.Place(2500, 1500));
+        Assert.AreEqual("their base", RiftMap.Blue.Place(14300, 14400), "and from blue the red fountain is theirs");
         Assert.AreEqual("bot lane", RiftMap.Red.Place(13064, 2051), "lanes are named the same from either side");
         Assert.AreEqual(RiftMap.Blue.Fountain, (RiftMap.Red.Fountain.X - 13900, RiftMap.Red.Fountain.Y - 13900));
     }

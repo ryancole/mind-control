@@ -227,7 +227,7 @@ public static class CoachQuestions
         + "`walk_to` is the farthest spot up it the player can walk to safely: their farthest turret still "
         + "standing, or behind their own minions when those have pushed beyond it, never into the enemy's; and "
         + "`you_are` says whether the player is short of that spot, at it, or past it. Right when they are in "
-        + "the fountain or their own base and nothing keeps them there. At the start of the game a good player "
+        + "their fountain or base (`your fountain`, `your base`) and nothing keeps them there. At the start of the game a good player "
         + "spends the first half minute or so buying and is on the way to lane by about 0:45, well before the "
         + "first minions meet around 1:30: standing in the fountain before then, with the allies still in base "
         + "too, is shopping, not idling, and after it is. After a recall or a respawn later in the game they buy "
