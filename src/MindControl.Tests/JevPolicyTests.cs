@@ -29,7 +29,7 @@ public sealed class JevPolicyTests
         JevOptions? options = null, Meta? meta = null, FrameEnvelope? baseline = null)
     {
         var jev = new FakeJev();
-        var policy = new JevPolicy(jev, options ?? new JevOptions { SelfChampion = "Ezreal" });
+        var policy = new JevPolicy(jev, options ?? new JevOptions());
         policy.Configure(meta ?? Coaching);
         policy.DrainCues();
         if (baseline is not null)
@@ -416,7 +416,7 @@ public sealed class JevPolicyTests
     {
         var jev = new FakeJev();
         var audited = new List<Consultation>();
-        var policy = new JevPolicy(jev, new JevOptions { SelfChampion = "Ezreal" }, audited.Add);
+        var policy = new JevPolicy(jev, new JevOptions(), audited.Add);
         policy.Configure(Coaching);
         policy.OnEvent(Cast("Q", 10, 5));
         policy.OnFrame(Frame(15.5, Self(), Enemy(900)));
@@ -1040,6 +1040,8 @@ public sealed class JevPolicyTests
     public void Minions_carried_on_an_allys_flapped_row_are_still_measured_from_the_player()
     {
         var (policy, jev) = Coach();
+        // The player is established by the vote first; then the flag flaps.
+        policy.OnFrame(Frame(190, Self(x: 9000, y: 1400)));
         var ally = Ally(3, 5000, 1300) with { IsSelf = true, Minions = [Bar(MinionTeam.Red, 9300, 1400)] };
         policy.OnFrame(Clocked(200, 300, Self(x: 9000, y: 1400) with { IsSelf = false }, ally));
         Assert.AreEqual(300, Offering(jev, "step_back").Single().State.Minions!.NearestTheirsUnits);
@@ -1140,7 +1142,7 @@ public sealed class JevPolicyTests
     [TestMethod]
     public void A_champion_whose_attack_range_is_not_on_file_is_still_asked_about_and_told_so()
     {
-        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Nidalee" });
+        var (policy, jev) = Coach();
         policy.OnFrame(Frame(10, Self() with { Champion = "Nidalee" }, Enemy(600)));
         var ask = Attacks(jev).Single();
         Assert.IsNull(ask.State.Attack!.AttackRangeUnits);
@@ -1162,7 +1164,7 @@ public sealed class JevPolicyTests
     [TestMethod]
     public void A_bar_followed_across_frames_tells_its_fall_to_the_attack_question()
     {
-        var (policy, jev) = Coach(new JevOptions { SelfChampion = "Ezreal", AskEverySeconds = 0.5 });
+        var (policy, jev) = Coach(new JevOptions { AskEverySeconds = 0.5 });
         for (var i = 0; i <= 5; i++)
             policy.OnFrame(Clocked(200 + 0.1 * i, 300, InLane(Bar(MinionTeam.Red, 9300, 1400, health: 0.6 - 0.05 * i))));
 
@@ -1240,9 +1242,9 @@ public sealed class JevPolicyTests
             farmed.Select(f => f.Outcome).ToArray());
         StringAssert.EndsWith(policy.DrainActivity(),
             "; farm: 1 taken, 4 missed (attack closed: nothing in reach of a basic attack 1, attack offered, picked carry_on 1, "
-            + "coach attacked 1, not asked 1); last hits 1 of 5 since start");
+            + "coach attacked 1, not asked 1); last hits 1 of 5 this game");
         policy.OnFrame(Clocked(400, 300, Idle()));
-        StringAssert.EndsWith(policy.DrainActivity(), "; last hits 1 of 5 since start", "the totals outlive a drain");
+        StringAssert.EndsWith(policy.DrainActivity(), "; last hits 1 of 5 this game", "the totals outlive a drain");
     }
 
     /// <summary>Near their bot outer turret (13866, 4505): the player outside its range, Karma inside it.</summary>
@@ -2313,5 +2315,67 @@ public sealed class JevPolicyTests
         Assert.AreEqual("acted", answered.Verdict);
         CollectionAssert.AreEquivalent(new[] { "voice", "move" }, answered.Did!.Select(d => d.Hand).ToArray());
         Assert.IsNull(answered.Branches, "an event has no root branches");
+    }
+
+    // --- One run, several games ---
+
+    [TestMethod]
+    public void A_new_game_forgets_the_player_the_side_the_turrets_and_the_farm()
+    {
+        var (policy, jev) = Coach();
+        // Game 0: Ezreal on the red side, an outer turret down, a minute of farm.
+        var fallen = Turrets((MinionTeam.Blue, "bot", TurretTier.Outer, false));
+        for (var t = 100.0; t <= 103.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 900, Self(x: 7000, y: 5000) with { Cs = 40, Turrets = fallen },
+                Ally(3, 14300, 14400)));
+        policy.OnEvent(Died(EventKind.LastHit, 101));
+        policy.OnEvent(Died(EventKind.MissedCs, 102));
+        Assert.AreEqual(Moment.SettingFrom(MapSide.Red), jev.Last.State.Setting);
+        Assert.AreEqual("Ezreal", jev.Last.State.Player!.Champion);
+        StringAssert.EndsWith(policy.DrainActivity(), "last hits 1 of 2 this game");
+        policy.DrainCues();
+
+        // Between games the clock is gone; the player's row lingers a moment.
+        policy.OnFrame(new FrameEnvelope { VideoTime = 110, Champions = [Self(x: 7000, y: 5000)] });
+        policy.OnFrame(new FrameEnvelope { VideoTime = 115 });
+
+        // Game 1: another champion on another track, on the blue side, the
+        // clock back near zero. Twenty-odd seconds on, so game 0's last hits
+        // would still be inside the farm's minute had they been kept.
+        policy.NewGame(1);
+        StringAssert.StartsWith(policy.DrainCues().Single().Reason, "game 1 began");
+        var ahri = Idle() with { TrackId = 11, Champion = "Ahri", Cs = 0 };
+        policy.Resync(Clocked(125, 5, ahri));
+        var before = jev.Asks.Count;
+        for (var t = 125.1; t <= 127.0 + 1e-9; t = Math.Round(t + 0.1, 3))
+            policy.OnFrame(Clocked(t, 5 + (int)(t - 125), ahri));
+
+        Assert.IsGreaterThan(before, jev.Asks.Count, "the new game's player is coached at once, not after out-voting the last one's");
+        var state = jev.Last.State;
+        Assert.AreEqual("Ahri", state.Player!.Champion);
+        Assert.AreEqual(Moment.SettingFrom(MapSide.Blue), state.Setting);
+        StringAssert.StartsWith(state.GameClock, "0:0", "the clock back near zero");
+        Assert.AreEqual(new FarmingFacts(0, null, 0, 0, null), state.Farming, "no score rate before 1:30, no last game's last hits");
+        var bot = state.Whereabouts!.Lanes.Single(l => l.Lane == "bot");
+        Assert.AreNotEqual("fallen", bot.YourTurrets?.Outer, "last game's fallen turret is not this one's");
+        CollectionAssert.AreEqual(new[] { "you play from the blue side" }, policy.DrainCues().Select(c => c.Reason).ToArray(),
+            "the side is said again for the new game");
+        Assert.DoesNotContain("last hits", policy.DrainActivity()!, "the farm's totals are this game's");
+    }
+
+    [TestMethod]
+    public void A_new_game_drops_the_answers_still_in_flight()
+    {
+        var (policy, jev) = Coach();
+        jev.Hold = true;
+        jev.Script = Choose("walk_to_lane", ("lane", "bot"));
+        policy.OnFrame(Clocked(100, 50, Idle()));
+        Assert.AreEqual(1, jev.Pending);
+
+        policy.NewGame(1);
+        jev.Release();
+        policy.OnFrame(Clocked(101, 3, Idle()));
+
+        Assert.IsEmpty(policy.DrainMoves(), "an answer about the last game is not acted on in this one");
     }
 }

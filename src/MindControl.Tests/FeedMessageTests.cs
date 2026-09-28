@@ -307,4 +307,36 @@ public sealed class FeedMessageTests
         var meta = JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":3}""", FeedJson.Options)!;
         Assert.ThrowsExactly<InvalidOperationException>(() => FeedJson.EnsureSupported(meta));
     }
+
+    [TestMethod]
+    public void The_game_is_read_off_the_envelope_and_the_row_and_absent_reads_as_zero()
+    {
+        var frame = JsonSerializer.Deserialize<FrameEnvelope>("""
+            {"t":"frame","seq":9,"video_time":1.0,"game":2,"game_time":null,"game_time_observed":false,
+             "champions":[{"video_time":1.0,"game":2,"track_id":41,"team":"blue","x":0,"y":0}]}
+            """, FeedJson.Options)!;
+        Assert.AreEqual(2, frame.Game);
+        Assert.IsNull(frame.GameTime, "no clock between games");
+        Assert.AreEqual(2, frame.Champions[0].Game);
+
+        var older = JsonSerializer.Deserialize<FrameEnvelope>("""
+            {"t":"frame","seq":9,"video_time":1.0,"champions":[{"video_time":1.0,"track_id":1,"team":"blue","x":0,"y":0}]}
+            """, FeedJson.Options)!;
+        Assert.AreEqual(0, older.Game);
+        Assert.AreEqual(0, older.Champions[0].Game);
+    }
+
+    [TestMethod]
+    public void A_new_game_event_parses_with_no_team_champion_or_track()
+    {
+        var evt = JsonSerializer.Deserialize<GameEvent>("""
+            {"t":"event","kind":"new_game","seq":88,"video_time":2011.4,"game_time":3,"game":1,
+             "team":null,"champion":null,"track_id":null}
+            """, FeedJson.Options)!;
+        Assert.AreEqual(EventKind.NewGame, evt.Kind);
+        Assert.AreEqual(1, evt.Game);
+        Assert.IsNull(evt.Team);
+        Assert.IsNull(evt.Champion);
+        Assert.IsNull(evt.TrackId);
+    }
 }

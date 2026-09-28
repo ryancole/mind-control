@@ -134,6 +134,16 @@ public interface IPolicy
     /// <summary>A fresh baseline after a gap, reconnect, or pause. Forget everything incremental.</summary>
     void Resync(FrameEnvelope? latest);
 
+    /// <summary>
+    /// A new match began in the same run (<see cref="EventKind.NewGame"/>, or
+    /// the envelope's game went up). Forget everything about the last one,
+    /// including what <see cref="Resync"/> keeps because a gap is usually the
+    /// same game: who the player is, which side they play from, the farm's
+    /// totals. The reactor follows it with a <see cref="Resync"/> on the new
+    /// match's first frame, as after any gap.
+    /// </summary>
+    void NewGame(int game) => Resync(null);
+
     /// <summary>A frame of game state; anything the coach decides is collected by the drains.</summary>
     void OnFrame(FrameEnvelope frame);
 

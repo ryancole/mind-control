@@ -36,7 +36,7 @@ public sealed class CoachServer : IDisposable
     private readonly string _model;
     private readonly HttpListener _listener = new();
     private readonly List<(StreamWriter Writer, bool Brain)> _clients = [];
-    private readonly Queue<string> _replay = new();
+    private readonly Queue<(string T, string Data)> _replay = new();
     private readonly Queue<string> _thoughts = new();
     private string? _asking;
     private readonly Lock _lock = new();
@@ -111,6 +111,25 @@ public sealed class CoachServer : IDisposable
         });
 
     /// <summary>
+    /// A new match began in the same run: what came before was about another
+    /// game. The last game's rosters leave the replay, so a client that
+    /// connects now is not told a lineup nobody is playing; the new game's
+    /// arrive as its teams fill. A panel that is connected clears its
+    /// header on this line.
+    /// </summary>
+    public void PublishGame(int game, double videoTime)
+    {
+        lock (_lock)
+        {
+            var kept = _replay.Where(line => line.T != "roster").ToArray();
+            _replay.Clear();
+            foreach (var line in kept)
+                _replay.Enqueue(line);
+        }
+        Publish(new { T = "game", VideoTime = videoTime, Game = game });
+    }
+
+    /// <summary>
     /// The questions on their way to Jev, by occasion, oldest first. It
     /// changes several times a second, so it is kept out of the replay (it
     /// would crowd out the roster); a client that connects is sent the latest
@@ -149,7 +168,7 @@ public sealed class CoachServer : IDisposable
         {
             if (replay)
             {
-                _replay.Enqueue(data);
+                _replay.Enqueue((KindOf(line), data));
                 while (_replay.Count > ReplayCount)
                     _replay.Dequeue();
             }
@@ -158,6 +177,10 @@ public sealed class CoachServer : IDisposable
             Send(data, brainOnly: false);
         }
     }
+
+    /// <summary>A line's <c>t</c>, which every published line carries.</summary>
+    private static string KindOf<TLine>(TLine line) =>
+        typeof(TLine).GetProperty("T")?.GetValue(line) as string ?? "";
 
     private void Send(string data, bool brainOnly)
     {
@@ -225,7 +248,7 @@ public sealed class CoachServer : IDisposable
             {
                 try
                 {
-                    foreach (var line in _replay)
+                    foreach (var (_, line) in _replay)
                         writer.Write(line);
                     if (brain)
                         foreach (var line in _thoughts)

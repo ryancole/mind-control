@@ -9,14 +9,6 @@ namespace MindControl.Policy;
 public sealed record JevOptions
 {
     /// <summary>
-    /// The coached player's champion, when known. Without it the policy
-    /// latches onto the cumulative majority of is_self rows -- the per-frame
-    /// flag is resolved geometrically from the camera and flaps onto allies
-    /// whenever the viewport roams (death cam, spectating fights).
-    /// </summary>
-    public string? SelfChampion { get; init; }
-
-    /// <summary>
     /// How often, in video seconds, the coach is asked about the moment
     /// itself: the root question, what a good player would do right now. One
     /// is in flight at a time, so the model's own latency paces it too; this
@@ -131,7 +123,7 @@ public sealed record Consultation(
 /// player and a shot of theirs are events, asked about as they come.</para>
 ///
 /// <para><b>What stays in code, and why.</b> Perception: which row is the
-/// player (<c>--self</c> or the is_self majority, with the pipeline's identity
+/// player (the game's majority of is_self rows, with the pipeline's identity
 /// corrections applied), how long each enemy has been in view, which buttons
 /// the HUD has shown a cooldown for and when they come back, the last few
 /// shots seen at a target, the last bolt that landed, how long the player
@@ -206,8 +198,9 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     // Perception: the corner of the map the player plays from, off the last
     // fountain they or an ally were seen standing in, and whether one has been
     // seen yet. Until one is, the map is taken from the blue side. It outlives
-    // a resync: a gap is almost always the same game, and a new game starts
-    // with the whole team in its fountain, which says the side again.
+    // a resync, since a gap is almost always the same game, and is forgotten
+    // at a new game (NewGame), which starts with the whole team in its
+    // fountain to say the side again.
     private MapSide _side = MapSide.Blue;
     private bool _sideSeen;
 
@@ -274,8 +267,8 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private double _lastDecideAt = double.NegativeInfinity;
 
     // Last hits since the health log last drained them, and each miss by what
-    // it was put down to; and the totals since the coach started, which
-    // outlive a resync as the votes do.
+    // it was put down to; and the totals for this game, which outlive a
+    // resync as the votes do and go with them at a new game.
     private int _takenSeen, _missedSeen, _takenTotal, _missedTotal;
     private readonly SortedDictionary<string, int> _missedWhy = new(StringComparer.Ordinal);
 
@@ -414,7 +407,27 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 TrackPoint(latest, self);
             }
         }
-        // _selfVotes survive: identity outlives a gap.
+        // _selfVotes survive: identity outlives a gap. A new game is another
+        // matter (NewGame).
+    }
+
+    public void NewGame(int game)
+    {
+        Resync(null);
+        // Who the player is, the side they play from and the farm's totals
+        // outlive a gap but not a match: next game's player may be on
+        // another champion, on the other side, with none of this one's last
+        // hits. Track ids never recur across games, but the maps keyed by
+        // them were emptied by the resync all the same.
+        _selfVotes.Clear();
+        _selfName = null;
+        _lastCorrection = null;
+        _side = MapSide.Blue;
+        _sideSeen = false;
+        _takenSeen = _missedSeen = _takenTotal = _missedTotal = 0;
+        _missedWhy.Clear();
+        _lastIdleAt = double.NegativeInfinity;
+        _cues.Add(new CoachCue(_frame?.VideoTime ?? 0, 1, $"game {game} began: the last one is forgotten"));
     }
 
     public void OnFrame(FrameEnvelope frame)
@@ -500,7 +513,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             line += $"; farm: {_takenSeen} taken, {_missedSeen} missed{why}";
         }
         if (_takenTotal + _missedTotal > 0)
-            line += $"; last hits {_takenTotal} of {_takenTotal + _missedTotal} since start";
+            line += $"; last hits {_takenTotal} of {_takenTotal + _missedTotal} this game";
         _framesSeen = _framesWithoutSelf = _nothingToOffer = _rootsAsked = 0;
         _takenSeen = _missedSeen = 0;
         _answers.Clear();
@@ -2475,11 +2488,15 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             _withinReachSince.Remove(track);
     }
 
-    /// <summary>A new majority must strictly overtake the incumbent, so ties never flap.</summary>
+    /// <summary>
+    /// Who the player is: the game's cumulative majority of is_self rows,
+    /// since a single frame's flag can still land on someone else. A new
+    /// majority must strictly overtake the incumbent, so ties never flap.
+    /// The count starts again at a new game (<see cref="NewGame"/>), where the
+    /// player may be on another champion.
+    /// </summary>
     private void VoteSelf(FrameEnvelope frame)
     {
-        if (_options.SelfChampion is not null)
-            return;
         if (frame.Champions.FirstOrDefault(c => c.IsSelf)?.Champion is not { } flagged)
             return;
         _selfVotes[flagged] = _selfVotes.GetValueOrDefault(flagged) + 1;
@@ -2538,7 +2555,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
     /// <summary>
     /// The player's row in the current frame: the one carrying their name
-    /// (given, or the majority of the rows the camera flagged), or else the
+    /// (the majority of the rows the feed flagged), or else the
     /// flagged row when it carries no name at all -- the player's own seat on
     /// a frame whose name the reader has not (yet) put to it. Without that
     /// fallback a name seen once and then lost leaves no self in any frame,
@@ -2549,7 +2566,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
         if (_frame is not { } frame)
             return null;
         var flagged = frame.Champions.FirstOrDefault(c => c.IsSelf);
-        return (_options.SelfChampion ?? _selfName) is { } name
+        return _selfName is { } name
             ? frame.Champions.FirstOrDefault(c => c.Champion == name) ?? (flagged is { Champion: null } ? flagged : null)
             : flagged;
     }

@@ -40,6 +40,7 @@ public sealed class Reactor(
     private static readonly TimeSpan HealthLogInterval = TimeSpan.FromSeconds(5);
 
     private long _lastSeq = -1;
+    private int? _game;           // the match the policy is coaching; null until the first frame
     private bool _blind = true;   // until the first healthy frame arrives
     private bool _paused;
     private readonly List<double> _latencySamples = [];
@@ -86,13 +87,29 @@ public sealed class Reactor(
 
     private void HandleFrame(FrameEnvelope frame)
     {
-        if (frame.Seq < _lastSeq)
+        var newRun = frame.Seq < _lastSeq;
+        if (newRun)
         {
             // A restarted run or replay; sequence numbers are transport-scoped.
             Log(Tone.Error, $"feed: seq went backwards ({_lastSeq} -> {frame.Seq}), treating as a new run");
             _blind = true;
         }
         _lastSeq = frame.Seq;
+
+        // The envelope's game is the backstop for a new_game event that was
+        // filtered out or lost to a gap. Within a run it never goes down, so
+        // a frame from an earlier game is one the latest-wins mailbox still
+        // held when the event overtook it: stale, and dropped. A new run may
+        // start at any game.
+        if (frame.Game != _game)
+        {
+            if (_game is null)
+                _game = frame.Game;
+            else if (frame.Game < _game && !newRun)
+                return;
+            else
+                BeginGame(frame.Game, frame.VideoTime);
+        }
 
         if (frame.Lag is > 0 && frame.Lag > options.MaxLagSeconds)
         {
@@ -152,6 +169,13 @@ public sealed class Reactor(
     {
         switch (notice)
         {
+            case EventNotice({ Kind: EventKind.NewGame } evt):
+                // Before any other event on the new match's first frame, so
+                // nothing about it reaches the policy ahead of the reset. A
+                // game the envelope already moved to is not begun twice.
+                if (evt.Game is { } game && (_game is null || game > _game))
+                    BeginGame(game, evt.VideoTime);
+                break;
             case EventNotice(var evt):
                 Log($"event: {evt.Kind} {evt.Team}/{evt.Champion ?? $"track {evt.TrackId}"} " +
                     $"at video_time={evt.VideoTime:0.000}");
@@ -177,6 +201,23 @@ public sealed class Reactor(
                 Log(resumed ? "feed reconnected (resuming)" : "feed connected");
                 break;
         }
+    }
+
+    /// <summary>
+    /// A new match: the policy forgets the last one whole, and the next
+    /// healthy frame is its baseline, as after a gap. Events that come
+    /// before that frame are dropped as they are while blind; the frame
+    /// carries their state (names, turrets, a waiting point) again.
+    /// Coaching is not paused: the feed is healthy, only the game changed.
+    /// </summary>
+    private void BeginGame(int game, double videoTime)
+    {
+        Log($"feed: game {game} began at video_time={videoTime:0.000}; forgetting game {_game}");
+        _game = game;
+        policy.NewGame(game);
+        _blind = true;
+        Apply(null);
+        coach?.PublishGame(game, videoTime);
     }
 
     private void PauseBecause(string reason)

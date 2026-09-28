@@ -86,7 +86,7 @@ replay it:
 python tools/replay.py ../mind-control/data/coach-full-20260902-222718.jsonl --from 140 --speed 4
 
 # terminal 2, here:
-etc/dev.ps1 -- --self Ezreal   # audit on by default: data/audits/audit-<stamp>.jsonl
+etc/dev.ps1   # audit on by default: data/audits/audit-<stamp>.jsonl
 ```
 
 Keep the replay speed modest: the coach asks its root question about the
@@ -101,7 +101,10 @@ turn it off). The spectral-sight dashboard's COACHING panel subscribes to it:
 open `http://127.0.0.1:8723/` and the cues appear next to the event log. Every line
 that is advice carries `model`, the Jev release whose answer it is, and the
 panel marks those with a ✦; status and roster lines are the code's own and
-go unmarked. An `asking` line — `{"t":"asking","occasions":["decide","bolt"]}` —
+go unmarked. A `game` line — `{"t":"game","game":1,"video_time":…}` — says a
+new match began in the same run (a VOD holding several, or a live run left up
+across a queue): the coach has forgotten the last one, its rosters leave the
+replay, and a panel clears its header. An `asking` line — `{"t":"asking","occasions":["decide","bolt"]}` —
 says which questions are on their way to Jev right now, oldest first, and
 `occasions` is empty once they are all back; it tracks the network, not the
 coaching, so a panel can light a "thinking" indicator off it. It changes
@@ -276,7 +279,7 @@ died on the player's screen low enough to be a last hit, with `occasion`
 what the coach did in the 1.5 s before its bar was last seen: `coach
 attacked`, `attack offered, picked <option>`, `attack closed: <gate>`, or `not
 asked`. The health line every five seconds tallies the same (`farm: 2 taken, 3
-missed (...)`, and `last hits N of M since start`), and every state carries it
+missed (...)`, and `last hits N of M this game`), and every state carries it
 as `farming`: the HUD's creep score, its rate from 1:30, and the last minute's
 last hits taken and missed.
 
@@ -347,7 +350,7 @@ press or step, keyed by video_time, a step toward somewhere carrying its
 `destination` on the map; a dodge is stamped at the bolt's first sighting, which is earlier
 than the event that reports it, so the trace is not in time order there).
 
-Add `--trace --self <champion>` (bare `--trace` writes `data/traces/trace-<stamp>.jsonl`) and open
+Add `--trace` (bare `--trace` writes `data/traces/trace-<stamp>.jsonl`) and open
 `etc/ghost-viewer.html` (self-contained, drag the timeline + trace onto it) to
 watch the coach's hands over the map: keys and steps sit on the tick strip as
 ⌨ and 🖱, jumpable, and while one is fresh a badge at the foot of the map
