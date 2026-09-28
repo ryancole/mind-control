@@ -76,6 +76,14 @@ public sealed record MoveStep(double VideoTime, string Direction, double Dx, dou
     /// </summary>
     public double? DistanceUnits { get; init; }
 
+    /// <summary>
+    /// Where on the map the player's model stood when the step was taken, in
+    /// game units; null when not given. With it a walk's click is moved off
+    /// ground no one can walk on (<see cref="RiftWalls"/>), which would stop
+    /// the champion at its edge.
+    /// </summary>
+    public (double X, double Y)? From { get; init; }
+
     /// <summary>What the coach attacks, when the click is on an enemy; null for a move.</summary>
     public AttackTarget? Target { get; init; }
 

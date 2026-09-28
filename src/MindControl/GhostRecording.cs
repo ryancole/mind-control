@@ -62,6 +62,21 @@ public sealed class GhostRecording : IDisposable
     public const int WalkPxAt1080 = 300;
 
     /// <summary>
+    /// How far a walk's click may reach past <see cref="WalkPxAt1080"/> to
+    /// land beyond ground no one can walk on, at a screen 1080 pixels tall:
+    /// 800 units, past the blue nexus's footprint from the fountain side
+    /// (about 750 along the way to mid), still on the screen.
+    /// </summary>
+    public const int MaxWalkPxAt1080 = 600;
+
+    /// <summary>
+    /// Where the game's view of the ground ends, as a fraction of the screen's
+    /// height from the top: below it the HUD's ability bar takes the clicks.
+    /// Unmeasured beyond the default HUD's look.
+    /// </summary>
+    public const double GroundBottom = 0.85;
+
+    /// <summary>
     /// Screen pixels per game unit on the ground around the player's model,
     /// at a screen 1080 pixels tall (scaled by height for others): how far
     /// from the model an attack's click lands for a target that far away.
@@ -165,7 +180,8 @@ public sealed class GhostRecording : IDisposable
     /// toward somewhere farther (one with a <see cref="MoveStep.Destination"/>)
     /// is a longer click aimed that way (<see cref="WalkPxAt1080"/>), or on
     /// the place itself once it is nearer than that: the game window, never
-    /// the minimap, one leg of the trip a second. An attack (a step with a <see cref="MoveStep.Target"/>)
+    /// the minimap, one leg of the trip a second, and never on ground no one
+    /// can walk on (<see cref="WalkUnits"/>). An attack (a step with a <see cref="MoveStep.Target"/>)
     /// is the same click on the target itself, as far from the player's
     /// model as the target stands (<see cref="PxPerUnitAt1080"/>): a
     /// right-click on an enemy is the order to attack it. An
@@ -178,8 +194,7 @@ public sealed class GhostRecording : IDisposable
         var (x, y) = step switch
         {
             { Target: { } target } => OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
-            { Destination: not null } => OnTheGround(step, Math.Min(
-                WalkPxAt1080, (step.DistanceUnits ?? double.PositiveInfinity) * PxPerUnitAt1080) * _height / 1080),
+            { Destination: not null } => OnTheGround(step, WalkUnits(step) * PxPerUnitAt1080 * _height / 1080),
             _ => OnTheGround(step, StepPx),
         };
         if (step.AttackMove)
@@ -195,6 +210,41 @@ public sealed class GhostRecording : IDisposable
             new MouseMoveMessage(x, y),
             new MouseButtonsMessage(MouseButtons.Right),
             new MouseButtonsMessage(MouseButtons.None));
+    }
+
+    /// <summary>
+    /// How far from the player's model a walk's click lands, in game units:
+    /// <see cref="WalkPxAt1080"/>'s worth, or the place itself when it is
+    /// nearer, moved off ground no one can walk on when the step says where
+    /// the model stood (<see cref="RiftWalls.ClearOfWalls"/>) -- farther, up
+    /// to <see cref="MaxWalkPxAt1080"/>'s worth and never off the game's view
+    /// of the ground, so the game paths round what is in the way. A click on
+    /// the place itself looks nearer first.
+    /// </summary>
+    private double WalkUnits(MoveStep step)
+    {
+        var units = Math.Min(WalkPxAt1080 / PxPerUnitAt1080, step.DistanceUnits ?? double.PositiveInfinity);
+        if (step.From is not { } from)
+            return units;
+        var max = Math.Min(MaxWalkPxAt1080, OnTheGroundPx(step) * 1080 / _height) / PxPerUnitAt1080;
+        // Screen y grows down, world y north: flip back for the map.
+        return RiftWalls.ClearOfWalls(from.X, from.Y, step.Dx, -step.Dy, units, max,
+            nearerFirst: units == step.DistanceUnits);
+    }
+
+    /// <summary>
+    /// How far from the player's model a click can go in the step's direction
+    /// and still land on the game's view of the ground: inside the screen and
+    /// above the HUD along its foot (<see cref="GroundBottom"/>).
+    /// </summary>
+    private double OnTheGroundPx(MoveStep step)
+    {
+        var px = double.PositiveInfinity;
+        if (step.Dx > 0) px = Math.Min(px, (_width - 1 - _anchor.X) / step.Dx);
+        if (step.Dx < 0) px = Math.Min(px, _anchor.X / -step.Dx);
+        if (step.Dy > 0) px = Math.Min(px, (GroundBottom * _height - _anchor.Y) / step.Dy);
+        if (step.Dy < 0) px = Math.Min(px, _anchor.Y / -step.Dy);
+        return Math.Max(0, px);
     }
 
     private (ushort X, ushort Y) OnTheGround(MoveStep step, double px) => (
