@@ -160,22 +160,21 @@ the things the moment makes possible:
 | Option | Offered when | A pick is |
 |---|---|---|
 | `level_up` | the HUD shows a skill point waiting (alive or dead) | the level-up chord, Ctrl and the slot |
-| `run_away` | an enemy champion is on the screen | said, not yet done |
-| `use_ability` | a button the HUD has shown come back is up, with an enemy on the screen | a key press |
-| `attack` | an enemy minion or champion is within (or a step past) basic-attack range | a right-click on it |
+| `run_away` | an enemy champion is on the screen | a step back toward the nearest cover |
+| `use_ability` | a button is up, with an enemy champion on the screen or enemy minions in its reach | a key press |
+| `attack_minion` | an enemy minion is within (or a step past) basic-attack range | a right-click on it |
+| `attack_champion` | an enemy champion is within (or a step past) basic-attack range | a right-click on them |
 | `step_back` | in a lane with an enemy minion near | a sidestep back down the lane |
-| `go_to_turret` | an enemy champion is on the screen, out of the base | said, not yet done |
 | `hide_in_brush` | a patch of brush is near and they stand in none | a step into it |
-| `catch_wave` | an enemy wave is at one of their turrets, away from them | an attack-move step toward it |
-| `walk_to_lane` | the game clock is running | an attack-move step toward the lane's wave |
-| `recall` | out of the base, with the clock running | said, not yet done |
+| `recall` | out of the base, with the clock running | a B press |
 | `buy` | in the fountain | said, not yet done |
+| `walk_to_lane` | the default: the clock is running and they are short of a lane's safe spot, or an enemy wave is at one of their turrets away from them | an attack-move step toward the lane's wave |
 | `carry_on` | always, first | no order |
 
 Each option carries its own rubric (the `*Option` texts in
 `CoachQuestions`), and the root's rubric says which wins where more than one
 is right, in the order of the table. The follow-ups a branch needs — *which
-ability?*, *which target?*, *which lane?*, *which lane's wave?*, *which
+ability?*, *which minion?*, *which champion?*, *which lane?*, *which
 brush?*, *which ability takes the point?* — go in the same request, answered
 whatever the root picks and read only for the branch it picked, since Jev
 answers every question on its own and a second round trip would cost a

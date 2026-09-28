@@ -306,13 +306,13 @@ const OPTIONS = [
   { id: "level_up", label: "level up", hand: "keyboard" },
   { id: "run_away", label: "run away", hand: "move" },
   { id: "use_ability", label: "use ability", hand: "keyboard" },
-  { id: "attack", label: "attack", hand: "attack" },
+  { id: "attack_minion", label: "attack minion", hand: "attack" },
+  { id: "attack_champion", label: "attack champion", hand: "attack" },
   { id: "step_back", label: "step back", hand: "move" },
   { id: "hide_in_brush", label: "hide in brush", hand: "move" },
-  { id: "catch_wave", label: "catch wave", hand: "attack_move" },
-  { id: "walk_to_lane", label: "walk to lane", hand: "attack_move" },
   { id: "recall", label: "recall", hand: "keyboard" },
   { id: "buy", label: "buy", hand: "voice" },
+  { id: "walk_to_lane", label: "walk to lane", hand: "attack_move" },
 ];
 // Events, asked as they come: their questions, and the hands they can reach.
 const REFLEXES = [
@@ -1083,15 +1083,15 @@ function demo() {
     level_up: () => Math.random() < .9 ? "no skill point waiting" : null,
     run_away: () => Math.random() < .5 ? "no enemy on the screen" : null,
     use_ability: () => Math.random() < .6 ? "no button known to be up" : null,
-    attack: () => Math.random() < .3 ? "nothing in reach of a basic attack" : null,
+    attack_minion: () => Math.random() < .3 ? "no enemy minion in reach of a basic attack" : null,
+    attack_champion: () => Math.random() < .7 ? "no enemy champion in reach of a basic attack" : null,
     step_back: () => Math.random() < .4 ? "stepped 0.4s ago; a step a second" : null,
     hide_in_brush: () => Math.random() < .6 ? "no brush near" : null,
-    catch_wave: () => "no enemy wave at a turret of yours, away from you",
-    walk_to_lane: () => Math.random() < .5 ? "stepped 0.6s ago; a step a second" : null,
     recall: () => null,
     buy: () => "not in the fountain",
+    walk_to_lane: () => Math.random() < .5 ? "stepped 0.6s ago; a step a second" : null,
   };
-  const follow = { use_ability: ["ability", ["Q", "W", "E"]], attack: ["target", ["minion 1", "minion 2", "Karma"]],
+  const follow = { use_ability: ["ability", ["Q", "W", "E"]], attack_minion: ["minion", ["minion 1", "minion 2"]],
     walk_to_lane: ["lane", ["top", "mid", "bot"]], run_away: ["refuge", ["the bot outer turret", "behind your minions"]],
     hide_in_brush: ["brush", ["brush 1", "brush 2"]] };
   const hand = Object.fromEntries(OPTIONS.map(o => [o.id, o.hand]));
@@ -1133,7 +1133,7 @@ function demo() {
       const verdict = choice === "carry_on" ? "carry_on" : p < .4 ? "weak" : "acted";
       const did = verdict === "acted" ? [{ hand: hand[choice], said: `coach would have done ${choice} here: made-up reasons`,
         key: hand[choice] === "keyboard" ? (answers.ability?.choice ?? "B") : undefined,
-        direction: "up-right", toward: answers.lane ? `${answers.lane.choice} lane` : answers.target?.choice }] : undefined;
+        direction: "up-right", toward: answers.lane ? `${answers.lane.choice} lane` : (answers.minion ?? answers.champion)?.choice }] : undefined;
       onLine({ t: "thought", thought: { id: me, phase: "answered", occasion: "decide", video_time: vt, branches, decide_at: .4,
         elapsed_ms: 80 + Math.round(Math.random() * 60), model: "jev-demo", answers, verdict, did } });
       if (did) {
