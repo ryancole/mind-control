@@ -1091,6 +1091,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination($"{lane.Choice} lane", spot.X, spot.Y),
                     DistanceUnits = length,
+                    From = (x, y),
                     AttackMove = true,
                 });
                 _lastMoveAt = asked;
@@ -1185,6 +1186,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination($"{lane.Lane} lane", spot.X, spot.Y),
                     DistanceUnits = length,
+                    From = (x, y),
                     AttackMove = true,
                 });
                 _lastMoveAt = asked;
@@ -1261,6 +1263,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination(patch.NameFrom(_side), spot.X, spot.Y),
                     DistanceUnits = length,
+                    From = (x, y),
                 });
                 _lastMoveAt = asked;
                 Remember($"stepped toward {patch.NameFrom(_side)}", asked);
@@ -1330,6 +1333,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 {
                     Destination = new Destination(refuge.Name, pick.X, pick.Y),
                     DistanceUnits = length,
+                    From = (x, y),
                 });
                 _lastMoveAt = asked;
                 Remember($"ran back toward {refuge.Name}", asked);

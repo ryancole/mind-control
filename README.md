@@ -311,7 +311,12 @@ patch of brush — is a longer click aimed that way, 300px at a screen 1080
 tall and scaled by height (400 units, more than a second's walk, so the
 model does not stop between clicks), or on the place itself once it is
 nearer than that: the coach walks in steps, one a second, and never clicks
-the minimap. A walk toward the fight — up a lane, to a wave — is ordered
+the minimap. A walk's click never lands on ground no one can walk on — a
+wall, or a turret, inhibitor or nexus, standing or fallen (`RiftWalls`, off
+the map's navigation grid; `etc/navgrid-walls.py` regenerates it): the game
+would stop the champion at its edge, so the click moves past it, up to 600px
+at 1080 and above the HUD, and the game paths round it; the last leg, on the
+place itself, moves short of it instead. A walk toward the fight — up a lane, to a wave — is ordered
 as an attack-move instead: the same spot, but `KeyDown A`, `KeyUp A` and a
 left button down and up in place of the right-click (the game's default
 attack-move binding), so the champion stops to attack an enemy that comes

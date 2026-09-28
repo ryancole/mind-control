@@ -276,6 +276,40 @@ public sealed class GhostRecordingTests
     }
 
     [TestMethod]
+    public void A_walks_click_that_would_land_on_the_nexus_lands_past_it()
+    {
+        // The 21:28 line of a live run: the player just behind blue's nexus,
+        // walking up-right to mid. 400 units lands on the nexus, which would
+        // stop the champion at its edge; the click moves out past it, 750
+        // units (562px) up-right, and the game paths round it.
+        IReadOnlyList<Message> step;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+            step = recording.Step(new MoveStep(1, "up-right", 0.6613334013574069, -0.7500920825132358, 2, "off to mid")
+            {
+                Destination = new Destination("mid lane", 5846, 6396),
+                DistanceUnits = 6791,
+                From = (1368, 1317),
+                AttackMove = true,
+            });
+
+        Assert.AreEqual(new MouseMoveMessage(1332, 118), step[0]);
+    }
+
+    [TestMethod]
+    public void A_walks_click_on_open_ground_is_not_moved()
+    {
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+            recording.Step(new MoveStep(1, "right", 1, 0, 2, "off to bot")
+            {
+                Destination = new Destination("bot lane", 6919, 1483),
+                DistanceUnits = 5551,
+                From = (1368, 1317),
+            });
+
+        Assert.AreEqual(new MouseMoveMessage(1260, 540), ProtocolFile.Read(_path)[1]);
+    }
+
+    [TestMethod]
     public void A_walks_click_scales_with_the_screen_height()
     {
         using (var recording = GhostRecording.Append(_path, 2560, 1440))
