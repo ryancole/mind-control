@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MindControl.Feed;
 using MindControl.Policy;
 using Misdirection.Client;
@@ -259,6 +260,72 @@ public sealed class GhostRecordingTests
         Assert.AreEqual(
             "MouseMove 1200,360, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None",
             GhostRecording.Show(step));
+    }
+
+    // The kilrogg receiver's meta at 96 DPI: the frame is the whole window,
+    // the game its client area under a 31px title bar.
+    private static readonly Meta Receiver = JsonSerializer.Deserialize<Meta>("""
+        {"schema": 2, "source": "kilrogg", "width": 2117, "height": 1354,
+         "game_area": {"x": 1, "y": 31, "width": 2115, "height": 1322},
+         "world_view": {"x": 1, "y": 47, "width": 1607, "height": 1009}}
+        """, FeedJson.Options)!;
+
+    private static MoveStep SeenMinion(double x, double y) => new(1, "up-right", 0.7, -0.7, 2, "last hit")
+    {
+        Target = new AttackTarget("the enemy minion at 20% health", 424),
+        ViewPx = (x, y),
+    };
+
+    [TestMethod]
+    public void The_layout_is_read_from_the_meta()
+    {
+        var layout = GhostRecording.FeedLayout.Of(Receiver);
+        Assert.AreEqual(new PixelBox { X = 1, Y = 31, Width = 2115, Height = 1322 }, layout.Game);
+        Assert.AreEqual((1, 47), (layout.ViewX, layout.ViewY));
+    }
+
+    [TestMethod]
+    public void A_seen_target_is_clicked_where_the_game_shows_it()
+    {
+        IReadOnlyList<Message> step;
+        using (var recording = GhostRecording.Append(_path, 2115, 1322, layout: GhostRecording.FeedLayout.Of(Receiver)))
+            step = recording.Step(SeenMinion(1180.4, 410.2));
+
+        // Into the frame by the world view's origin, out of it by the game's:
+        // (1180 + 1 - 1, 410 + 47 - 31).
+        Assert.AreEqual(new MouseMoveMessage(1180, 426), step[0]);
+    }
+
+    [TestMethod]
+    public void A_seen_target_is_scaled_from_the_game_to_the_screen()
+    {
+        IReadOnlyList<Message> step;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080, layout: GhostRecording.FeedLayout.Of(Receiver)))
+            step = recording.Step(SeenMinion(1057.5, 645));
+
+        // (1057.5, 645 + 47 - 31) is the game's centre: 1080p's too.
+        Assert.AreEqual(new MouseMoveMessage(960, 540), step[0]);
+    }
+
+    [TestMethod]
+    public void A_meta_without_the_layout_is_refused() =>
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            GhostRecording.FeedLayout.Of(new Meta { Schema = 2, Width = 2117, Height = 1354 }));
+
+    [TestMethod]
+    public void A_seen_target_without_a_layout_falls_back_to_its_distance()
+    {
+        var minion = new MoveStep(1, "right", 1, 0, 2, "last hit")
+        {
+            Target = new AttackTarget("the enemy minion at 20% health", 400),
+            ViewPx = (5, 5),
+        };
+        IReadOnlyList<Message> step;
+        using (var recording = GhostRecording.Append(_path, 1920, 1080))
+            step = recording.Step(minion);
+
+        // 400 units is 300px right of the centre.
+        Assert.AreEqual(new MouseMoveMessage(1260, 540), step[0]);
     }
 
     [TestMethod]

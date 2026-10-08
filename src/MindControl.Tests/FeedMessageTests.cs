@@ -186,8 +186,8 @@ public sealed class FeedMessageTests
     public void Gold_on_the_self_row_parses_with_missing_and_zero_kept_apart()
     {
         Assert.IsTrue(JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":2,"has_gold":true}""", FeedJson.Options)!.HasGold);
-        Assert.IsFalse(JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":2}""", FeedJson.Options)!.HasGold,
-            "older feeds lack the key: nothing looked");
+        Assert.IsFalse(JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":2,"has_gold":false}""", FeedJson.Options)!.HasGold,
+            "the reader is off: nothing looked");
 
         static ChampionRow Row(string gold) => JsonSerializer.Deserialize<ChampionRow>(
             $$"""{"video_time":410.0,"track_id":3,"team":"blue","is_self":true,"cs":27{{gold}}}""", FeedJson.Options)!;
@@ -199,7 +199,7 @@ public sealed class FeedMessageTests
     [TestMethod]
     public void Turrets_on_the_self_row_and_their_events_parse()
     {
-        const string meta = """{"t":"meta","schema":1,"has_turrets":true}""";
+        const string meta = """{"t":"meta","schema":2,"has_turrets":true}""";
         Assert.IsTrue(JsonSerializer.Deserialize<Meta>(meta, FeedJson.Options)!.HasTurrets);
 
         const string row = """
@@ -279,21 +279,26 @@ public sealed class FeedMessageTests
     public void Meta_gating_flags_parse()
     {
         const string json = """
-            {"t":"meta","schema":1,"source":"clip.mp4","width":2560,"height":1440,
-             "stride":3,"created":"2026-08-19T20:30:00Z","has_game_time":true,
+            {"t":"meta","schema":2,"source":"clip.mp4","width":2560,"height":1440,
+             "created":"2026-08-19T20:30:00Z","has_game_time":true,
              "has_liveness":true,"has_nameplates":false,
              "world_bounds":null,"world_units_per_pixel":null}
             """;
 
-        // Schema 1, with the stride schema 2 dropped: an old timeline still parses and is accepted.
         var meta = JsonSerializer.Deserialize<Meta>(json, FeedJson.Options)!;
-        Assert.AreEqual(1, meta.Schema);
         FeedJson.EnsureSupported(meta);
         Assert.IsTrue(meta.HasLiveness);
         Assert.IsFalse(meta.HasNameplates);
         Assert.IsNull(meta.WorldUnitsPerPixel);
-        Assert.IsFalse(meta.HasMinions, "a feed from before the lane stages reads as not measured");
+        Assert.IsFalse(meta.HasMinions, "a stage the meta does not name reads as not measured");
         Assert.IsFalse(meta.HasLastHits);
+    }
+
+    [TestMethod]
+    public void A_schema_older_than_understood_is_refused()
+    {
+        var meta = JsonSerializer.Deserialize<Meta>("""{"t":"meta","schema":1}""", FeedJson.Options)!;
+        Assert.ThrowsExactly<InvalidOperationException>(() => FeedJson.EnsureSupported(meta));
     }
 
     [TestMethod]
@@ -323,7 +328,7 @@ public sealed class FeedMessageTests
     }
 
     [TestMethod]
-    public void The_game_is_read_off_the_envelope_and_the_row_and_absent_reads_as_zero()
+    public void The_game_is_read_off_the_envelope_and_the_row()
     {
         var frame = JsonSerializer.Deserialize<FrameEnvelope>("""
             {"t":"frame","seq":9,"video_time":1.0,"game":2,"game_time":null,"game_time_observed":false,
@@ -332,12 +337,6 @@ public sealed class FeedMessageTests
         Assert.AreEqual(2, frame.Game);
         Assert.IsNull(frame.GameTime, "no clock between games");
         Assert.AreEqual(2, frame.Champions[0].Game);
-
-        var older = JsonSerializer.Deserialize<FrameEnvelope>("""
-            {"t":"frame","seq":9,"video_time":1.0,"champions":[{"video_time":1.0,"track_id":1,"team":"blue","x":0,"y":0}]}
-            """, FeedJson.Options)!;
-        Assert.AreEqual(0, older.Game);
-        Assert.AreEqual(0, older.Champions[0].Game);
     }
 
     [TestMethod]

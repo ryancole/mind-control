@@ -921,7 +921,11 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     private const int MinionTargets = 4;
 
     /// <summary>A target a basic attack could be ordered at: who, where, and the sentence a pick of it says.</summary>
-    private sealed record Strikeable(AttackTarget Target, double X, double Y, string Reason);
+    private sealed record Strikeable(AttackTarget Target, double X, double Y, string Reason)
+    {
+        /// <summary>Where it was seen on the screen, in world-view pixels; null for a champion, placed only on the minimap.</summary>
+        public (double X, double Y)? ViewPx { get; init; }
+    }
 
     /// <summary>What keeps the player from any basic attack: being dead or unplaced, or the last attack still being carried out.</summary>
     private string? AttackGate(FrameEnvelope frame, ChampionRow self) =>
@@ -948,7 +952,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
 
         var targets = new Dictionary<string, Strikeable>();
         var criteria = new ChoiceCriteria();
-        foreach (var (minion, mx, my) in NearMinions(frame, self))
+        foreach (var (minion, mx, my, seen) in NearMinions(frame, self))
         {
             var name = $"the enemy minion at {minion.Health:0%} health";
             var where = minion.ScreenDirection is { } way ? $"{minion.DistanceUnits:0} units {way}" : "where the player stands";
@@ -961,7 +965,10 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
             criteria[minion.Name] = $"{minion.Name}: an enemy minion with {minion.Health:0%} of its health bar left{fall}, "
                 + $"{where}, {InReach(minion.InAttackRange)}";
             targets[minion.Name] = new(new AttackTarget(name, minion.DistanceUnits), mx, my,
-                $"it is {where} with {minion.Health:0%} of its bar left, {InReach(minion.InAttackRange)}; a good player would attack it now");
+                $"it is {where} with {minion.Health:0%} of its bar left, {InReach(minion.InAttackRange)}; a good player would attack it now")
+            {
+                ViewPx = (seen.X, seen.Y),
+            };
         }
         if (targets.Count == 0)
             return Closed(option, "no enemy minion in reach of a basic attack");
@@ -1027,7 +1034,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                 var length = double.Hypot(dx, dy);
                 var (ux, uy) = length < 1 ? (0.0, 0.0) : (dx / length, dy / length);
                 var direction = length < 1 ? "where you stand" : ScreenDirections.Name(dx, dy);
-                _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target });
+                _moves.Add(new MoveStep(asked, direction, ux, uy, 2, target.Reason) { Target = target.Target, ViewPx = target.ViewPx });
                 _lastAttackAt = asked;
                 Remember($"attacked {target.Target.Name}", asked);
             }) { Only = targets.Count == 1 ? targets.Keys.First() : null };
@@ -1046,7 +1053,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
     /// where each stands in world units. Named "minion 1" and on in that
     /// order: the names the attack follow-up's options and the state share.
     /// </summary>
-    private (MinionTarget Fact, double X, double Y)[] NearMinions(FrameEnvelope frame, ChampionRow self)
+    private (MinionTarget Fact, double X, double Y, Minion Seen)[] NearMinions(FrameEnvelope frame, ChampionRow self)
     {
         if (Carried(frame, r => r.Minions) is not { } minions || self is not { WorldX: { } x, WorldY: { } y })
             return [];
@@ -1068,7 +1075,7 @@ public sealed class JevPolicy(IJevClient jev, JevOptions? options = null, Action
                     {
                         FallingPerSecond = falling, SecondsToEmpty = empty,
                     },
-                    p.Minion.WorldX!.Value, p.Minion.WorldY!.Value);
+                    p.Minion.WorldX!.Value, p.Minion.WorldY!.Value, p.Minion);
             })
             .ToArray();
     }

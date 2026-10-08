@@ -5,7 +5,10 @@ using MindControl.Feed;
 using MindControl.Policy;
 
 var feedUri = new Uri("http://127.0.0.1:8723");
-ushort screenWidth = 1920, screenHeight = 1080;
+// The screen the ghost's clicks are for. By default the game's own area of the
+// feed's frames (the receiver window's client area, without its title bar),
+// so a click is a pixel of the game; --screen overrides.
+ushort? screenWidth = null, screenHeight = null;
 // Where the player's model sits on their screen; a step's right-click is
 // taken from here. The camera is locked, so it is one place -- the centre,
 // give or take, on the default HUD.
@@ -99,7 +102,7 @@ for (var i = 0; i < args.Length; i++)
 
                 options:
                   --feed <url>       feed base URL          (default http://127.0.0.1:8723)
-                  --screen <WxH>     target screen size     (default 1920x1080)
+                  --screen <WxH>     target screen size     (default: the game's area of the feed)
                   --anchor <x,y>     the player's model on their screen, where a step is taken
                                      from (default: screen centre; the camera is locked)
                   File flags take an optional path; without one they write a fresh file named
@@ -154,16 +157,36 @@ if (jev is null)
     return 2;
 
 var feed = new FeedClient(feedUri, kinds);
-var options = new ReactorOptions { ScreenWidth = screenWidth, ScreenHeight = screenHeight };
+// Read before anything is opened: the recording and the trace are written in
+// the screen's pixels, and seen targets are moved and scaled from the feed's.
+GhostRecording.FeedLayout layout;
+try
+{
+    layout = GhostRecording.FeedLayout.Of(await feed.GetMetaAsync(cts.Token));
+}
+catch (HttpRequestException e)
+{
+    ConsoleTone.Error($"feed: no meta at {feedUri} ({e.Message}); is spectral-sight serving?");
+    return 2;
+}
+catch (InvalidOperationException e)
+{
+    ConsoleTone.Error($"feed: {e.Message}");
+    return 2;
+}
+(ushort Width, ushort Height) screen = (
+    screenWidth ?? (ushort)layout.Game.Width,
+    screenHeight ?? (ushort)layout.Game.Height);
+var options = new ReactorOptions { ScreenWidth = screen.Width, ScreenHeight = screen.Height };
 foreach (var path in new[] { tracePath, logPath, auditPath })
     if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
         Directory.CreateDirectory(dir);
-using var trace = tracePath is null ? null : new GhostTrace(tracePath, screenWidth, screenHeight);
+using var trace = tracePath is null ? null : new GhostTrace(tracePath, screen.Width, screen.Height);
 using TextWriter? log = logPath is null ? null : new StreamWriter(logPath, append: true) { AutoFlush = true };
 using var audit = auditPath is null ? null : new JevAudit(auditPath);
 using var recording = recordPath is null
     ? null
-    : GhostRecording.Append(recordPath, screenWidth, screenHeight, playerAnchor);
+    : GhostRecording.Append(recordPath, screen.Width, screen.Height, playerAnchor, layout);
 // One policy owns everything -- hands and feet -- because they are one set
 // of questions about one moment, and the model answers them together.
 var policy = new JevPolicy(jev, new JevOptions(),

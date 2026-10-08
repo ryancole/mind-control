@@ -54,25 +54,24 @@ public sealed class ReactorTests
 
     private static string Json(int? value) => value?.ToString() ?? "null";
 
-    /// <summary>A frame record; <paramref name="game"/> null leaves the key out, as an older timeline does.</summary>
-    private static string Frame(long seq, int? game, int? gameTime, params string[] rows) =>
+    /// <summary>A frame record.</summary>
+    private static string Frame(long seq, int game, int? gameTime, params string[] rows) =>
         $"event: frame\nid: {seq}\ndata: {{\"t\":\"frame\",\"seq\":{seq},\"video_time\":{seq * 0.1:0.0}," +
-        (game is null ? "" : $"\"game\":{game},") +
+        $"\"game\":{game}," +
         $"\"game_time\":{Json(gameTime)},\"game_time_observed\":{(gameTime is null ? "false" : "true")}," +
         $"\"champions\":[{string.Join(",", rows)}]}}\n\n";
 
     private static string Event(long seq, string json) => $"event: event\nid: {seq}\ndata: {json}\n\n";
 
     /// <summary>
-    /// Game 0 (from an older-shaped envelope with no game key, then one with
-    /// it), the gap between games with no clock, then game 1 with its clock
-    /// back near zero.
+    /// Game 0, the gap between games with no clock, then game 1 with its
+    /// clock back near zero.
     /// </summary>
     private static List<string> TwoGames(bool withEvent)
     {
         List<string> records = [];
         long seq = 1;
-        records.Add(Frame(seq++, null, 1500, Row(0, 1500, 3, "Ezreal")));
+        records.Add(Frame(seq++, 0, 1500, Row(0, 1500, 3, "Ezreal")));
         for (var i = 0; i < 5; i++)
             records.Add(Frame(seq++, 0, 1501 + i, Row(0, 1501 + i, 3, "Ezreal")));
         // Post-game and loading screen: no clock, no rows.
@@ -104,7 +103,6 @@ public sealed class ReactorTests
         Assert.IsFalse(policy.Calls.Skip(reset).Any(c => c.EndsWith("game 0")), $"nothing of game 0 after it\n{calls}");
         StringAssert.StartsWith(policy.Calls[reset + 1], "resync ", $"the new game's first frame is a baseline\n{calls}");
         Assert.DoesNotContain("event new_game", policy.Calls, "the reset is the reactor's to make, not an event to coach on");
-        Assert.AreEqual(0, policy.Frames[0].Game, "a missing game reads as 0");
         Assert.IsTrue(policy.Frames.Any(f => f.GameTime is null), "clockless frames between games are passed on");
     }
 

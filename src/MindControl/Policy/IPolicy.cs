@@ -88,6 +88,15 @@ public sealed record MoveStep(double VideoTime, string Direction, double Dx, dou
     public AttackTarget? Target { get; init; }
 
     /// <summary>
+    /// Where the <see cref="Target"/> was seen on the player's screen, in
+    /// spectral-sight's world-view pixels (relative to the meta's
+    /// <c>world_view</c>; see <see cref="GhostRecording.FeedLayout"/>); null when only its place on the
+    /// map is known, as for a champion. With it the click lands on the
+    /// target as the video shows it, not where its distance projects to.
+    /// </summary>
+    public (double X, double Y)? ViewPx { get; init; }
+
+    /// <summary>
     /// Whether the step is ordered as an attack-move (the attack-move key,
     /// then a left-click on the ground) rather than a right-click: the
     /// champion walks there but stops to attack an enemy that comes into
