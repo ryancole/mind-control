@@ -104,11 +104,9 @@ public sealed class GhostRecordingTests
         recording.Press(new KeyPress(10.0, "Q", 2, "first"));
         recording.Press(new KeyPress(12.5, "W", 2, "second"));
 
-        // misdirection plays a recording by path, and may do so while a run
-        // is still appending to it. The recorder keeps the file open for the
-        // run, shared for reading, and the library's reader opens a file a
-        // writer still holds, so a read by path sees every frame flushed so
-        // far and a clean end of file.
+        // The recorder keeps the file open for the run, shared for reading,
+        // and the library's reader opens a file a writer still holds, so a
+        // read by path sees every frame flushed so far and a clean end of file.
         CollectionAssert.AreEqual(
             new Message[]
             {
