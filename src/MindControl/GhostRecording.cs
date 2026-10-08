@@ -94,20 +94,44 @@ public sealed class GhostRecording : IDisposable
     /// </summary>
     public const string AttackMoveKey = "A";
 
+    /// <summary>
+    /// Where the feed's pixels sit, read from its meta: the game's own area
+    /// of the frame, which this recording's screen is, and the world view's
+    /// origin, which a seen target's <see cref="MoveStep.ViewPx"/> is
+    /// relative to. Both in frame pixels.
+    /// </summary>
+    public sealed record FeedLayout(PixelBox Game, int ViewX, int ViewY)
+    {
+        /// <summary>
+        /// The layout <paramref name="meta"/> describes. A feed that does not
+        /// name both boxes is one this reactor cannot place a click on, and
+        /// says so rather than guess.
+        /// </summary>
+        public static FeedLayout Of(Meta meta) =>
+            (meta.GameArea, meta.WorldView) is ({ Width: > 0, Height: > 0 } game, { } view)
+                ? new FeedLayout(game, view.X, view.Y)
+                : throw new InvalidOperationException(
+                    "the feed's meta names no game_area and world_view; a spectral-sight that publishes them is needed");
+    }
+
     private readonly ProtocolFileWriter _writer;
     private readonly ushort _width, _height;
     private readonly (ushort X, ushort Y) _anchor;
+    // Where the feed's pixels sit; null when not known, and a seen target is
+    // then clicked where its distance projects.
+    private readonly FeedLayout? _layout;
     // Video time of the last press or step, or null before a run's first:
     // the reference the next delay is measured from.
     private double? _lastVideoTime;
 
     private GhostRecording(
-        ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor)
+        ProtocolFileWriter writer, ushort width, ushort height, (ushort X, ushort Y) anchor, FeedLayout? layout)
     {
         _writer = writer;
         _width = width;
         _height = height;
         _anchor = anchor;
+        _layout = layout;
         Header = Show(new ScreenSizeMessage(width, height));
     }
 
@@ -122,9 +146,13 @@ public sealed class GhostRecording : IDisposable
     /// <paramref name="playerAnchor"/> is where the player's model sits on
     /// their screen, which a step is taken from; the camera is locked, so it
     /// is one place, and the default is the screen's centre.
+    /// <paramref name="layout"/> is where the feed's pixels sit, which a seen
+    /// target's world-view pixels are moved and scaled from onto this screen,
+    /// the game's own area.
     /// </summary>
     public static GhostRecording Append(
-        string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null)
+        string path, ushort screenWidth, ushort screenHeight, (ushort X, ushort Y)? playerAnchor = null,
+        FeedLayout? layout = null)
     {
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir)
             Directory.CreateDirectory(dir);
@@ -140,7 +168,7 @@ public sealed class GhostRecording : IDisposable
             throw;
         }
         var anchor = playerAnchor ?? ((ushort)(screenWidth / 2), (ushort)(screenHeight / 2));
-        return new GhostRecording(writer, screenWidth, screenHeight, anchor);
+        return new GhostRecording(writer, screenWidth, screenHeight, anchor, layout);
     }
 
     /// <summary>Frames written through this recording, the screen size and any delays included.</summary>
@@ -187,13 +215,15 @@ public sealed class GhostRecording : IDisposable
     /// right-click on an enemy is the order to attack it. An
     /// <see cref="MoveStep.AttackMove"/> lands on the same spot but is
     /// ordered with <see cref="AttackMoveKey"/> and a left-click instead of
-    /// the right-click.
+    /// the right-click. A target seen on the screen (<see cref="MoveStep.ViewPx"/>)
+    /// is clicked where it was seen, once the feed's layout is known.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
         var (x, y) = step switch
         {
-            { Target: { } target } => OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
+            { ViewPx: { } seen } when _layout is { } layout => Seen(seen, layout),
+            { Target: { } target } =>OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
             { Destination: not null } => OnTheGround(step, WalkUnits(step) * PxPerUnitAt1080 * _height / 1080),
             _ => OnTheGround(step, StepPx),
         };
@@ -246,6 +276,16 @@ public sealed class GhostRecording : IDisposable
         if (step.Dy < 0) px = Math.Min(px, _anchor.Y / -step.Dy);
         return Math.Max(0, px);
     }
+
+    /// <summary>
+    /// A world-view pixel as a pixel of this screen: moved to the frame's own
+    /// by the world view's origin, then to the game's by its area's, then
+    /// scaled from the game's size to the screen's. The feed's spaces share
+    /// a scale, so only the last step stretches.
+    /// </summary>
+    private (ushort X, ushort Y) Seen((double X, double Y) view, FeedLayout layout) => (
+        (ushort)Math.Clamp(Math.Round((view.X + layout.ViewX - layout.Game.X) * _width / layout.Game.Width), 0, _width - 1),
+        (ushort)Math.Clamp(Math.Round((view.Y + layout.ViewY - layout.Game.Y) * _height / layout.Game.Height), 0, _height - 1));
 
     private (ushort X, ushort Y) OnTheGround(MoveStep step, double px) => (
         (ushort)Math.Clamp(Math.Round(_anchor.X + step.Dx * px), 0, _width - 1),

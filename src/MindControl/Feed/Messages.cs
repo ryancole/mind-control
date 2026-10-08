@@ -5,21 +5,20 @@ namespace MindControl.Feed;
 
 /// <summary>
 /// Typed mirror of spectral-sight's wire format (docs/output-format.md,
-/// schema 2; schema 1 differs only by a meta <c>stride</c> this side never
-/// read, so it is accepted too). Optional row fields are omitted-not-null on
-/// the wire, so a null here means "not measured". Unknown keys are ignored by
-/// deserialization, as the format requires.
+/// schema 2). Optional row fields are omitted-not-null on the wire, so a null
+/// here means "not measured". Unknown keys are ignored by deserialization, as
+/// the format requires.
 /// </summary>
 public static class FeedJson
 {
-    public const int MaxSchema = 2;
+    public const int Schema = 2;
 
-    /// <summary>Throws on a feed newer than this reader understands.</summary>
+    /// <summary>Throws on a feed of any schema but the one this reader understands.</summary>
     public static void EnsureSupported(Meta meta)
     {
-        if (meta.Schema > MaxSchema)
+        if (meta.Schema != Schema)
             throw new InvalidOperationException(
-                $"Feed schema {meta.Schema} is newer than this reactor understands ({MaxSchema})");
+                $"Feed schema {meta.Schema} is not the one this reactor understands ({Schema})");
     }
 
     public static readonly JsonSerializerOptions Options = new()
@@ -66,11 +65,31 @@ public sealed record Meta
     public bool HasTurrets { get; init; }
 
     /// <summary>Gates <c>gold</c>: true while the gold reader runs. False
-    /// (or absent, on older feeds) means no row carries it because nothing
-    /// looked, never that the player has none.</summary>
+    /// means no row carries it because nothing looked, never that the player
+    /// has none.</summary>
     public bool HasGold { get; init; }
     public WorldBounds? WorldBounds { get; init; }
     public double[]? WorldUnitsPerPixel { get; init; }
+
+    /// <summary>Where the game is drawn in the frame (the receiver window's
+    /// client area), in frame pixels: <see cref="Width"/> and
+    /// <see cref="Height"/> are the whole window, title bar and border
+    /// included. Required: a click cannot be placed on the game without it.</summary>
+    public PixelBox? GameArea { get; init; }
+
+    /// <summary>The box world-view pixels (minions, threats, skillshots, last
+    /// hits) are relative to, in frame pixels; all three spaces share a scale.
+    /// Required, like <see cref="GameArea"/>.</summary>
+    public PixelBox? WorldView { get; init; }
+}
+
+/// <summary>A rectangle of the frame, in frame pixels: origin at the captured image's top-left.</summary>
+public sealed record PixelBox
+{
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
 }
 
 public sealed record WorldBounds
@@ -86,7 +105,7 @@ public sealed record ChampionRow
     public double VideoTime { get; init; }
 
     /// <summary>Which match of the run the row is from: 0 for the first, one
-    /// more at each new match. Absent (older timelines) reads as 0.</summary>
+    /// more at each new match.</summary>
     public int Game { get; init; }
 
     public int? GameTime { get; init; }
@@ -370,8 +389,8 @@ public sealed record FrameEnvelope
     /// <summary>
     /// Which match of the run this frame is from: 0 for the first, one more
     /// each time a new match starts (a VOD holding several, or a live run left
-    /// up across a queue). On every frame, rowless ones included; absent
-    /// (older timelines) reads as 0. Within a run it never goes down.
+    /// up across a queue). On every frame, rowless ones included. Within a
+    /// run it never goes down.
     /// </summary>
     public int Game { get; init; }
 

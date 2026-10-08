@@ -20,7 +20,7 @@ public sealed class JevPolicyTests
 {
     private static readonly Meta Coaching = new()
     {
-        Schema = 1, HasNameplates = true, HasAbilities = true, HasThreats = true, HasSkillshots = true,
+        Schema = 2, HasNameplates = true, HasAbilities = true, HasThreats = true, HasSkillshots = true,
         HasMinions = true, HasMinionDots = true, HasLastHits = true, HasTurrets = true,
         WorldBounds = new() { MaxX = 14870, MaxY = 14980 },
     };
@@ -1175,6 +1175,19 @@ public sealed class JevPolicyTests
     }
 
     [TestMethod]
+    public void A_picked_minion_is_clicked_where_its_bar_was_seen()
+    {
+        var (policy, jev) = Coach();
+        jev.Script = Choose("attack_minion");
+        var lane = InLane(Bar(MinionTeam.Red, 9300, 1700, health: 0.2) with { X = 1180, Y = 410 });
+        policy.OnFrame(Clocked(200, 300, lane));
+        policy.OnFrame(Clocked(200.1, 300, lane));
+
+        var attack = policy.DrainMoves().Single(m => m.Target is not null);
+        Assert.AreEqual((1180.0, 410.0), attack.ViewPx);
+    }
+
+    [TestMethod]
     public void A_lone_enemy_champion_in_reach_is_offered_without_a_choice()
     {
         var (policy, jev) = Coach();
@@ -1190,6 +1203,7 @@ public sealed class JevPolicyTests
         Assert.IsEmpty(ask.State.Attack!.EnemyMinionsNear, "the bars were not read: no minion to offer");
         var attack = policy.DrainMoves().Single();
         Assert.AreEqual(new AttackTarget("Karma", 500), attack.Target);
+        Assert.IsNull(attack.ViewPx, "a champion is placed only on the minimap");
         Assert.AreEqual("right", attack.Direction);
         Assert.AreEqual("Karma is 500 units right with 40% health, inside your attack range; a good player would attack them now",
             attack.Reason);
@@ -1980,7 +1994,7 @@ public sealed class JevPolicyTests
     public void A_feed_without_the_coaching_stages_says_so_once()
     {
         var policy = new JevPolicy(new FakeJev());
-        policy.Configure(new Meta { Schema = 1 });
+        policy.Configure(new Meta { Schema = 2 });
         var cues = policy.DrainCues();
         Assert.HasCount(1, cues);
         StringAssert.Contains(cues[0].Reason, "--coach");
