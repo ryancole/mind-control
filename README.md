@@ -323,14 +323,11 @@ attack-move binding), so the champion stops to attack an enemy that comes
 into range on the way. A step away from the fight — a run back, a step back,
 a dodge, a step into brush — stays a plain move, which never stops to shoot.
 It is a recording, not a connection: this tool never opens
-the device. The file stays open for the run, shared for reading, and the
-library's reader opens a file a writer still holds, so misdirection can play
-the recording by path while a run is still appending to it: a read sees every
-frame flushed so far and a clean end of file, never a torn frame.
+the device.
 
 The file carries the timing too, as the format's `FILE_DELAY` records: before
 each press or step, the video time that passed since the previous one, so
-`ProtocolFile.ReadTimed` (or misdirection's timed playback) replays the
+`ProtocolFile.ReadTimed` replays the
 ghost at the pace the coach acted. The clock is the VOD's, not the wall's — a
 `replay.py` run at speed 4 records the same gaps as one at speed 1 — and it
 starts at a run's first press or step, so a file holds the ghost's rhythm and
