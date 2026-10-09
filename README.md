@@ -193,8 +193,8 @@ Movement is paced like a player's: a good player gets around in short
 right-clicks on the ground, a fresh one about every second, so for
 `MoveEverySeconds` (1) after a step (a dodge included) no other step is
 offered, and then one is again whether the player stands or walks — a step
-still being walked is no reason to hold the next. A walk's click lands 300px
-from the player's model at 1080p, or on the spot itself once it is nearer, in
+still being walked is no reason to hold the next. A walk's click lands 400
+units from the player's model, or on the spot itself once it is nearer, in
 the game window, never on the minimap. An attack is not offered again for
 `AttackEverySeconds` (1), since one right-click keeps a champion attacking;
 and what the ghost's hands cannot yet do is not said again for
@@ -302,21 +302,20 @@ with a `ScreenSize` frame; every key the coach presses follows as a `KeyDown`
 and `KeyUp` pair (a level-up's point as the chord, `KeyDown Ctrl` before the
 pair and `KeyUp Ctrl` after it, which the game reads as a point into the
 ability rather than a cast), and every step as a
-`MouseMove` to the ground 200px from the player's model in the step's
+`MouseMove` to the ground 200 units from the player's model in the step's
 direction followed by a right button down and up — a move order, which is
 how a step is taken in the game. The model's place on the screen is one
 place, the camera being locked; `--anchor <x,y>` names it (default: the
 screen's centre). A step toward somewhere farther — a lane, a wave, a
-patch of brush — is a longer click aimed that way, 300px at a screen 1080
-tall and scaled by height (400 units, more than a second's walk, so the
-model does not stop between clicks), or on the place itself once it is
-nearer than that: the coach walks in steps, one a second, and never clicks
-the minimap. A walk's click never lands on ground no one can walk on — a
-wall, or a turret, inhibitor or nexus, standing or fallen (`RiftWalls`, off
-the map's navigation grid; `etc/navgrid-walls.py` regenerates it): the game
-would stop the champion at its edge, so the click moves past it, up to 600px
-at 1080 and above the HUD, and the game paths round it; the last leg, on the
-place itself, moves short of it instead. A walk toward the fight — up a lane, to a wave — is ordered
+patch of brush — is a longer click aimed that way, 400 units (more than a
+second's walk, so the model does not stop between clicks), or on the place
+itself once it is nearer than that: the coach walks in steps, one a second,
+and never clicks the minimap. A walk's click never lands on ground no one
+can walk on — a wall, or a turret, inhibitor or nexus, standing or fallen
+(`RiftWalls`, off the map's navigation grid; `etc/navgrid-walls.py`
+regenerates it): the game would stop the champion at its edge, so the click
+moves past it, up to 800 units and above the HUD, and the game paths round
+it; the last leg, on the place itself, moves short of it instead. A walk toward the fight — up a lane, to a wave — is ordered
 as an attack-move instead: the same spot, but `KeyDown A`, `KeyUp A` and a
 left button down and up in place of the right-click (the game's default
 attack-move binding), so the champion stops to attack an enemy that comes

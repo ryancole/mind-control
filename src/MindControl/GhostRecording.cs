@@ -40,52 +40,52 @@ namespace MindControl;
 public sealed class GhostRecording : IDisposable
 {
     /// <summary>
-    /// How far from the player's model a step's click lands, in screen
-    /// pixels. Far enough to clear a bolt's line with a margin (the fixture's
-    /// dodges moved 40–74px across it), near enough to still be a sidestep
-    /// and not a retreat. Unmeasured beyond that: nothing has yet replayed a
-    /// recording into a game. A step toward somewhere farther is sized by
-    /// <see cref="WalkPxAt1080"/> instead.
+    /// How far from the player's model a step's click lands, in game units.
+    /// A champion's model is about 130 units across and a bolt 120–200 more,
+    /// so 200 clears a bolt's line with a margin while staying a sidestep
+    /// and not a retreat. Was a fixed 200 screen pixels, which the game read
+    /// as roughly 490 units at the receiver's window -- past a sidestep,
+    /// often into the wall behind the champion.
     /// </summary>
-    public const int StepPx = 200;
+    public const double StepUnits = 200;
 
     /// <summary>
     /// How far from the player's model a walk's click lands (a step toward a
-    /// lane, a wave, the brush), in screen pixels at a screen 1080 pixels
-    /// tall (scaled by height for others). The coach walks in clicks asked a
-    /// second apart, never with one order for the whole trip, so a click
-    /// must hold more than a second of walking or the model stops short
-    /// between them: at <see cref="PxPerUnitAt1080"/> this is 400 units,
-    /// past the 325–390 a champion walks in a second. A place nearer than
-    /// that is clicked on itself, so the last leg does not overshoot it.
+    /// lane, a wave, the brush), in game units. The coach walks in clicks
+    /// asked a second apart, never with one order for the whole trip, so a
+    /// click must hold more than a second of walking or the model stops
+    /// short between them: past the 325–390 a champion walks in a second. A
+    /// place nearer than that is clicked on itself, so the last leg does
+    /// not overshoot it.
     /// </summary>
-    public const int WalkPxAt1080 = 300;
+    public const double WalkUnits = 400;
 
     /// <summary>
-    /// How far a walk's click may reach past <see cref="WalkPxAt1080"/> to
-    /// land beyond ground no one can walk on, at a screen 1080 pixels tall:
-    /// 800 units, past the blue nexus's footprint from the fountain side
-    /// (about 750 along the way to mid), still on the screen.
+    /// How far a walk's click may reach past <see cref="WalkUnits"/> to land
+    /// beyond ground no one can walk on, in game units: 800, past the blue
+    /// nexus's footprint from the fountain side (about 750 along the way to
+    /// mid), still on the screen.
     /// </summary>
-    public const int MaxWalkPxAt1080 = 600;
+    public const double MaxWalkUnits = 800;
 
     /// <summary>
     /// Where the game's view of the ground ends, as a fraction of the screen's
     /// height from the top: below it the HUD's ability bar takes the clicks.
-    /// Unmeasured beyond the default HUD's look.
+    /// The bottom HUD's top edge, measured off the receiver's frame;
+    /// spectral-sight's world-view box ends on the same line.
     /// </summary>
-    public const double GroundBottom = 0.85;
+    public const double GroundBottom = 0.775;
 
     /// <summary>
     /// Screen pixels per game unit on the ground around the player's model,
-    /// at a screen 1080 pixels tall (scaled by height for others): how far
-    /// from the model an attack's click lands for a target that far away.
-    /// The stock camera shows about 2,500 units across a 1920-wide screen;
-    /// the camera's tilt is ignored. Unmeasured, like <see cref="StepPx"/>:
-    /// a click this near the target is on its model when the model is as big
-    /// as a minion's, and nothing has yet replayed one into a game.
+    /// at a screen 1080 pixels tall, for a run that opened without the feed's
+    /// layout (<see cref="FeedLayout"/>): the camera's measured scale, from
+    /// the viewport rectangle the game draws on the minimap. The layout
+    /// derives the same number for its own feed from the meta; the fallback
+    /// is for a recording with no feed behind it, and is exact only for a
+    /// window of the receiver's shape.
     /// </summary>
-    public const double PxPerUnitAt1080 = 0.75;
+    public const double FallbackPxPerUnitAt1080 = 0.329;
 
     /// <summary>
     /// The attack-move key on the game's default bindings: pressed, then a
@@ -96,22 +96,50 @@ public sealed class GhostRecording : IDisposable
 
     /// <summary>
     /// Where the feed's pixels sit, read from its meta: the game's own area
-    /// of the frame, which this recording's screen is, and the world view's
+    /// of the frame, which this recording's screen is, the world view's
     /// origin, which a seen target's <see cref="MoveStep.ViewPx"/> is
-    /// relative to. Both in frame pixels.
+    /// relative to, and the ground's scale, which a distance in game units
+    /// is converted by. Boxes in frame pixels.
     /// </summary>
-    public sealed record FeedLayout(PixelBox Game, int ViewX, int ViewY)
+    public sealed record FeedLayout(PixelBox Game, int ViewX, int ViewY, double PxPerUnitX, double PxPerUnitY)
     {
+        // The camera's viewport as a fraction of the map, from the rectangle
+        // the game draws on the minimap: 78x48 crop pixels on the reference
+        // crop whose map square spans 289px (spectral-sight's calibration,
+        // measured over 1,135 frames). The zoom is fixed, so the fraction is
+        // the game's, not the window's; the feed's minion projections agree
+        // with it within a few percent.
+        private const double ViewportFractionX = 78.0 / 289.0;
+        private const double ViewportFractionY = 48.0 / 289.0;
+
         /// <summary>
         /// The layout <paramref name="meta"/> describes. A feed that does not
-        /// name both boxes is one this reactor cannot place a click on, and
-        /// says so rather than guess.
+        /// name the boxes and the world's extent is one this reactor cannot
+        /// place a click on, and says so rather than guess.
         /// </summary>
-        public static FeedLayout Of(Meta meta) =>
-            (meta.GameArea, meta.WorldView) is ({ Width: > 0, Height: > 0 } game, { } view)
-                ? new FeedLayout(game, view.X, view.Y)
-                : throw new InvalidOperationException(
-                    "the feed's meta names no game_area and world_view; a spectral-sight that publishes them is needed");
+        public static FeedLayout Of(Meta meta)
+        {
+            if (meta.GameArea is not { Width: > 0, Height: > 0 } game ||
+                meta.WorldView is not { } view ||
+                meta.WorldBounds is not { } bounds)
+                throw new InvalidOperationException(
+                    "the feed's meta names no game_area, world_view and world_bounds; a spectral-sight that publishes them is needed");
+            // How much map the camera shows, then how many game-area pixels a
+            // unit takes: the world view's pixels over the units it spans,
+            // per axis.
+            var unitsX = (bounds.MaxX - bounds.MinX) * ViewportFractionX;
+            var unitsY = (bounds.MaxY - bounds.MinY) * ViewportFractionY;
+            return new FeedLayout(game, view.X, view.Y, view.Width / unitsX, view.Height / unitsY);
+        }
+
+        /// <summary>
+        /// Screen pixels per game unit on the ground at a screen
+        /// <paramref name="screenWidth"/> by <paramref name="screenHeight"/>.
+        /// The two axes differ by a percent or two of camera tilt; a click is
+        /// a length, and the average is the least wrong single number.
+        /// </summary>
+        public double PxPerUnit(int screenWidth, int screenHeight) =>
+            (PxPerUnitX * screenWidth / Game.Width + PxPerUnitY * screenHeight / Game.Height) / 2;
     }
 
     private readonly ProtocolFileWriter _writer;
@@ -120,6 +148,9 @@ public sealed class GhostRecording : IDisposable
     // Where the feed's pixels sit; null when not known, and a seen target is
     // then clicked where its distance projects.
     private readonly FeedLayout? _layout;
+    // Screen pixels per game unit on the ground: the layout's measured scale,
+    // or the fallback when the run opened without a feed behind it.
+    private readonly double _pxPerUnit;
     // Video time of the last press or step, or null before a run's first:
     // the reference the next delay is measured from.
     private double? _lastVideoTime;
@@ -132,6 +163,7 @@ public sealed class GhostRecording : IDisposable
         _height = height;
         _anchor = anchor;
         _layout = layout;
+        _pxPerUnit = layout is { } l ? l.PxPerUnit(width, height) : FallbackPxPerUnitAt1080 * height / 1080.0;
         Header = Show(new ScreenSizeMessage(width, height));
     }
 
@@ -200,32 +232,33 @@ public sealed class GhostRecording : IDisposable
     }
 
     /// <summary>
-    /// The coach stepped: a move to the ground <see cref="StepPx"/> from the
-    /// player's model in the step's direction, then a right-click there -- a
-    /// press and a release, as with a key. The click is a move order, which
-    /// is how a step is taken in the game; the cursor is left where it was
-    /// clicked, as a player's would be, until the next step moves it. A step
-    /// toward somewhere farther (one with a <see cref="MoveStep.Destination"/>)
-    /// is a longer click aimed that way (<see cref="WalkPxAt1080"/>), or on
-    /// the place itself once it is nearer than that: the game window, never
-    /// the minimap, one leg of the trip a second, and never on ground no one
-    /// can walk on (<see cref="WalkUnits"/>). An attack (a step with a <see cref="MoveStep.Target"/>)
+    /// The coach stepped: a move to the ground <see cref="StepUnits"/> from
+    /// the player's model in the step's direction, then a right-click
+    /// there -- a press and a release, as with a key. The click is a move
+    /// order, which is how a step is taken in the game; the cursor is left
+    /// where it was clicked, as a player's would be, until the next step
+    /// moves it. A step toward somewhere farther (one with a
+    /// <see cref="MoveStep.Destination"/>) is a longer click aimed that way
+    /// (<see cref="WalkUnits"/>), or on the place itself once it is nearer
+    /// than that: the game window, never the minimap, one leg of the trip a
+    /// second, and never on ground no one can walk on
+    /// (<see cref="ClearedWalkUnits"/>). An attack (a step with a <see cref="MoveStep.Target"/>)
     /// is the same click on the target itself, as far from the player's
-    /// model as the target stands (<see cref="PxPerUnitAt1080"/>): a
-    /// right-click on an enemy is the order to attack it. An
-    /// <see cref="MoveStep.AttackMove"/> lands on the same spot but is
-    /// ordered with <see cref="AttackMoveKey"/> and a left-click instead of
-    /// the right-click. A target seen on the screen (<see cref="MoveStep.ViewPx"/>)
-    /// is clicked where it was seen, once the feed's layout is known.
+    /// model as the target stands: a right-click on an enemy is the order to
+    /// attack it. An <see cref="MoveStep.AttackMove"/> lands on the same
+    /// spot but is ordered with <see cref="AttackMoveKey"/> and a left-click
+    /// instead of the right-click. A target seen on the screen
+    /// (<see cref="MoveStep.ViewPx"/>) is clicked where it was seen, once
+    /// the feed's layout is known.
     /// </summary>
     public IReadOnlyList<Message> Step(MoveStep step)
     {
         var (x, y) = step switch
         {
             { ViewPx: { } seen } when _layout is { } layout => Seen(seen, layout),
-            { Target: { } target } =>OnTheGround(step, target.DistanceUnits * PxPerUnitAt1080 * _height / 1080),
-            { Destination: not null } => OnTheGround(step, WalkUnits(step) * PxPerUnitAt1080 * _height / 1080),
-            _ => OnTheGround(step, StepPx),
+            { Target: { } target } => OnTheGround(step, target.DistanceUnits * _pxPerUnit),
+            { Destination: not null } => OnTheGround(step, ClearedWalkUnits(step) * _pxPerUnit),
+            _ => OnTheGround(step, StepUnits * _pxPerUnit),
         };
         if (step.AttackMove)
         {
@@ -244,19 +277,19 @@ public sealed class GhostRecording : IDisposable
 
     /// <summary>
     /// How far from the player's model a walk's click lands, in game units:
-    /// <see cref="WalkPxAt1080"/>'s worth, or the place itself when it is
+    /// <see cref="WalkUnits"/>'s worth, or the place itself when it is
     /// nearer, moved off ground no one can walk on when the step says where
     /// the model stood (<see cref="RiftWalls.ClearOfWalls"/>) -- farther, up
-    /// to <see cref="MaxWalkPxAt1080"/>'s worth and never off the game's view
+    /// to <see cref="MaxWalkUnits"/>'s worth and never off the game's view
     /// of the ground, so the game paths round what is in the way. A click on
     /// the place itself looks nearer first.
     /// </summary>
-    private double WalkUnits(MoveStep step)
+    private double ClearedWalkUnits(MoveStep step)
     {
-        var units = Math.Min(WalkPxAt1080 / PxPerUnitAt1080, step.DistanceUnits ?? double.PositiveInfinity);
+        var units = Math.Min(WalkUnits, step.DistanceUnits ?? double.PositiveInfinity);
         if (step.From is not { } from)
             return units;
-        var max = Math.Min(MaxWalkPxAt1080, OnTheGroundPx(step) * 1080 / _height) / PxPerUnitAt1080;
+        var max = Math.Min(MaxWalkUnits, OnTheGroundPx(step) / _pxPerUnit);
         // Screen y grows down, world y north: flip back for the map.
         return RiftWalls.ClearOfWalls(from.X, from.Y, step.Dx, -step.Dy, units, max,
             nearerFirst: units == step.DistanceUnits);

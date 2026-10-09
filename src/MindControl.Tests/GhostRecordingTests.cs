@@ -178,12 +178,13 @@ public sealed class GhostRecordingTests
         }
 
         // The model is at the screen's centre by default; the click lands
-        // StepPx to the left of it, and the button goes down and back up.
+        // StepUnits (200 units, 65.8px at 1080) to the left of it, and the
+        // button goes down and back up.
         CollectionAssert.AreEqual(
             new Message[]
             {
                 new ScreenSizeMessage(1920, 1080),
-                new MouseMoveMessage((ushort)(960 - GhostRecording.StepPx), 540),
+                new MouseMoveMessage(894, 540),
                 new MouseButtonsMessage(MouseButtons.Right),
                 new MouseButtonsMessage(MouseButtons.None),
             },
@@ -199,21 +200,22 @@ public sealed class GhostRecordingTests
                 Target = new AttackTarget("the enemy minion at 20% health", 400),
             });
 
-        // 400 units at 0.75px a unit on a 1080-tall screen, scaled to 1440.
+        // 400 units at the fallback scale, 0.329px a unit on a 1080-tall
+        // screen, scaled to 1440: 175.5px.
         var click = ProtocolFile.Read(_path).OfType<MouseMoveMessage>().Single();
-        Assert.AreEqual((1280 + 400, 720), (click.X, click.Y));
+        Assert.AreEqual((1455, 720), (click.X, click.Y));
     }
 
     [TestMethod]
     public void A_step_is_taken_from_the_anchor_given_and_stays_on_the_screen()
     {
-        using (var recording = GhostRecording.Append(_path, 1920, 1080, playerAnchor: (100, 540)))
+        using (var recording = GhostRecording.Append(_path, 1920, 1080, playerAnchor: (10, 540)))
             recording.Step(new MoveStep(1, "up-left", -0.70710678, -0.70710678, 3, "diagonal"));
 
-        // 100 - 141 is off the left edge, so the click is clamped to it; the
-        // y lands 141 above the anchor, rounded.
+        // 10 - 47 is off the left edge, so the click is clamped to it; the
+        // y lands 47 above the anchor, rounded.
         var messages = ProtocolFile.Read(_path);
-        Assert.AreEqual(new MouseMoveMessage(0, 399), messages[1]);
+        Assert.AreEqual(new MouseMoveMessage(0, 493), messages[1]);
     }
 
     [TestMethod]
@@ -227,15 +229,15 @@ public sealed class GhostRecordingTests
                 DistanceUnits = 6000,
             });
 
-        // However far bot lane is, the click is a walk's 300px from the
-        // model its way, in the game window and never on the minimap: the
-        // coach walks there a click a second.
-        Assert.AreEqual("MouseMove 1200,360, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+        // However far bot lane is, the click is a walk's 400 units (131.6px
+        // at 1080) from the model its way, in the game window and never on
+        // the minimap: the coach walks there a click a second.
+        Assert.AreEqual("MouseMove 1065,461, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
         CollectionAssert.AreEqual(
             new Message[]
             {
                 new ScreenSizeMessage(1920, 1080),
-                new MouseMoveMessage(1200, 360),
+                new MouseMoveMessage(1065, 461),
                 new MouseButtonsMessage(MouseButtons.Right),
                 new MouseButtonsMessage(MouseButtons.None),
             },
@@ -256,7 +258,7 @@ public sealed class GhostRecordingTests
 
         // The same spot as a walk's right-click, ordered with A and a left-click.
         Assert.AreEqual(
-            "MouseMove 1200,360, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None",
+            "MouseMove 1065,461, KeyDown A (0x04), KeyUp A (0x04), MouseButtons Left, MouseButtons None",
             GhostRecording.Show(step));
     }
 
@@ -265,7 +267,8 @@ public sealed class GhostRecordingTests
     private static readonly Meta Receiver = JsonSerializer.Deserialize<Meta>("""
         {"schema": 2, "source": "kilrogg", "width": 2117, "height": 1354,
          "game_area": {"x": 1, "y": 31, "width": 2115, "height": 1322},
-         "world_view": {"x": 1, "y": 47, "width": 1607, "height": 1009}}
+         "world_view": {"x": 1, "y": 47, "width": 1607, "height": 1009},
+         "world_bounds": {"min_x": 0.0, "min_y": 0.0, "max_x": 14870.0, "max_y": 14980.0}}
         """, FeedJson.Options)!;
 
     private static MoveStep SeenMinion(double x, double y) => new(1, "up-right", 0.7, -0.7, 2, "last hit")
@@ -280,6 +283,28 @@ public sealed class GhostRecordingTests
         var layout = GhostRecording.FeedLayout.Of(Receiver);
         Assert.AreEqual(new PixelBox { X = 1, Y = 31, Width = 2115, Height = 1322 }, layout.Game);
         Assert.AreEqual((1, 47), (layout.ViewX, layout.ViewY));
+        // The ground's scale: the camera shows 78/289 of the map's width
+        // (4013 units) across the world view's 1607px, and 48/289 of its
+        // height across the 1009.
+        Assert.AreEqual(0.4005, layout.PxPerUnitX, 0.0005);
+        Assert.AreEqual(0.4055, layout.PxPerUnitY, 0.0005);
+        Assert.AreEqual(0.4030, layout.PxPerUnit(2115, 1322), 0.0005);
+    }
+
+    [TestMethod]
+    public void A_walks_click_converts_units_at_the_layouts_scale()
+    {
+        using (var recording = GhostRecording.Append(_path, 2115, 1322, layout: GhostRecording.FeedLayout.Of(Receiver)))
+            recording.Step(new MoveStep(1, "right", 1, 0, 2, "off to lane")
+            {
+                Destination = new Destination("bot lane", 13100, 3600),
+                DistanceUnits = 6000,
+            });
+
+        // 400 units at the feed's own measured scale, 0.403px a unit at the
+        // receiver's window: 161px from the centre. The old fixed scale read
+        // the same click as 367px, which the game took for ~890 units.
+        Assert.AreEqual(new MouseMoveMessage(1218, 661), ProtocolFile.Read(_path)[1]);
     }
 
     [TestMethod]
@@ -311,6 +336,16 @@ public sealed class GhostRecordingTests
             GhostRecording.FeedLayout.Of(new Meta { Schema = 2, Width = 2117, Height = 1354 }));
 
     [TestMethod]
+    public void A_meta_without_the_world_bounds_is_refused() =>
+        Assert.ThrowsExactly<InvalidOperationException>(() =>
+            GhostRecording.FeedLayout.Of(new Meta
+            {
+                Schema = 2, Width = 2117, Height = 1354,
+                GameArea = new PixelBox { X = 1, Y = 31, Width = 2115, Height = 1322 },
+                WorldView = new PixelBox { X = 1, Y = 47, Width = 1607, Height = 1009 },
+            }));
+
+    [TestMethod]
     public void A_seen_target_without_a_layout_falls_back_to_its_distance()
     {
         var minion = new MoveStep(1, "right", 1, 0, 2, "last hit")
@@ -322,8 +357,8 @@ public sealed class GhostRecordingTests
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
             step = recording.Step(minion);
 
-        // 400 units is 300px right of the centre.
-        Assert.AreEqual(new MouseMoveMessage(1260, 540), step[0]);
+        // 400 units is 132px right of the centre.
+        Assert.AreEqual(new MouseMoveMessage(1092, 540), step[0]);
     }
 
     [TestMethod]
@@ -336,8 +371,8 @@ public sealed class GhostRecordingTests
                 DistanceUnits = 100,
             });
 
-        // 100 units is 75px: the click is on the brush, not 300px past it.
-        Assert.AreEqual(new MouseMoveMessage(1020, 495), ProtocolFile.Read(_path)[1]);
+        // 100 units is 33px: the click is on the brush, not 400 units past it.
+        Assert.AreEqual(new MouseMoveMessage(986, 520), ProtocolFile.Read(_path)[1]);
     }
 
     [TestMethod]
@@ -346,7 +381,7 @@ public sealed class GhostRecordingTests
         // The 21:28 line of a live run: the player just behind blue's nexus,
         // walking up-right to mid. 400 units lands on the nexus, which would
         // stop the champion at its edge; the click moves out past it, 750
-        // units (562px) up-right, and the game paths round it.
+        // units (247px) up-right, and the game paths round it.
         IReadOnlyList<Message> step;
         using (var recording = GhostRecording.Append(_path, 1920, 1080))
             step = recording.Step(new MoveStep(1, "up-right", 0.6613334013574069, -0.7500920825132358, 2, "off to mid")
@@ -357,7 +392,7 @@ public sealed class GhostRecordingTests
                 AttackMove = true,
             });
 
-        Assert.AreEqual(new MouseMoveMessage(1332, 118), step[0]);
+        Assert.AreEqual(new MouseMoveMessage(1123, 355), step[0]);
     }
 
     [TestMethod]
@@ -371,7 +406,7 @@ public sealed class GhostRecordingTests
                 From = (1368, 1317),
             });
 
-        Assert.AreEqual(new MouseMoveMessage(1260, 540), ProtocolFile.Read(_path)[1]);
+        Assert.AreEqual(new MouseMoveMessage(1092, 540), ProtocolFile.Read(_path)[1]);
     }
 
     [TestMethod]
@@ -384,8 +419,8 @@ public sealed class GhostRecordingTests
                 DistanceUnits = 6000,
             });
 
-        // 300px at 1080 is 400px at 1440, from the centre at 1280.
-        Assert.AreEqual(new MouseMoveMessage(1680, 720), ProtocolFile.Read(_path)[1]);
+        // 131.6px at 1080 is 175.5px at 1440, from the centre at 1280.
+        Assert.AreEqual(new MouseMoveMessage(1455, 720), ProtocolFile.Read(_path)[1]);
     }
 
     [TestMethod]
@@ -407,7 +442,7 @@ public sealed class GhostRecordingTests
 
             stepped = recording.Step(new MoveStep(218.1, "left", -1, 0, 3, "a bolt from the right"));
             Assert.AreEqual(
-                "Delay 200.600s, MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(stepped));
+                "Delay 200.600s, MouseMove 894,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(stepped));
         }
 
         // The file holds exactly what was handed back, in order.
@@ -431,7 +466,7 @@ public sealed class GhostRecordingTests
             Assert.AreEqual("Delay 2.500s, KeyDown W (0x1A), KeyUp W (0x1A)", GhostRecording.Show(second));
 
             var step = recording.Step(new MoveStep(13.0, "left", -1, 0, 3, "a bolt"));
-            Assert.AreEqual("Delay 0.500s, MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+            Assert.AreEqual("Delay 0.500s, MouseMove 894,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
             Assert.AreEqual(13.0, recording.LastVideoTime);
             Assert.AreEqual(10, recording.FramesWritten);
         }
@@ -444,7 +479,7 @@ public sealed class GhostRecordingTests
                 new DelayMessage(2_500_000),
                 new KeyDownMessage(HidUsage.W), new KeyUpMessage(HidUsage.W),
                 new DelayMessage(500_000),
-                new MouseMoveMessage(760, 540),
+                new MouseMoveMessage(894, 540),
                 new MouseButtonsMessage(MouseButtons.Right),
                 new MouseButtonsMessage(MouseButtons.None),
             },
@@ -469,7 +504,7 @@ public sealed class GhostRecordingTests
             // decided: the file cannot go back, so no gap, and the clock
             // stays at 20 rather than dropping to 18.
             var step = recording.Step(new MoveStep(18.0, "left", -1, 0, 3, "a bolt seen earlier"));
-            Assert.AreEqual("MouseMove 760,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
+            Assert.AreEqual("MouseMove 894,540, MouseButtons Right, MouseButtons None", GhostRecording.Show(step));
             Assert.AreEqual(20.0, recording.LastVideoTime);
             Assert.AreEqual(TimeSpan.Zero, recording.DelayBefore(18.0));
             Assert.AreEqual(TimeSpan.Zero, recording.DelayBefore(20.0));
